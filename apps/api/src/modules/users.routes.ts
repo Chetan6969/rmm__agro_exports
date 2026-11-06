@@ -1,0 +1,262 @@
+import { passwordSchema } from '@rmm/shared';
+import argon2 from 'argon2';
+import { and, asc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
+import type { Tx } from '../db/client.js';
+import { companies, roles, userCompanyRoles, users } from '../db/schema/index.js';
+import { companiesForUser, permissionsFor } from '../core/access.js';
+import { audit } from '../core/audit.js';
+import { inTenantTx, requireCtx, requirePerm, type RequestContext } from '../core/context.js';
+import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
+import { revokeUserSessions } from '../core/session.js';
+
+const accessSchema = z.array(z.object({ companyId: z.uuid(), roleIds: z.array(z.uuid()) }));
+
+const baseUser = {
+  fullName: z.string().trim().min(1, 'Full name is required').max(120),
+  email: z.preprocess((v) => (v === '' ? null : v), z.email().nullable().optional()),
+  phone: z.string().trim().max(30).nullable().optional(),
+  isActive: z.boolean().optional(),
+  isSuperAdmin: z.boolean().optional(),
+  defaultCompanyId: z.preprocess((v) => (v === '' ? null : v), z.uuid().nullable().optional()),
+};
+
+const createSchema = z.object({
+  ...baseUser,
+  username: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9._-]{3,40}$/, 'Username: 3-40 letters, digits, . _ -'),
+  password: passwordSchema,
+  mustChangePassword: z.boolean().optional(),
+  access: accessSchema.optional(),
+});
+
+const updateSchema = z.object({ ...baseUser, version: z.number().int() }).strict();
+
+const publicCols = {
+  id: users.id,
+  username: users.username,
+  fullName: users.fullName,
+  email: users.email,
+  phone: users.phone,
+  isActive: users.isActive,
+  isSuperAdmin: users.isSuperAdmin,
+  mustChangePassword: users.mustChangePassword,
+  defaultCompanyId: users.defaultCompanyId,
+  lastLoginAt: users.lastLoginAt,
+  version: users.version,
+  createdAt: users.createdAt,
+};
+
+/** Companies whose user assignments the actor may change. */
+async function manageableCompanies(tx: Tx, ctx: RequestContext): Promise<Set<string>> {
+  const list = await companiesForUser(tx, ctx.userId, ctx.isSuperAdmin);
+  if (ctx.isSuperAdmin) return new Set(list.map((c) => c.id));
+  const out = new Set<string>();
+  for (const c of list) if ((await permissionsFor(tx, ctx.userId, c.id)).has('admin.users:edit')) out.add(c.id);
+  return out;
+}
+
+async function loadAccess(tx: Tx, userIds: string[], visibleCompanies: Set<string> | null) {
+  if (!userIds.length) return new Map<string, { companyId: string; roleIds: string[] }[]>();
+  const rows = await tx
+    .select({ userId: userCompanyRoles.userId, companyId: userCompanyRoles.companyId, roleId: userCompanyRoles.roleId })
+    .from(userCompanyRoles)
+    .where(inArray(userCompanyRoles.userId, userIds));
+  const map = new Map<string, { companyId: string; roleIds: string[] }[]>();
+  for (const r of rows) {
+    if (visibleCompanies && !visibleCompanies.has(r.companyId)) continue;
+    const list = map.get(r.userId) ?? [];
+    let entry = list.find((e) => e.companyId === r.companyId);
+    if (!entry) list.push((entry = { companyId: r.companyId, roleIds: [] }));
+    entry.roleIds.push(r.roleId);
+    map.set(r.userId, list);
+  }
+  return map;
+}
+
+async function applyAccess(tx: Tx, ctx: RequestContext, userId: string, access: z.infer<typeof accessSchema>) {
+  const allowed = await manageableCompanies(tx, ctx);
+  for (const a of access) {
+    if (!allowed.has(a.companyId)) throw forbidden('You cannot manage users of one of the selected companies');
+  }
+  const roleIds = [...new Set(access.flatMap((a) => a.roleIds))];
+  if (roleIds.length) {
+    const found = await tx.select({ id: roles.id }).from(roles).where(and(inArray(roles.id, roleIds), isNull(roles.deletedAt)));
+    if (found.length !== roleIds.length) throw badRequest('One of the selected roles does not exist');
+  }
+  const before = await loadAccess(tx, [userId], allowed);
+  // Replace assignments only inside companies the actor manages; leave others untouched.
+  if (allowed.size) {
+    await tx
+      .delete(userCompanyRoles)
+      .where(and(eq(userCompanyRoles.userId, userId), inArray(userCompanyRoles.companyId, [...allowed])));
+  }
+  const rows = access.flatMap((a) => [...new Set(a.roleIds)].map((roleId) => ({ userId, companyId: a.companyId, roleId, createdBy: ctx.userId })));
+  if (rows.length) await tx.insert(userCompanyRoles).values(rows);
+  await audit(tx, ctx, {
+    entity: 'users',
+    recordId: userId,
+    action: 'access_change',
+    before: { access: before.get(userId) ?? [] },
+    after: { access: access.filter((a) => a.roleIds.length) },
+  });
+}
+
+async function loadUser(tx: Tx, id: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound();
+  const [u] = await tx.select(publicCols).from(users).where(and(eq(users.id, id), isNull(users.deletedAt)));
+  if (!u) throw notFound('User not found');
+  return u;
+}
+
+function guardTarget(ctx: RequestContext, target: { id: string; isSuperAdmin: boolean }) {
+  if (target.isSuperAdmin && !ctx.isSuperAdmin) throw forbidden('Only a super admin can change a super admin');
+}
+
+export async function usersRoutes(app: FastifyInstance) {
+  app.get('/users', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, 'admin.users', 'view');
+    return inTenantTx(ctx, async (tx) => {
+      const rows = await tx.select(publicCols).from(users).where(isNull(users.deletedAt)).orderBy(asc(users.fullName));
+      const visible = ctx.isSuperAdmin ? null : new Set((await companiesForUser(tx, ctx.userId, false)).map((c) => c.id));
+      const access = await loadAccess(tx, rows.map((r) => r.id), visible);
+      return rows.map((r) => ({ ...r, access: access.get(r.id) ?? [] }));
+    });
+  });
+
+  app.get<{ Params: { id: string } }>('/users/:id', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, 'admin.users', 'view');
+    return inTenantTx(ctx, async (tx) => {
+      const u = await loadUser(tx, req.params.id);
+      const visible = ctx.isSuperAdmin ? null : new Set((await companiesForUser(tx, ctx.userId, false)).map((c) => c.id));
+      const access = await loadAccess(tx, [u.id], visible);
+      return { ...u, access: access.get(u.id) ?? [] };
+    });
+  });
+
+  app.post('/users', async (req, reply) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, 'admin.users', 'create');
+    const body = createSchema.parse(req.body);
+    if (body.isSuperAdmin && !ctx.isSuperAdmin) throw forbidden('Only a super admin can create a super admin');
+    const created = await inTenantTx(ctx, async (tx) => {
+      const [dupe] = await tx
+        .select({ id: users.id })
+        .from(users)
+        .where(and(sql`lower(${users.username}) = ${body.username}`, isNull(users.deletedAt)));
+      if (dupe) throw conflict('Username already exists');
+      const [u] = await tx
+        .insert(users)
+        .values({
+          username: body.username,
+          fullName: body.fullName,
+          email: body.email ?? null,
+          phone: body.phone ?? null,
+          isActive: body.isActive ?? true,
+          isSuperAdmin: body.isSuperAdmin ?? false,
+          mustChangePassword: body.mustChangePassword ?? true,
+          defaultCompanyId: body.defaultCompanyId ?? null,
+          passwordHash: await argon2.hash(body.password),
+          createdBy: ctx.userId,
+          updatedBy: ctx.userId,
+        })
+        .returning(publicCols);
+      await audit(tx, ctx, { entity: 'users', recordId: u.id, action: 'create', after: u });
+      if (body.access?.length) await applyAccess(tx, ctx, u.id, body.access);
+      return u;
+    });
+    return reply.status(201).send(created);
+  });
+
+  app.put<{ Params: { id: string } }>('/users/:id', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, 'admin.users', 'edit');
+    const body = updateSchema.parse(req.body);
+    return inTenantTx(ctx, async (tx) => {
+      const before = await loadUser(tx, req.params.id);
+      guardTarget(ctx, before);
+      if (body.isSuperAdmin !== undefined && body.isSuperAdmin !== before.isSuperAdmin && !ctx.isSuperAdmin) {
+        throw forbidden('Only a super admin can grant super admin');
+      }
+      if (before.id === ctx.userId && (body.isActive === false || body.isSuperAdmin === false)) {
+        throw badRequest('You cannot deactivate yourself or remove your own super admin rights');
+      }
+      if (body.defaultCompanyId) {
+        const [c] = await tx.select({ id: companies.id }).from(companies).where(eq(companies.id, body.defaultCompanyId));
+        if (!c) throw badRequest('Default company not found');
+      }
+      const { version, ...values } = body;
+      const [u] = await tx
+        .update(users)
+        .set({ ...values, version: sql`${users.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
+        .where(and(eq(users.id, before.id), eq(users.version, version)))
+        .returning(publicCols);
+      if (!u) throw conflict('This user was changed by someone else. Reload and try again.');
+      if (body.isActive === false) await revokeUserSessions(u.id);
+      await audit(tx, ctx, { entity: 'users', recordId: u.id, action: 'update', before, after: u });
+      return u;
+    });
+  });
+
+  app.put<{ Params: { id: string } }>('/users/:id/access', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, 'admin.users', 'edit');
+    const { access } = z.object({ access: accessSchema }).parse(req.body);
+    return inTenantTx(ctx, async (tx) => {
+      const target = await loadUser(tx, req.params.id);
+      guardTarget(ctx, target);
+      await applyAccess(tx, ctx, target.id, access);
+      return { ok: true };
+    });
+  });
+
+  app.post<{ Params: { id: string } }>('/users/:id/reset-password', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, 'admin.users', 'edit');
+    const { password } = z.object({ password: passwordSchema }).parse(req.body);
+    await inTenantTx(ctx, async (tx) => {
+      const target = await loadUser(tx, req.params.id);
+      guardTarget(ctx, target);
+      await tx
+        .update(users)
+        .set({ passwordHash: await argon2.hash(password), mustChangePassword: true, updatedAt: new Date(), updatedBy: ctx.userId })
+        .where(eq(users.id, target.id));
+      await audit(tx, ctx, { entity: 'users', recordId: target.id, action: 'reset_password' });
+    });
+    await revokeUserSessions(req.params.id);
+    return { ok: true };
+  });
+
+  app.delete<{ Params: { id: string }; Body: { reason?: string } }>('/users/:id', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, 'admin.users', 'delete');
+    const reason = req.body?.reason?.trim();
+    if (!reason) throw badRequest('A reason is required to delete', { reason: 'Required' });
+    if (req.params.id === ctx.userId) throw badRequest('You cannot delete yourself');
+    await inTenantTx(ctx, async (tx) => {
+      const target = await loadUser(tx, req.params.id);
+      guardTarget(ctx, target);
+      if (target.isSuperAdmin) {
+        const [{ n }] = await tx
+          .select({ n: sql<number>`count(*)::int` })
+          .from(users)
+          .where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt), ne(users.id, target.id)));
+        if (n === 0) throw badRequest('Cannot delete the last super admin');
+      }
+      await tx
+        .update(users)
+        .set({ deletedAt: new Date(), deletedBy: ctx.userId, deleteReason: reason, isActive: false })
+        .where(eq(users.id, target.id));
+      await tx.delete(userCompanyRoles).where(eq(userCompanyRoles.userId, target.id));
+      await audit(tx, ctx, { entity: 'users', recordId: target.id, action: 'delete', meta: { reason } });
+    });
+    await revokeUserSessions(req.params.id);
+    return { ok: true };
+  });
+}

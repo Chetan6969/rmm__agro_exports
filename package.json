@@ -1,16 +1,16 @@
 {
-  "name": "rmm__agro_exports",
+  "name": "rmm-export-erp",
   "private": true,
   "packageManager": "pnpm@12.18.0",
   "scripts": {
-    "dev": "pnpm --parallel --filter @app/frontend --filter @app/backend dev",
-    "dev:frontend": "pnpm --filter @app/frontend dev",
-    "dev:backend": "pnpm --filter @app/backend dev",
-    "build": "pnpm -r --if-present build",
-    "lint": "pnpm -r --if-present lint",
+    "dev": "pnpm --parallel --filter @rmm/api --filter @rmm/web dev",
+    "build": "pnpm --filter @rmm/web build && pnpm --filter @rmm/api build",
+    "start": "pnpm --filter @rmm/api start",
+    "db:setup": "pnpm --filter @rmm/api db:setup",
+    "db:generate": "pnpm --filter @rmm/api db:generate",
+    "db:migrate": "pnpm --filter @rmm/api db:migrate",
+    "db:seed": "pnpm --filter @rmm/api db:seed",
     "typecheck": "pnpm -r --if-present typecheck",
-    "test": "pnpm -r --if-present test",
-    "test:e2e": "pnpm --filter @app/backend test:e2e"
-  },
-  "devDependencies": {}
+    "test": "pnpm -r --if-present test"
+  }
 }
