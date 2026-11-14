@@ -47,18 +47,18 @@ export function Sidebar({ currentSection, onSelectSection }: SidebarProps) {
     {
       title: 'ANALYSIS & AUDIT',
       items: [
-        { id: 'registers' as NavigationSection, label: 'Export Registers (6)', icon: BarChart3 },
+        { id: 'registers' as NavigationSection, label: 'Export Registers', icon: BarChart3 },
         { id: 'settings' as NavigationSection, label: 'Companies & Audit Log', icon: Settings },
       ],
     },
   ];
 
   return (
-    <aside className="w-60 bg-slate-900 border-r border-slate-800 text-slate-300 flex flex-col shrink-0 min-h-[calc(100vh-3.5rem)] select-none">
+    <aside className="w-60 bg-white border-r border-[#c9d2de] text-slate-600 flex flex-col shrink-0 min-h-[calc(100vh-3.5rem)] select-none">
       <div className="flex-1 py-3 px-2 space-y-5 overflow-y-auto">
         {navGroups.map((group) => (
           <div key={group.title}>
-            <div className="px-2 pb-1.5 text-[10px] font-bold text-slate-400 tracking-wider font-mono">
+            <div className="px-2 pb-1.5 text-[10px] font-bold text-slate-400 tracking-wider">
               {group.title}
             </div>
             <div className="space-y-0.5">
@@ -71,11 +71,11 @@ export function Sidebar({ currentSection, onSelectSection }: SidebarProps) {
                     onClick={() => onSelectSection(item.id)}
                     className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 text-xs font-medium rounded transition-colors text-left ${
                       isActive
-                        ? 'bg-amber-600/20 text-amber-300 font-semibold border-l-2 border-amber-400 pl-2'
-                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                        ? 'bg-blue-50 text-blue-700 font-semibold border-l-2 border-blue-600 pl-2'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                     }`}
                   >
-                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-amber-400' : 'text-slate-400'}`} />
+                    <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-blue-700' : 'text-slate-400'}`} />
                     <span className="truncate">{item.label}</span>
                   </button>
                 );
@@ -85,10 +85,9 @@ export function Sidebar({ currentSection, onSelectSection }: SidebarProps) {
         ))}
       </div>
 
-      {/* Footer Info */}
-      <div className="p-3 border-t border-slate-800 text-[10px] text-slate-400">
+      <div className="p-3 border-t border-slate-200 text-[10px] text-slate-400">
         <div>ExportFly Web v0.1.0</div>
-        <div className="text-slate-400">RMM Agro Exports Ltd</div>
+        <div>RMM Agro Exports Pvt. Ltd.</div>
       </div>
     </aside>
   );

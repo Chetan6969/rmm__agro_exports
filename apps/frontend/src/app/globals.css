@@ -1,8 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #eceff4;
+  --foreground: #1f2933;
+  --panel: #ffffff;
+  --border: #c9d2de;
+  --border-strong: #aab6c6;
+  --muted: #5b6673;
+  --primary: #1f6fe0;
+  --primary-hover: #1559bf;
+  --primary-bar: #1e63cf;
+  --accent: #0b4a9e;
+  --danger: #c0392b;
+  --ok: #157347;
+  --row-alt: #f4f7fb;
+  --head: #eef3fa;
 }
 
 @theme inline {
@@ -12,15 +24,192 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
+html,
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "Segoe UI", Arial, Helvetica, sans-serif;
+  font-size: 13px;
+}
+
+/* ---------------- Reusable desktop-style controls ---------------- */
+.ef-label {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 2px;
+}
+.ef-input,
+.ef-select,
+.ef-textarea {
+  width: 100%;
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  padding: 4px 7px;
+  font-size: 12.5px;
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.ef-input:focus,
+.ef-select:focus,
+.ef-textarea:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(31, 111, 224, 0.15);
+}
+.ef-input:disabled,
+.ef-select:disabled {
+  background: #f1f3f6;
+  color: #7a828c;
+}
+.ef-textarea {
+  resize: vertical;
+  min-height: 56px;
+  font-family: "Segoe UI", Arial, sans-serif;
+}
+
+.ef-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  border-radius: 3px;
+  padding: 5px 12px;
+  border: 1px solid var(--border-strong);
+  background: #fff;
+  color: #2b3542;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.ef-btn:hover {
+  background: #f1f5fb;
+  border-color: var(--primary);
+}
+.ef-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ef-btn-primary {
+  background: var(--primary);
+  border-color: var(--primary-hover);
+  color: #fff;
+}
+.ef-btn-primary:hover {
+  background: var(--primary-hover);
+  color: #fff;
+}
+.ef-btn-danger {
+  color: var(--danger);
+  border-color: #e0b4ae;
+}
+.ef-btn-danger:hover {
+  background: #fdecea;
+  border-color: var(--danger);
+}
+
+.ef-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  box-shadow: 0 1px 2px rgba(20, 40, 70, 0.06);
+}
+
+.ef-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.ef-table thead th {
+  background: var(--head);
+  text-align: left;
+  font-weight: 700;
+  color: #42515f;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-strong);
+  position: sticky;
+  top: 0;
+}
+.ef-table tbody td {
+  padding: 5px 8px;
+  border-bottom: 1px solid #e6ebf2;
+}
+.ef-table tbody tr:nth-child(even) {
+  background: var(--row-alt);
+}
+.ef-table tbody tr:hover {
+  background: #e9f1fc;
+}
+.ef-table tbody tr.selected {
+  background: #d7e7fb !important;
+}
+
+/* Modal */
+.ef-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(23, 35, 54, 0.45);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 24px 16px;
+  overflow-y: auto;
+  z-index: 60;
+}
+.ef-modal {
+  background: #f6f8fb;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  box-shadow: 0 18px 50px rgba(15, 30, 60, 0.35);
+  width: 100%;
+}
+.ef-modal-bar {
+  background: linear-gradient(180deg, #2a72d8, #1e63cf);
+  color: #fff;
+  padding: 7px 12px;
+  border-radius: 5px 5px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: 13px;
+}
+.ef-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.ef-chip {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.ef-chip-open {
+  background: #e7f0fb;
+  color: #1559bf;
+  border-color: #bcd4f3;
+}
+.ef-chip-confirmed {
+  background: #e4f6ec;
+  color: #157347;
+  border-color: #bde3cb;
+}
+.ef-chip-cancelled {
+  background: #fdecea;
+  color: #c0392b;
+  border-color: #f0c6c0;
+}
+
+input[type="checkbox"].ef-check {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
 }

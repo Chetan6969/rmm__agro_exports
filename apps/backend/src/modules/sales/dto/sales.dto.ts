@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -26,15 +27,54 @@ export class ProformaItemDto {
   @IsNotEmpty()
   packingTypeId!: string;
 
+  @ApiProperty({
+    example: '1. 30KG BOPP BAGS 1000MT\n2. 25KG BOPP BAGS 500MT',
+    required: false,
+    description: 'Free-text packing + quantity breakdown (one per line)',
+  })
+  @IsString()
+  @IsOptional()
+  packingText?: string;
+
+  @ApiProperty({ example: '10063020', required: false })
+  @IsString()
+  @IsOptional()
+  hsCode?: string;
+
+  @ApiProperty({ example: '2025', required: false })
+  @IsString()
+  @IsOptional()
+  cropYear?: string;
+
   @ApiProperty({ example: 250.0, description: 'Quantity in Metric Tons (MT)' })
   @IsNumber()
   @Min(0.001)
   quantityMt!: number;
 
-  @ApiProperty({ example: 980.0, description: 'Rate in USD per MT' })
+  @ApiProperty({ example: 980.0, description: 'Rate per MT' })
   @IsNumber()
   @Min(0.01)
   ratePerMt!: number;
+
+  @ApiProperty({ example: 1.5, required: false })
+  @IsNumber()
+  @IsOptional()
+  brokenPct?: number;
+
+  @ApiProperty({ example: 0, required: false })
+  @IsNumber()
+  @IsOptional()
+  cgst?: number;
+
+  @ApiProperty({ example: 0, required: false })
+  @IsNumber()
+  @IsOptional()
+  sgst?: number;
+
+  @ApiProperty({ example: 0, required: false })
+  @IsNumber()
+  @IsOptional()
+  igst?: number;
 
   @ApiProperty({ example: 'Max 1% Broken, Silky Polished', required: false })
   @IsString()
@@ -42,14 +82,44 @@ export class ProformaItemDto {
   specifications?: string;
 }
 
+export class ProformaTermDto {
+  @ApiProperty({ required: false, description: 'Master term UUID if selected' })
+  @IsUUID()
+  @IsOptional()
+  termId?: string;
+
+  @ApiProperty({ example: 'Weight and quality as determined at port of loading' })
+  @IsString()
+  @IsNotEmpty()
+  content!: string;
+}
+
 export class CreateProformaInvoiceDto {
+  @ApiProperty({
+    example: 'PI-RMM/AM/1015',
+    required: false,
+    description: 'Manual proforma number. If omitted, one is auto-allocated.',
+  })
+  @IsString()
+  @IsOptional()
+  documentNumber?: string;
+
   @ApiProperty({ example: '2026-11-06' })
   @IsString()
   @IsNotEmpty()
   documentDate!: string;
 
   @ApiProperty({
-    example: '00000000-0000-0000-0000-000000000001',
+    enum: ['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED'],
+    required: false,
+    default: 'CONFIRMED',
+  })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
+  // Parties
+  @ApiProperty({
     description: 'Consignee customer UUID (Rule 10 Gotcha: stored in customer slot)',
   })
   @IsUUID()
@@ -57,8 +127,7 @@ export class CreateProformaInvoiceDto {
   customerId!: string;
 
   @ApiProperty({
-    example: '00000000-0000-0000-0000-000000000002',
-    description: 'Foreign Buyer customer UUID (Rule 10 Gotcha: stored in consignee slot)',
+    description: 'Foreign Buyer customer UUID (stored in consignee slot)',
     required: false,
   })
   @IsUUID()
@@ -70,7 +139,29 @@ export class CreateProformaInvoiceDto {
   @IsOptional()
   notifyPartyId?: string;
 
-  @ApiProperty({ enum: ['FOB', 'CFR', 'CIF'], example: 'CIF' })
+  // Buyer references & LC
+  @ApiProperty({ example: 'PO-UAE-9921', required: false })
+  @IsString()
+  @IsOptional()
+  buyerPoRef?: string;
+
+  @ApiProperty({ example: '2026-10-24', required: false })
+  @IsString()
+  @IsOptional()
+  poDate?: string;
+
+  @ApiProperty({ example: 'LC-998877', required: false })
+  @IsString()
+  @IsOptional()
+  lcNumber?: string;
+
+  @ApiProperty({ example: '2026-11-04', required: false })
+  @IsString()
+  @IsOptional()
+  lcDate?: string;
+
+  // Commercial terms
+  @ApiProperty({ enum: ['FOB', 'CFR', 'CIF'], example: 'FOB' })
   @IsEnum(['FOB', 'CFR', 'CIF'])
   incoterm!: 'FOB' | 'CFR' | 'CIF';
 
@@ -79,30 +170,152 @@ export class CreateProformaInvoiceDto {
   @IsOptional()
   currency?: string;
 
-  @ApiProperty({ example: 'Mundra Port, India' })
+  @ApiProperty({ example: 1.0, required: false, description: 'Dollar rate' })
+  @IsNumber()
+  @IsOptional()
+  exchangeRate?: number;
+
+  @ApiProperty({ example: 'LC AT SIGHT' })
+  @IsString()
+  @IsNotEmpty()
+  paymentTerms!: string;
+
+  @ApiProperty({ required: false, description: 'Delivery / shipment schedule' })
+  @IsString()
+  @IsOptional()
+  deliveryTimeline?: string;
+
+  // Shipping
+  @ApiProperty({ example: 'INDIA', required: false })
+  @IsString()
+  @IsOptional()
+  countryOfOrigin?: string;
+
+  @ApiProperty({ example: 'INDIA', required: false })
+  @IsString()
+  @IsOptional()
+  goodsCountry?: string;
+
+  @ApiProperty({ example: 'Mundra' })
   @IsString()
   @IsNotEmpty()
   portOfLoading!: string;
 
-  @ApiProperty({ example: 'Jebel Ali, UAE' })
+  @ApiProperty({ example: 'Umm Qasr' })
   @IsString()
   @IsNotEmpty()
   portOfDischarge!: string;
 
-  @ApiProperty({ example: 'Dubai, UAE' })
+  @ApiProperty({ example: 'IRAQ' })
   @IsString()
   @IsNotEmpty()
   finalDestination!: string;
 
-  @ApiProperty({ example: '100% Irrevocable Confirmed LC at sight' })
+  @ApiProperty({ example: 'By sea, FCL container', required: false })
   @IsString()
-  @IsNotEmpty()
-  paymentTerms!: string;
+  @IsOptional()
+  modeOfShipment?: string;
+
+  // Branding
+  @ApiProperty({ example: 'AL WALIMAH', required: false })
+  @IsString()
+  @IsOptional()
+  brand?: string;
+
+  @ApiProperty({ example: '1718 (70%) +1509(30%)', required: false })
+  @IsString()
+  @IsOptional()
+  blend?: string;
+
+  // Specification block
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  specVariety?: string;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  specAvgLengthMm?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  specMoisturePct?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  specBrokenPct?: number;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  specCropYear?: string;
 
   @ApiProperty({ required: false })
   @IsUUID()
   @IsOptional()
   bankDetailsId?: string;
+
+  // Charges
+  @ApiProperty({ example: 0, required: false })
+  @IsNumber()
+  @IsOptional()
+  freightAmount?: number;
+
+  @ApiProperty({ example: 0, required: false })
+  @IsNumber()
+  @IsOptional()
+  insuranceAmount?: number;
+
+  @ApiProperty({ example: 0, required: false })
+  @IsNumber()
+  @IsOptional()
+  discountAmount?: number;
+
+  // Section toggles
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showNotifyParty?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showShippingDetails?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showSpecification?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showBankDetails?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showLcDetails?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showTermsConditions?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showSignatureBlock?: boolean;
+
+  @ApiProperty({ type: [ProformaTermDto], required: false })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProformaTermDto)
+  @IsOptional()
+  terms?: ProformaTermDto[];
 
   @ApiProperty({ type: [ProformaItemDto] })
   @IsArray()
@@ -112,28 +325,78 @@ export class CreateProformaInvoiceDto {
 }
 
 // ----------------------------------------------------
-// PRODUCTION ORDERS
+// PRODUCTION ORDERS (internal work order for the production department)
 // ----------------------------------------------------
 export class ProductionOrderItemDto {
-  @ApiProperty({ description: 'Proforma Item UUID being fulfilled' })
-  @IsUUID()
-  @IsNotEmpty()
-  proformaItemId!: string;
-
   @ApiProperty({ description: 'Product UUID' })
   @IsUUID()
   @IsNotEmpty()
   productId!: string;
 
-  @ApiProperty({ description: 'Packing Type UUID' })
+  @ApiProperty({ required: false, description: 'Packing Type UUID' })
   @IsUUID()
-  @IsNotEmpty()
-  packingTypeId!: string;
+  @IsOptional()
+  packingTypeId?: string;
 
-  @ApiProperty({ example: 100.0, description: 'Quantity in Metric Tons (MT)' })
+  @ApiProperty({ required: false, description: 'Free-text packing description' })
+  @IsString()
+  @IsOptional()
+  packingText?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  hsCode?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  cropYear?: string;
+
+  @ApiProperty({ example: 1000, required: false })
+  @IsNumber()
+  @IsOptional()
+  noOfBags?: number;
+
+  @ApiProperty({ example: 100.0, description: 'Net weight in MT' })
   @IsNumber()
   @Min(0.001)
   quantityMt!: number;
+
+  @ApiProperty({ required: false, description: 'Gross weight in MT' })
+  @IsNumber()
+  @IsOptional()
+  grossWtMt?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  ratePerMt?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  cgst?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  sgst?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  igst?: number;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  brokenBelow?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  fcl?: boolean;
 
   @ApiProperty({ required: false })
   @IsString()
@@ -142,35 +405,221 @@ export class ProductionOrderItemDto {
 }
 
 export class CreateProductionOrderDto {
+  @ApiProperty({ required: false, description: 'Manual order number; auto if omitted' })
+  @IsString()
+  @IsOptional()
+  documentNumber?: string;
+
   @ApiProperty({ example: '2026-11-07' })
   @IsString()
   @IsNotEmpty()
   documentDate!: string;
 
-  @ApiProperty({ description: 'Referenced Proforma Invoice UUID' })
-  @IsUUID()
-  @IsNotEmpty()
-  proformaInvoiceId!: string;
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  status?: string;
 
-  @ApiProperty({ example: 'PO-UAE-9921', required: false })
+  @ApiProperty({ required: false, description: 'Generate against this Proforma Invoice' })
+  @IsUUID()
+  @IsOptional()
+  proformaInvoiceId?: string;
+
+  @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
   buyerPoNumber?: string;
 
-  @ApiProperty({ description: 'Rice Mill Supplier UUID', required: false })
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  buyerPoRef?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  poDate?: string;
+
+  @ApiProperty({ required: false, description: 'Rice Mill Supplier UUID' })
   @IsUUID()
   @IsOptional()
   supplierMillId?: string;
 
-  @ApiProperty({ example: 'Double polish, sortex clean, moisture < 12%' })
+  // Parties
+  @ApiProperty({ required: false })
+  @IsUUID()
+  @IsOptional()
+  customerId?: string;
+
+  @ApiProperty({ required: false })
+  @IsUUID()
+  @IsOptional()
+  consigneeId?: string;
+
+  @ApiProperty({ required: false })
+  @IsUUID()
+  @IsOptional()
+  notifyPartyId?: string;
+
+  // Commercial
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  incoterm?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  currency?: string;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  exchangeRate?: number;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  lcNumber?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  lcDate?: string;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  freightAmount?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  insuranceAmount?: number;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  fcl?: string;
+
+  // Shipping
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  preCarriageBy?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  placeOfReceipt?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  countryOfOrigin?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  countryFinalDestination?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  vesselFlightNo?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  portOfLoading?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  portOfDischarge?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  destinationCountry?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  termsOf?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  paymentTerm?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  brand?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  transport?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  vehicleNo?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  orderRemark?: string;
+
+  // Specification
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  specVariety?: string;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  specAvgLengthMm?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  specMoisturePct?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  specBrokenPct?: number;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  specCropYear?: string;
+
+  @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
   millingInstructions?: string;
 
-  @ApiProperty({ example: 'Bags to be stitched with red thread' })
+  @ApiProperty({ required: false })
   @IsString()
   @IsOptional()
   packagingInstructions?: string;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showSignature?: boolean;
+
+  @ApiProperty({ type: [ProformaTermDto], required: false })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProformaTermDto)
+  @IsOptional()
+  terms?: ProformaTermDto[];
 
   @ApiProperty({ type: [ProductionOrderItemDto] })
   @IsArray()

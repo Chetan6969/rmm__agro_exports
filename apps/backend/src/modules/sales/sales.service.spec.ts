@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { SalesService } from './sales.service.js';
 import type { DatabaseService } from '../../database/database.service.js';
 import type { DocumentNumberingService } from '../document-numbering/document-numbering.service.js';
@@ -41,9 +41,26 @@ describe('SalesService & Core Business Rules', () => {
     );
   });
 
+  // Connected service whose insert().values(v).returning() echoes the inserted row,
+  // so tests assert the service's authoritative computation.
+  const echoTx = () => ({
+    insert: () => ({
+      values: (v: any) => ({
+        returning: () => Promise.resolve([{ id: 'row-1', ...v }]),
+      }),
+    }),
+  });
+  const connectedService = (mockDb: any) =>
+    new SalesService(
+      { isConnected: true, db: mockDb } as any,
+      mockNumberingService,
+      mockActivityLogService,
+    );
+
   describe('Proforma Invoice Creation', () => {
     it('should create Proforma Invoice and calculate exact authoritative total quantity and amount', async () => {
-      const result = await service.createProformaInvoice(
+      const mockDb = { transaction: vi.fn(async (cb: any) => cb(echoTx())) };
+      const result = await connectedService(mockDb).createProformaInvoice(
         'co-rmm-1',
         'RMM',
         {
@@ -57,18 +74,8 @@ describe('SalesService & Core Business Rules', () => {
           finalDestination: 'Dubai',
           paymentTerms: '100% LC at sight',
           items: [
-            {
-              productId: 'prod-1121',
-              packingTypeId: 'pack-30kg',
-              quantityMt: 250.0,
-              ratePerMt: 980.0,
-            },
-            {
-              productId: 'prod-1509',
-              packingTypeId: 'pack-50kg',
-              quantityMt: 100.0,
-              ratePerMt: 850.0,
-            },
+            { productId: 'prod-1121', packingTypeId: 'pack-30kg', quantityMt: 250.0, ratePerMt: 980.0 },
+            { productId: 'prod-1509', packingTypeId: 'pack-50kg', quantityMt: 100.0, ratePerMt: 850.0 },
           ],
         },
         'usr-1',
@@ -76,132 +83,86 @@ describe('SalesService & Core Business Rules', () => {
       );
 
       expect(result.documentNumber).toBe('PI-RMM/AM/1');
-      // 250 + 100 = 350.000 MT
       expect(result.totalQuantityMt).toBe('350.000');
-      // (250 * 980) + (100 * 850) = 245000 + 85000 = 330000.00
       expect(result.totalAmount).toBe('330000.00');
       // Rule 10: Preserved party mapping
       expect(result.customerId).toBe('cust-consignee-uuid');
       expect(result.consigneeId).toBe('cust-buyer-uuid');
     });
+
+    it('should use a manual proforma number when supplied', async () => {
+      const mockDb = {
+        select: () => ({
+          from: () => ({ where: () => ({ limit: () => Promise.resolve([]) }) }),
+        }),
+        transaction: vi.fn(async (cb: any) => cb(echoTx())),
+      };
+      const result = await connectedService(mockDb).createProformaInvoice(
+        'co-rmm-1',
+        'RMM',
+        {
+          documentNumber: 'PI-RMM/AM/2410',
+          documentDate: '2026-11-06',
+          customerId: 'c1',
+          incoterm: 'FOB',
+          portOfLoading: 'Mundra',
+          portOfDischarge: 'Umm Qasr',
+          finalDestination: 'IRAQ',
+          paymentTerms: 'LC AT SIGHT',
+          items: [{ productId: 'p1', packingTypeId: 'k1', quantityMt: 10, ratePerMt: 100 }],
+        },
+        'usr-1',
+        'admin',
+      );
+      expect(result.documentNumber).toBe('PI-RMM/AM/2410');
+    });
   });
 
-  describe('Rule 8: Remaining-Quantity Checks on Production Orders', () => {
-    it('should reject Production Order when requested quantity exceeds unallocated proforma item balance', async () => {
-      // Mock existing proforma item with 100 MT total, already 80 MT allocated -> 20 MT remaining
-      const mockPiItem = {
-        id: 'pi-item-1',
-        quantityMt: '100.000',
-        allocatedProductionMt: '80.000', // Only 20 MT remains!
-      };
-
-      const mockDb = {
-        transaction: vi.fn(async (cb) => {
-          const tx = {
-            select: () => ({
-              from: () => ({
-                where: () => ({
-                  for: vi.fn().mockResolvedValue([mockPiItem]),
-                }),
-              }),
-            }),
-            update: () => ({ set: () => ({ where: vi.fn() }) }),
-            insert: () => ({ values: () => ({ returning: vi.fn() }) }),
-          };
-          return cb(tx);
-        }),
-      };
-
-      const validatingService = new SalesService(
-        { isConnected: true, db: mockDb as any } as any,
-        mockNumberingService,
-        mockActivityLogService,
-      );
-
-      // User attempts to allocate 25 MT (exceeds the 20 MT remaining balance!)
-      await expect(
-        validatingService.createProductionOrder(
-          'co-rmm-1',
-          'RMM',
-          {
-            documentDate: '2026-11-06',
-            proformaInvoiceId: 'pi-1',
-            items: [
-              {
-                proformaItemId: 'pi-item-1',
-                productId: 'prod-1',
-                packingTypeId: 'pack-1',
-                quantityMt: 25.0, // Exceeds remaining 20 MT!
-              },
-            ],
-          },
-          'usr-1',
-          'admin',
-        ),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should succeed when requested quantity is within remaining proforma item balance', async () => {
-      const mockPiItem = {
-        id: 'pi-item-1',
-        quantityMt: '100.000',
-        allocatedProductionMt: '50.000', // 50 MT remaining
-      };
-
-      const mockPo = {
-        id: 'po-1',
-        documentNumber: 'RMM/1',
-        totalQuantityMt: '30.000',
-      };
-
-      const mockDb = {
-        transaction: vi.fn(async (cb) => {
-          const tx = {
-            select: () => ({
-              from: () => ({
-                where: () => ({
-                  for: vi.fn().mockResolvedValue([mockPiItem]),
-                }),
-              }),
-            }),
-            update: () => ({ set: () => ({ where: vi.fn().mockResolvedValue([]) }) }),
-            insert: () => ({
-              values: () => ({
-                returning: vi.fn().mockResolvedValue([mockPo]),
-              }),
-            }),
-          };
-          return cb(tx);
-        }),
-      };
-
-      const validatingService = new SalesService(
-        { isConnected: true, db: mockDb as any } as any,
-        mockNumberingService,
-        mockActivityLogService,
-      );
-
-      // Allocating 30 MT (less than 50 MT remaining) -> must succeed!
-      const po = await validatingService.createProductionOrder(
+  describe('Production Order Creation (standalone work order)', () => {
+    it('creates an order with an auto number and computed total quantity & bags', async () => {
+      const mockDb = { transaction: vi.fn(async (cb: any) => cb(echoTx())) };
+      const po = await connectedService(mockDb).createProductionOrder(
         'co-rmm-1',
         'RMM',
         {
           documentDate: '2026-11-06',
-          proformaInvoiceId: 'pi-1',
+          customerId: 'buyer-1',
+          consigneeId: 'buyer-1',
           items: [
-            {
-              proformaItemId: 'pi-item-1',
-              productId: 'prod-1',
-              packingTypeId: 'pack-1',
-              quantityMt: 30.0,
-            },
+            { productId: 'prod-1', quantityMt: 600, noOfBags: 1000 },
+            { productId: 'prod-2', quantityMt: 400, noOfBags: 800 },
           ],
         },
         'usr-1',
         'admin',
       );
-
       expect(po.documentNumber).toBe('RMM/1');
+      expect(po.totalQuantityMt).toBe('1000.000');
+      expect(po.totalBags).toBe(1800);
+    });
+
+    it('rejects a duplicate manual order number', async () => {
+      const mockDb = {
+        select: () => ({
+          from: () => ({
+            where: () => ({ limit: () => Promise.resolve([{ id: 'existing' }]) }),
+          }),
+        }),
+        transaction: vi.fn(async (cb: any) => cb(echoTx())),
+      };
+      await expect(
+        connectedService(mockDb).createProductionOrder(
+          'co-rmm-1',
+          'RMM',
+          {
+            documentNumber: 'RMM/4',
+            documentDate: '2026-11-06',
+            items: [{ productId: 'prod-1', quantityMt: 100 }],
+          },
+          'usr-1',
+          'admin',
+        ),
+      ).rejects.toThrow(ConflictException);
     });
   });
 

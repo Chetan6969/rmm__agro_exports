@@ -1,85 +1,148 @@
 'use client';
 
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { api, type CompanyBrief } from '../lib/api';
 import type { Company } from '../types';
 
-export const SISTER_COMPANIES: Company[] = [
-  {
-    id: '00000000-0000-0000-0000-000000000001',
-    name: 'RMM Agro Exports',
-    code: 'RMM',
-    gstin: '06AABCR1234F1Z5',
-    iec: '0505012345',
-    address: 'Export House, Taraori - 132116, Karnal, Haryana, India',
+function computeFinancialYear(d = new Date()): string {
+  const y = d.getFullYear();
+  const m = d.getMonth() + 1;
+  const start = m >= 4 ? y : y - 1;
+  return `${String(start).slice(-2)}-${String(start + 1).slice(-2)}`;
+}
+
+function briefToCompany(c: CompanyBrief): Company {
+  return {
+    id: c.id,
+    name: c.name,
+    code: c.code,
+    gstin: '',
+    iec: '',
+    address: '',
     currency: 'USD',
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000002',
-    name: 'Pragati Agro Exports',
-    code: 'PRAGATI',
-    gstin: '06AABCP5678F1Z2',
-    iec: '0505056789',
-    address: 'G.T. Road, Karnal - 132001, Haryana, India',
-    currency: 'USD',
-  },
-  {
-    id: '00000000-0000-0000-0000-000000000003',
-    name: 'Dudani Agro Exports',
-    code: 'DUDANI',
-    gstin: '06AABCD9012F1Z9',
-    iec: '0505090123',
-    address: 'Near Grain Market, Nissing, Karnal, Haryana, India',
-    currency: 'USD',
-  },
-];
+  };
+}
+
+type Status = 'loading' | 'authed' | 'anon';
 
 interface CompanyContextType {
+  status: Status;
   companies: Company[];
   activeCompany: Company;
   financialYear: string;
   switchCompany: (companyId: string) => void;
-  currentUser: {
-    username: string;
-    role: string;
-  };
+  login: (username: string, password: string) => Promise<void>;
+  logout: () => Promise<void>;
+  currentUser: { username: string; role: string };
 }
 
 const CompanyContext = createContext<CompanyContextType | undefined>(undefined);
 
-export function CompanyProvider({ children }: { children: React.ReactNode }) {
-  const [activeCompany, setActiveCompany] = useState<Company>(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('exportfly_active_company_id');
-      if (saved) {
-        const found = SISTER_COMPANIES.find((c) => c.id === saved);
-        if (found) return found;
-      }
-    }
-    return SISTER_COMPANIES[0]!;
-  });
-  const [financialYear] = useState<string>('26-27');
+const EMPTY_COMPANY: Company = {
+  id: '',
+  name: '',
+  code: '',
+  gstin: '',
+  iec: '',
+  address: '',
+  currency: 'USD',
+};
 
-  const switchCompany = (companyId: string) => {
-    const found = SISTER_COMPANIES.find((c) => c.id === companyId);
-    if (found) {
-      setActiveCompany(found);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('exportfly_active_company_id', companyId);
-      }
+export function CompanyProvider({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<Status>('loading');
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [activeCompany, setActiveCompany] = useState<Company>(EMPTY_COMPANY);
+  const [currentUser, setCurrentUser] = useState({
+    username: '',
+    role: '',
+  });
+  const [financialYear, setFinancialYear] = useState('');
+
+  useEffect(() => {
+    setFinancialYear(computeFinancialYear());
+  }, []);
+
+  const hydrateCompany = useCallback(async (id: string) => {
+    try {
+      const detail = await api.company(id);
+      setActiveCompany({
+        id: detail.id,
+        name: detail.name,
+        code: detail.code,
+        gstin: detail.gstin || '',
+        iec: detail.iecCode || '',
+        address: [detail.addressLine1, detail.city, detail.state]
+          .filter(Boolean)
+          .join(', '),
+        currency: 'USD',
+      });
+    } catch {
+      /* keep brief company */
     }
-  };
+  }, []);
+
+  const bootstrap = useCallback(async () => {
+    try {
+      const me = await api.me();
+      setCurrentUser({ username: me.user.fullName || me.user.username, role: me.user.role });
+      setActiveCompany({ ...EMPTY_COMPANY, id: me.activeCompanyId, code: me.activeCompanyCode });
+      await hydrateCompany(me.activeCompanyId);
+      setStatus('authed');
+    } catch {
+      setStatus('anon');
+    }
+  }, [hydrateCompany]);
+
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      const res = await api.login(username, password);
+      setCurrentUser({ username: res.user.fullName || res.user.username, role: res.user.role });
+      setCompanies(res.companies.map(briefToCompany));
+      setActiveCompany(briefToCompany(res.activeCompany));
+      await hydrateCompany(res.activeCompany.id);
+      setStatus('authed');
+    },
+    [hydrateCompany],
+  );
+
+  const logout = useCallback(async () => {
+    try {
+      await api.logout();
+    } catch {
+      /* ignore */
+    }
+    setStatus('anon');
+    setCurrentUser({ username: '', role: '' });
+    setActiveCompany(EMPTY_COMPANY);
+    setCompanies([]);
+  }, []);
+
+  const switchCompany = useCallback(
+    (companyId: string) => {
+      const found = companies.find((c) => c.id === companyId);
+      if (found) {
+        setActiveCompany(found);
+        void hydrateCompany(companyId);
+      }
+    },
+    [companies, hydrateCompany],
+  );
 
   return (
     <CompanyContext.Provider
       value={{
-        companies: SISTER_COMPANIES,
+        status,
+        companies: companies.length ? companies : [activeCompany],
         activeCompany,
         financialYear,
         switchCompany,
-        currentUser: {
-          username: 'Navneet Kumar',
-          role: 'Super Admin',
-        },
+        login,
+        logout,
+        currentUser,
       }}
     >
       {children}

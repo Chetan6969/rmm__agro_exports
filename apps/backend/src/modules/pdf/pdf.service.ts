@@ -1,14 +1,577 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { existsSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
 import type {
   CommercialInvoicePdfData,
   CompanyHeaderData,
   CustomerPartyData,
+  ProductionOrderPdfData,
+  ProformaInvoicePdfData,
 } from './pdf.types.js';
 
 @Injectable()
 export class PdfService {
   private readonly logger = new Logger(PdfService.name);
+
+  /** Resolve a file under apps/backend/assets, working from both src and dist. */
+  private assetPath(file: string): string | null {
+    const candidates: string[] = [];
+    try {
+      candidates.push(fileURLToPath(new URL(`../../../assets/${file}`, import.meta.url)));
+      candidates.push(fileURLToPath(new URL(`../../../../assets/${file}`, import.meta.url)));
+    } catch {
+      /* ignore */
+    }
+    candidates.push(`${process.cwd()}/assets/${file}`);
+    for (const p of candidates) {
+      if (existsSync(p)) return p;
+    }
+    return null;
+  }
+
+  /** Company logo in the top-right corner of every document. */
+  private drawLogo(doc: PDFKit.PDFDocument): void {
+    const logo = this.assetPath('logo.png');
+    if (!logo) return;
+    try {
+      doc.image(logo, 437, 26, { width: 122 });
+    } catch (err) {
+      this.logger.warn(`Could not embed logo: ${(err as Error).message}`);
+    }
+  }
+
+  /** Authorised-signatory block with the scanned RMM signature/stamp. */
+  private drawSignatureBlock(
+    doc: PDFKit.PDFDocument,
+    x: number,
+    y: number,
+    width: number,
+    forName: string,
+  ): number {
+    doc
+      .font('Helvetica-Bold')
+      .fontSize(8)
+      .fillColor('#111111')
+      .text(`For ${forName.toUpperCase()}`, x, y, { width, align: 'center' });
+    let cursor = doc.y + 3;
+    const sig = this.assetPath('signature.jpg');
+    if (sig) {
+      try {
+        const sigW = 130;
+        doc.image(sig, x + (width - sigW) / 2, cursor, { width: sigW });
+        cursor += 46;
+      } catch (err) {
+        this.logger.warn(`Could not embed signature: ${(err as Error).message}`);
+        cursor += 34;
+      }
+    } else {
+      cursor += 34;
+    }
+    doc
+      .font('Helvetica')
+      .fontSize(7.5)
+      .fillColor('#555555')
+      .text('Authorised Signatory', x, cursor, { width, align: 'center' });
+    return doc.y;
+  }
+
+  /**
+   * Generates a print-faithful A4 Production Order PDF for the production
+   * department, mirroring the legacy desktop output.
+   */
+  async generateProductionOrderPdf(
+    data: ProductionOrderPdfData,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({
+          size: 'A4',
+          margin: 36,
+          bufferPages: true,
+        });
+        const chunks: Buffer[] = [];
+        doc.on('data', (c) => chunks.push(c));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const LEFT = 36;
+        const RIGHT = 559;
+        const MIDX = 300;
+        const gray = '#555555';
+        const dark = '#111111';
+        const blue = '#1f6fe0';
+
+        const hr = (y: number, color = '#999999') =>
+          doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.6).stroke(color);
+        const sectionTitle = (t: string, x: number, y: number, w: number) =>
+          doc.font('Helvetica-Bold').fontSize(9).fillColor(blue).text(t, x, y, { width: w });
+
+        this.drawLogo(doc);
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(15)
+          .fillColor(dark)
+          .text('PRODUCTION ORDER', LEFT, 46, {
+            width: RIGHT - LEFT,
+            align: 'center',
+          });
+        doc.moveDown(0.8);
+
+        // Produced by (left) + details (right)
+        let y = doc.y + 2;
+        sectionTitle('PRODUCED BY', LEFT, y, 250);
+        hr(y + 11, '#cccccc');
+        let ey = y + 14;
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(dark)
+          .text((data.company.legalName || data.company.name).toUpperCase(), LEFT, ey, { width: 250 });
+        ey = doc.y;
+        doc.font('Helvetica').fontSize(8.5).fillColor(dark);
+        for (const ln of data.company.addressLines || [data.company.address || '']) {
+          doc.text(ln, LEFT, ey, { width: 250 });
+          ey = doc.y;
+        }
+
+        sectionTitle('PRODUCTION ORDER DETAILS', MIDX, y, RIGHT - MIDX);
+        hr(y + 11, '#cccccc');
+        let ry = y + 14;
+        const detail = (k: string, v: string, boldVal = false) => {
+          doc.font('Helvetica').fontSize(8.5).fillColor(gray).text(k, MIDX, ry, { width: 95 });
+          doc.font(boldVal ? 'Helvetica-Bold' : 'Helvetica').fontSize(8.5).fillColor(dark)
+            .text(v || '-', MIDX + 100, ry, { width: RIGHT - (MIDX + 100) });
+          ry = Math.max(doc.y, ry + 12);
+        };
+        detail('Production Order No.', data.documentNumber, true);
+        detail('Date', data.documentDate);
+        detail('Buyer', data.buyer?.name || '-');
+        detail("Buyer's PO No.", data.buyerPoRef || '-');
+        detail('PO Date', data.poDate || '-');
+
+        y = Math.max(ey, ry) + 8;
+
+        // Specification
+        sectionTitle('SPECIFICATION', LEFT, y, RIGHT - LEFT);
+        y += 12;
+        hr(y, '#cccccc');
+        y += 4;
+        const specRows: Array<[string, string | undefined]> = [
+          ['Variety & Grade', data.spec.variety],
+          ['Avg. Grain Length', data.spec.avgLength],
+          ['Moisture', data.spec.moisture],
+          ['Broken', data.spec.broken],
+          ['Crop Year', data.spec.cropYear],
+        ];
+        for (const [k, v] of specRows) {
+          doc.font('Helvetica').fontSize(8.5).fillColor(gray).text(k, LEFT, y, { width: 120 });
+          doc.font('Helvetica').fontSize(8.5).fillColor(dark).text(v || '', LEFT + 125, y, { width: 300 });
+          y = Math.max(doc.y, y + 12);
+        }
+        y += 2;
+
+        // Items table
+        const cols = { sno: 40, desc: 100, pack: 360, bags: 440, qty: 500 };
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(dark);
+        doc.text('S.No', cols.sno, y);
+        doc.text('Variety / Description', cols.desc, y);
+        doc.text('Packing', cols.pack, y);
+        doc.text('No. of Bags', cols.bags, y, { width: 55, align: 'right' });
+        doc.text('Qty (MT)', cols.qty, y, { width: 59, align: 'right' });
+        y += 12;
+        hr(y, '#777777');
+        y += 4;
+
+        for (const it of data.items) {
+          const top = y;
+          doc.font('Helvetica-Bold').fontSize(8.5).fillColor(dark).text(String(it.lineNumber), cols.sno, y);
+          doc.font('Helvetica-Bold').fontSize(8.5).text(it.productName, cols.desc, y, { width: cols.pack - cols.desc - 6 });
+          let dy = doc.y;
+          if (it.description) {
+            doc.font('Helvetica').fontSize(7.5).fillColor(gray)
+              .text(it.description, cols.desc, dy, { width: cols.pack - cols.desc - 6 });
+            dy = doc.y;
+          }
+          doc.font('Helvetica').fontSize(8.5).fillColor(dark);
+          doc.text(it.packing || '', cols.pack, top, { width: 75 });
+          doc.text(String(it.noOfBags), cols.bags, top, { width: 55, align: 'right' });
+          doc.text(it.quantityMt.toFixed(3), cols.qty, top, { width: 59, align: 'right' });
+          y = Math.max(dy, top + 12) + 4;
+        }
+        hr(y, '#777777');
+        y += 5;
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(dark)
+          .text(`Total quantity (MT): ${data.totalQuantityMt.toFixed(3)}`, LEFT, y, { continued: true })
+          .text(`      Total no. of bags: ${data.totalBags}`);
+        y = doc.y + 10;
+
+        // Instructions
+        sectionTitle('INSTRUCTIONS', LEFT, y, RIGHT - LEFT);
+        y += 12;
+        hr(y, '#cccccc');
+        y += 4;
+        doc.font('Helvetica').fontSize(8.5).fillColor(dark)
+          .text(data.instructions || '-', LEFT, y, { width: RIGHT - LEFT });
+        y = doc.y + 8;
+
+        if (data.terms.length > 0) {
+          sectionTitle('TERMS & CONDITIONS', LEFT, y, RIGHT - LEFT);
+          y += 12;
+          doc.font('Helvetica').fontSize(7.8).fillColor(dark);
+          data.terms.forEach((t, i) => {
+            doc.text(`${i + 1}. ${t}`, LEFT, y, { width: RIGHT - LEFT });
+            y = doc.y + 2;
+          });
+          y += 4;
+        }
+
+        if (data.showSignature) {
+          y = Math.max(y, doc.y) + 20;
+          this.drawSignatureBlock(
+            doc,
+            MIDX,
+            y,
+            RIGHT - MIDX,
+            data.company.legalName || data.company.name,
+          );
+        }
+
+        if (data.footer) {
+          const fy = doc.page.height - 48;
+          doc.font('Helvetica').fontSize(7).fillColor(gray)
+            .text(data.footer.line, LEFT, fy, {
+              width: RIGHT - LEFT,
+              align: 'center',
+              lineBreak: false,
+            });
+        }
+
+        doc.end();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  /**
+   * Generates a print-faithful A4 Proforma Invoice PDF that mirrors the
+   * legacy desktop "Preview / Print" output.
+   */
+  async generateProformaInvoicePdf(
+    data: ProformaInvoicePdfData,
+  ): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({
+          size: 'A4',
+          margin: 36,
+          bufferPages: true,
+        });
+        const chunks: Buffer[] = [];
+        doc.on('data', (c) => chunks.push(c));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const LEFT = 36;
+        const RIGHT = 559;
+        const MIDX = 300;
+        const gray = '#555555';
+        const dark = '#111111';
+
+        const hr = (y: number, color = '#999999') =>
+          doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.6).stroke(color);
+        const label = (t: string, x: number, y: number, w: number) =>
+          doc
+            .font('Helvetica-Bold')
+            .fontSize(7.5)
+            .fillColor(gray)
+            .text(t, x, y, { width: w });
+        const val = (t: string, x: number, y: number, w: number) =>
+          doc
+            .font('Helvetica')
+            .fontSize(8.5)
+            .fillColor(dark)
+            .text(t, x, y, { width: w });
+
+        // ---- Logo (top-right) + Title ----
+        this.drawLogo(doc);
+        doc
+          .font('Helvetica-Bold')
+          .fontSize(15)
+          .fillColor(dark)
+          .text('PROFORMA INVOICE', LEFT, 46, {
+            width: RIGHT - LEFT,
+            align: 'center',
+          });
+        doc.moveDown(0.6);
+
+        // ---- Exporter (left) + PI details (right) ----
+        let y = doc.y + 4;
+        label('EXPORTER', LEFT, y, 250);
+        const exporterLines = [
+          data.company.legalName || data.company.name,
+          ...(data.company.addressLines || [data.company.address || '']),
+        ].filter(Boolean);
+        doc.font('Helvetica').fontSize(8.5).fillColor(dark);
+        let ey = y + 11;
+        for (const ln of exporterLines) {
+          doc.text(ln, LEFT, ey, { width: 250 });
+          ey = doc.y;
+        }
+
+        label('PROFORMA INVOICE DETAILS', MIDX, y, RIGHT - MIDX);
+        let ry = y + 11;
+        const detailRow = (k: string, v: string) => {
+          doc
+            .font('Helvetica-Bold')
+            .fontSize(8)
+            .fillColor(gray)
+            .text(k, MIDX, ry, { width: 90, continued: false });
+          doc
+            .font('Helvetica')
+            .fontSize(8.5)
+            .fillColor(dark)
+            .text(v || '-', MIDX + 95, ry, { width: RIGHT - (MIDX + 95) });
+          ry = Math.max(doc.y, ry + 12);
+        };
+        detailRow('PI No.', data.documentNumber);
+        detailRow('PI Date', data.documentDate);
+        if (data.buyerPoRef) detailRow('Buyers PO / Ref', data.buyerPoRef);
+        if (data.poDate) detailRow('PO Date', data.poDate);
+        if (data.sections.showLcDetails) {
+          detailRow('LC No.', data.lcNumber || '-');
+          detailRow('LC Date', data.lcDate || '-');
+        }
+        detailRow('Currency', data.currency);
+        detailRow('Incoterms', data.incoterm);
+        detailRow('Payment Terms', data.paymentTerms);
+
+        y = Math.max(ey, ry) + 6;
+        hr(y);
+        y += 6;
+
+        // ---- Consignee / Buyer / Notify ----
+        const party = (
+          title: string,
+          p: CustomerPartyData | undefined,
+          x: number,
+          w: number,
+          yy: number,
+        ): number => {
+          label(title, x, yy, w);
+          let py = yy + 11;
+          if (p) {
+            doc.font('Helvetica-Bold').fontSize(8.5).fillColor(dark);
+            doc.text(p.name, x, py, { width: w });
+            py = doc.y;
+            doc.font('Helvetica').fontSize(8).fillColor(dark);
+            doc.text(`${p.address}`, x, py, { width: w });
+            py = doc.y;
+            doc.text(p.country, x, py, { width: w });
+            py = doc.y;
+          } else {
+            doc.font('Helvetica').fontSize(8).fillColor(gray).text('-', x, py);
+            py = doc.y;
+          }
+          return py;
+        };
+
+        const cY = party('CONSIGNEE / BUYER', data.consignee, LEFT, 250, y);
+        const bY = data.buyer
+          ? party('BUYER (IF OTHER THAN CONSIGNEE)', data.buyer, MIDX, RIGHT - MIDX, y)
+          : y;
+        y = Math.max(cY, bY) + 6;
+
+        if (data.sections.showNotifyParty && data.notifyParty) {
+          y = party('NOTIFY PARTY', data.notifyParty, LEFT, 250, y) + 6;
+        }
+
+        hr(y);
+        y += 6;
+
+        // ---- Shipping details ----
+        if (data.sections.showShippingDetails) {
+          label('SHIPPING DETAILS', LEFT, y, RIGHT - LEFT);
+          y += 12;
+          const sLeft = [
+            ['Country of Origin', data.countryOfOrigin],
+            ['Port of Loading', data.portOfLoading],
+            ['Mode of Shipment', data.modeOfShipment],
+          ];
+          const sRight = [
+            ['Destination Country', data.finalDestination],
+            ['Port of Discharge', data.portOfDischarge],
+          ];
+          const startShip = y;
+          let ly = startShip;
+          for (const [k, v] of sLeft) {
+            doc.font('Helvetica-Bold').fontSize(8).fillColor(gray).text(k + ':', LEFT, ly, { width: 110 });
+            doc.font('Helvetica').fontSize(8.5).fillColor(dark).text(v, LEFT + 115, ly, { width: 170 });
+            ly = Math.max(doc.y, ly + 12);
+          }
+          let ry2 = startShip;
+          for (const [k, v] of sRight) {
+            doc.font('Helvetica-Bold').fontSize(8).fillColor(gray).text(k + ':', MIDX, ry2, { width: 110 });
+            doc.font('Helvetica').fontSize(8.5).fillColor(dark).text(v, MIDX + 115, ry2, { width: RIGHT - (MIDX + 115) });
+            ry2 = Math.max(doc.y, ry2 + 12);
+          }
+          y = Math.max(ly, ry2) + 4;
+          hr(y);
+          y += 6;
+        }
+
+        // ---- Items table ----
+        const cols = { sno: 40, desc: 70, hs: 300, qty: 360, rate: 430, amt: 495 };
+        doc.font('Helvetica-Bold').fontSize(8).fillColor(gray);
+        doc.text('S.No', cols.sno, y);
+        doc.text('Description of Goods', cols.desc, y);
+        doc.text('HS Code', cols.hs, y);
+        doc.text('Qty (MT)', cols.qty, y, { width: 55, align: 'right' });
+        doc.text('Rate', cols.rate, y, { width: 55, align: 'right' });
+        doc.text('Amount', cols.amt, y, { width: 64, align: 'right' });
+        y += 12;
+        hr(y, '#777777');
+        y += 5;
+
+        doc.fillColor(dark);
+        for (const it of data.items) {
+          const rowTop = y;
+          doc.font('Helvetica-Bold').fontSize(8.5).text(String(it.lineNumber), cols.sno, y);
+          doc.font('Helvetica-Bold').fontSize(8.5).text(it.productName, cols.desc, y, { width: cols.hs - cols.desc - 6 });
+          let dy = doc.y;
+          doc.font('Helvetica').fontSize(7.5).fillColor(gray);
+          if (it.description) {
+            doc.text(it.description, cols.desc, dy, { width: cols.hs - cols.desc - 6 });
+            dy = doc.y;
+          }
+          if (it.packingText) {
+            doc.text('Packing:', cols.desc, dy + 1, { width: cols.hs - cols.desc - 6 });
+            dy = doc.y;
+            doc.text(it.packingText, cols.desc, dy, { width: cols.hs - cols.desc - 6 });
+            dy = doc.y;
+          }
+          if (it.cropYear) {
+            doc.text(`CROP YEAR : ${it.cropYear}`, cols.desc, dy, { width: cols.hs - cols.desc - 6 });
+            dy = doc.y;
+          }
+          doc.fillColor(dark).font('Helvetica').fontSize(8.5);
+          doc.text(it.hsCode || '-', cols.hs, rowTop, { width: 55 });
+          doc.text(it.quantityMt.toFixed(2), cols.qty, rowTop, { width: 55, align: 'right' });
+          doc.text(it.ratePerMt.toFixed(2), cols.rate, rowTop, { width: 55, align: 'right' });
+          doc.text(it.amount.toFixed(2), cols.amt, rowTop, { width: 64, align: 'right' });
+          y = Math.max(dy, rowTop + 14) + 4;
+        }
+
+        hr(y, '#777777');
+        y += 6;
+
+        // ---- Totals ----
+        const totalRow = (k: string, v: string, bold = false) => {
+          doc
+            .font(bold ? 'Helvetica-Bold' : 'Helvetica')
+            .fontSize(bold ? 9.5 : 8.5)
+            .fillColor(dark)
+            .text(k, 360, y, { width: 75, align: 'left' });
+          doc
+            .font(bold ? 'Helvetica-Bold' : 'Helvetica')
+            .fontSize(bold ? 9.5 : 8.5)
+            .text(v, cols.amt - 40, y, { width: 104, align: 'right' });
+          y += bold ? 16 : 13;
+        };
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(dark)
+          .text(`Total quantity (MT): ${data.totalQuantityMt.toFixed(3)}`, LEFT, y);
+        totalRow(data.incoterm, data.goodsSubtotal.toFixed(2));
+        totalRow('Freight', data.freightAmount.toFixed(2));
+        totalRow('Insurance', data.insuranceAmount.toFixed(2));
+        totalRow('Discount (-)', data.discountAmount.toFixed(2));
+        hr(y, '#777777');
+        y += 5;
+        totalRow(`TOTAL (${data.currency})`, data.grandTotal.toFixed(2), true);
+        y += 2;
+
+        doc.font('Helvetica-Bold').fontSize(8).fillColor(dark)
+          .text('AMOUNT IN WORDS: ', LEFT, y, { continued: true })
+          .font('Helvetica')
+          .text(data.amountInWords);
+        y = doc.y + 8;
+
+        // ---- Bank details ----
+        if (data.sections.showBankDetails && data.bankDetails) {
+          hr(y);
+          y += 5;
+          label('BANK DETAILS (FOR REMITTANCE)', LEFT, y, RIGHT - LEFT);
+          y += 12;
+          const b = data.bankDetails;
+          const bankRows: Array<[string, string]> = [
+            ['Beneficiary', b.accountName],
+            ['Bank Name', b.bankName],
+            ['Account No.', b.accountNumber],
+            ['SWIFT Code', b.swiftCode],
+            ['IFSC / AD Code', b.ifscAdCode || '-'],
+          ];
+          for (const [k, v] of bankRows) {
+            doc.font('Helvetica-Bold').fontSize(8).fillColor(gray).text(k, LEFT, y, { width: 90 });
+            doc.font('Helvetica').fontSize(8.5).fillColor(dark).text(v, LEFT + 95, y, { width: 300 });
+            y = Math.max(doc.y, y + 11);
+          }
+          y += 4;
+        }
+
+        // ---- Terms ----
+        if (data.sections.showTermsConditions && data.terms.length > 0) {
+          hr(y);
+          y += 5;
+          label('TERMS & CONDITIONS', LEFT, y, RIGHT - LEFT);
+          y += 12;
+          doc.font('Helvetica').fontSize(7.8).fillColor(dark);
+          data.terms.forEach((t, i) => {
+            doc.text(`${i + 1}. ${t}`, LEFT, y, { width: RIGHT - LEFT });
+            y = doc.y + 2;
+          });
+          y += 4;
+        }
+
+        // ---- Signature ----
+        if (data.sections.showSignatureBlock) {
+          const blockTop = Math.max(y, doc.y) + 10;
+          doc.font('Helvetica').fontSize(8).fillColor(dark)
+            .text(
+              `Acceptance by: ${data.buyer?.name || data.consignee?.name || ''}`,
+              LEFT,
+              blockTop,
+              { width: 250 },
+            );
+          const sigBottom = this.drawSignatureBlock(
+            doc,
+            MIDX,
+            blockTop,
+            RIGHT - MIDX,
+            data.company.legalName || data.company.name,
+          );
+          doc.font('Helvetica').fontSize(7.5).fillColor(gray)
+            .text('Signature, name and company stamp', LEFT, sigBottom, { width: 250 });
+        }
+
+        // ---- Footer (pinned near bottom of the first page) ----
+        if (data.footer) {
+          const fy = doc.page.height - 58;
+          doc.font('Helvetica').fontSize(7).fillColor(gray)
+            .text(data.footer.addressLine, LEFT, fy, {
+              width: RIGHT - LEFT,
+              align: 'center',
+              lineBreak: false,
+            })
+            .text(data.footer.contactLine, LEFT, fy + 10, {
+              width: RIGHT - LEFT,
+              align: 'center',
+              lineBreak: false,
+            });
+        }
+
+        doc.end();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
 
   /**
    * Generates a print-faithful A4 Commercial Export Invoice PDF
@@ -30,6 +593,7 @@ export class PdfService {
         doc.on('error', (err) => reject(err));
 
         // 1. HEADER (Top Letterhead)
+        this.drawLogo(doc);
         doc
           .font('Helvetica-Bold')
           .fontSize(16)
@@ -265,22 +829,7 @@ export class PdfService {
             { width: 300 },
           );
 
-        doc
-          .font('Helvetica-Bold')
-          .fontSize(8)
-          .text(`For ${data.company.name.toUpperCase()}`, 380, currentY, {
-            align: 'center',
-            width: 170,
-          });
-
-        currentY += 35;
-        doc
-          .font('Helvetica')
-          .fontSize(7)
-          .text('Authorised Signatory', 380, currentY, {
-            align: 'center',
-            width: 170,
-          });
+        this.drawSignatureBlock(doc, 380, currentY, 170, data.company.name);
 
         doc.end();
       } catch (err) {
@@ -320,6 +869,7 @@ export class PdfService {
         doc.on('error', (err) => reject(err));
 
         // Header
+        this.drawLogo(doc);
         doc
           .font('Helvetica-Bold')
           .fontSize(16)
@@ -411,22 +961,7 @@ export class PdfService {
 
         // Signatory
         currentY += 50;
-        doc
-          .font('Helvetica-Bold')
-          .fontSize(8)
-          .text(`For ${company.name.toUpperCase()}`, 380, currentY, {
-            align: 'center',
-            width: 170,
-          });
-
-        currentY += 35;
-        doc
-          .font('Helvetica')
-          .fontSize(7)
-          .text('Authorised Signatory', 380, currentY, {
-            align: 'center',
-            width: 170,
-          });
+        this.drawSignatureBlock(doc, 380, currentY, 170, company.name);
 
         doc.end();
       } catch (err) {
