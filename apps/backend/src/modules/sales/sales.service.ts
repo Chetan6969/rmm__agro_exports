@@ -14,6 +14,7 @@ import {
   containers,
   customers,
   invoiceItems,
+  invoiceTerms,
   packingTypes,
   productionOrderItems,
   productionOrders,
@@ -24,9 +25,11 @@ import {
   proformaTerms,
   receipts,
   shippingCharges,
+  shippingLines,
   type CommercialInvoice,
   type Container,
   type InvoiceItem,
+  type InvoiceTerm,
   type ProductionOrder,
   type ProductionOrderItem,
   type ProductionTerm,
@@ -882,28 +885,15 @@ export class SalesService {
   ): Promise<CommercialInvoice> {
     const docDate = new Date(dto.documentDate);
     const fy = computeFinancialYear(docDate);
-
-    // 1. Transactional number allocation: <CODE>/EX/<FY>/<no>
-    const numbering = await this.numberingService.allocateNextNumber(
-      companyId,
-      companyCode,
-      'COMMERCIAL_INVOICE',
-      docDate,
-    );
+    const num = (n: number | undefined | null) =>
+      n != null ? String(n) : null;
 
     // 2. Line calculation
     let totalFobAmount = 0;
-    const lineCalculations = dto.items.map((item) => {
+    const lineCalculations = dto.items.map((item, idx) => {
       const lineAmt = Math.round(item.quantityMt * item.ratePerMt * 100) / 100;
       totalFobAmount += lineAmt;
-      return {
-        productId: item.productId,
-        packingTypeId: item.packingTypeId,
-        quantityMt: item.quantityMt,
-        ratePerMt: item.ratePerMt,
-        specifications: item.specifications,
-        amount: lineAmt,
-      };
+      return { ...item, lineNumber: idx + 1, amount: lineAmt };
     });
     totalFobAmount = Math.round(totalFobAmount * 100) / 100;
 
@@ -921,12 +911,15 @@ export class SalesService {
 
     const currency = dto.currency || 'USD';
     const amountInWords = convertAmountToWords(totalInvoiceAmount, currency);
+    const status = dto.status || 'ISSUED';
+    const freightAmount = dto.freightAmount ?? oceanFreightAmount;
+    const totalChargesAmount = shipping.totalShippingCharge;
 
     if (!this.databaseService.isConnected) {
       return {
         id: 'mock-ci-uuid',
         companyId,
-        documentNumber: numbering.documentNumber,
+        documentNumber: dto.documentNumber || 'RMM/EX/26-27/MOCK',
         documentDate: dto.documentDate,
         financialYear: fy,
         proformaInvoiceId: dto.proformaInvoiceId || null,
@@ -935,19 +928,39 @@ export class SalesService {
         customerId: dto.customerId,
         consigneeId: dto.consigneeId || null,
         notifyPartyId: dto.notifyPartyId || null,
+        invoiceType: dto.invoiceType || 'WHITE',
+        lcNumber: dto.lcNumber || null,
+        lcDate: dto.lcDate || null,
+        shippingLineId: dto.shippingLineId || null,
+        preCarriageBy: dto.preCarriageBy || null,
+        placeOfReceipt: dto.placeOfReceipt || null,
+        containerNo: dto.containerNo || null,
+        sealNo: dto.sealNo || null,
+        ladingBlNumber: dto.ladingBlNumber || null,
+        ladingBlDate: dto.ladingBlDate || null,
+        termsOf: dto.termsOf || null,
+        paymentTerm: dto.paymentTerm || null,
+        brand: dto.brand || null,
+        marksNumbers: dto.marksNumbers || null,
+        goodsDescription: dto.goodsDescription || null,
+        grossWtMt: num(dto.grossWtMt),
+        fcl: dto.fcl || null,
+        freightAmount: freightAmount.toFixed(2),
+        totalChargesAmount: totalChargesAmount.toFixed(2),
+        showSignature: dto.showSignature ?? true,
         shippingBillNumber: dto.shippingBillNumber || null,
-        shippingBillDate: null,
+        shippingBillDate: dto.shippingBillDate || null,
         blNumber: dto.blNumber || null,
-        blDate: null,
+        blDate: dto.blDate || null,
         vesselFlightName: dto.vesselFlightName || null,
-        voyageNumber: null,
-        portOfLoading: dto.portOfLoading,
-        portOfDischarge: dto.portOfDischarge,
-        countryOfOrigin: 'India',
-        countryOfDestination: dto.countryOfDestination,
+        voyageNumber: dto.voyageNumber || null,
+        portOfLoading: dto.portOfLoading || null,
+        portOfDischarge: dto.portOfDischarge || null,
+        countryOfOrigin: dto.countryOfOrigin || 'India',
+        countryOfDestination: dto.countryOfDestination || null,
         incoterm: dto.incoterm,
         currency,
-        exchangeRate: '1.0000',
+        exchangeRate: (dto.exchangeRate ?? 1).toFixed(4),
         totalFobAmount: totalFobAmount.toFixed(2),
         oceanFreightAmount: oceanFreightAmount.toFixed(2),
         insuranceAmount: insuranceAmount.toFixed(2),
@@ -955,8 +968,8 @@ export class SalesService {
         amountInWords,
         lutNumber: null,
         bankDetailsId: dto.bankDetailsId || null,
-        frozenTerms: 'Snapshotted Commercial Terms',
-        status: 'ISSUED',
+        frozenTerms: (dto.terms || []).map((t) => t.content).join('\n'),
+        status,
         version: 1,
         deletedAt: null,
         createdBy: userId,
@@ -967,6 +980,37 @@ export class SalesService {
     }
 
     const db = this.databaseService.db;
+
+    // Document number: manual if supplied, else auto-allocated
+    let documentNumber: string;
+    const manualNumber = dto.documentNumber?.trim();
+    if (manualNumber) {
+      documentNumber = manualNumber;
+      const [dup] = await db
+        .select({ id: commercialInvoices.id })
+        .from(commercialInvoices)
+        .where(
+          and(
+            eq(commercialInvoices.companyId, companyId),
+            eq(commercialInvoices.documentNumber, documentNumber),
+            isNull(commercialInvoices.deletedAt),
+          ),
+        )
+        .limit(1);
+      if (dup) {
+        throw new ConflictException(
+          `Invoice number "${documentNumber}" already exists. Use a different number.`,
+        );
+      }
+    } else {
+      const numbering = await this.numberingService.allocateNextNumber(
+        companyId,
+        companyCode,
+        'COMMERCIAL_INVOICE',
+        docDate,
+      );
+      documentNumber = numbering.documentNumber;
+    }
 
     const createdInvoice = await db.transaction(async (tx) => {
       // If linked to production order, validate remaining balance
@@ -1009,12 +1053,11 @@ export class SalesService {
           .where(eq(productionOrders.id, dto.productionOrderId));
       }
 
-      // Insert Commercial Invoice
       const [invoice] = await tx
         .insert(commercialInvoices)
         .values({
           companyId,
-          documentNumber: numbering.documentNumber,
+          documentNumber,
           documentDate: dto.documentDate,
           financialYear: fy,
           proformaInvoiceId: dto.proformaInvoiceId || null,
@@ -1023,19 +1066,39 @@ export class SalesService {
           customerId: dto.customerId,
           consigneeId: dto.consigneeId || null,
           notifyPartyId: dto.notifyPartyId || null,
+          invoiceType: dto.invoiceType || 'WHITE',
+          lcNumber: dto.lcNumber || null,
+          lcDate: dto.lcDate || null,
+          shippingLineId: dto.shippingLineId || null,
+          preCarriageBy: dto.preCarriageBy || null,
+          placeOfReceipt: dto.placeOfReceipt || null,
+          containerNo: dto.containerNo || null,
+          sealNo: dto.sealNo || null,
+          ladingBlNumber: dto.ladingBlNumber || null,
+          ladingBlDate: dto.ladingBlDate || null,
+          termsOf: dto.termsOf || null,
+          paymentTerm: dto.paymentTerm || null,
+          brand: dto.brand || null,
+          marksNumbers: dto.marksNumbers || null,
+          goodsDescription: dto.goodsDescription || null,
+          grossWtMt: num(dto.grossWtMt),
+          fcl: dto.fcl || null,
+          freightAmount: freightAmount.toFixed(2),
+          totalChargesAmount: totalChargesAmount.toFixed(2),
+          showSignature: dto.showSignature ?? true,
           shippingBillNumber: dto.shippingBillNumber || null,
-          shippingBillDate: null,
+          shippingBillDate: dto.shippingBillDate || null,
           blNumber: dto.blNumber || null,
-          blDate: null,
+          blDate: dto.blDate || null,
           vesselFlightName: dto.vesselFlightName || null,
-          voyageNumber: null,
-          portOfLoading: dto.portOfLoading,
-          portOfDischarge: dto.portOfDischarge,
-          countryOfOrigin: 'India',
-          countryOfDestination: dto.countryOfDestination,
+          voyageNumber: dto.voyageNumber || null,
+          portOfLoading: dto.portOfLoading || null,
+          portOfDischarge: dto.portOfDischarge || null,
+          countryOfOrigin: dto.countryOfOrigin || 'India',
+          countryOfDestination: dto.countryOfDestination || null,
           incoterm: dto.incoterm,
           currency,
-          exchangeRate: '1.0000',
+          exchangeRate: (dto.exchangeRate ?? 1).toFixed(4),
           totalFobAmount: totalFobAmount.toFixed(2),
           oceanFreightAmount: oceanFreightAmount.toFixed(2),
           insuranceAmount: insuranceAmount.toFixed(2),
@@ -1043,24 +1106,43 @@ export class SalesService {
           amountInWords,
           lutNumber: null,
           bankDetailsId: dto.bankDetailsId || null,
-          frozenTerms: 'Snapshotted Commercial Terms',
-          status: 'ISSUED',
+          frozenTerms: (dto.terms || []).map((t) => t.content).join('\n'),
+          status,
           version: 1,
           createdBy: userId,
           updatedBy: userId,
         })
         .returning();
 
-      // Insert Items
       for (const line of lineCalculations) {
         await tx.insert(invoiceItems).values({
           invoiceId: invoice.id,
+          lineNumber: line.lineNumber,
           productId: line.productId,
-          packingTypeId: line.packingTypeId,
+          packingTypeId: line.packingTypeId || null,
+          packingText: line.packingText || null,
+          hsCode: line.hsCode || null,
+          noOfBags: line.noOfBags ?? 0,
           quantityMt: line.quantityMt.toFixed(3),
+          grossWtMt: num(line.grossWtMt),
           ratePerMt: line.ratePerMt.toFixed(2),
           amount: line.amount.toFixed(2),
+          cgst: (line.cgst ?? 0).toFixed(2),
+          sgst: (line.sgst ?? 0).toFixed(2),
+          igst: (line.igst ?? 0).toFixed(2),
+          brokenBelow: line.brokenBelow ?? false,
+          fcl: line.fcl ?? false,
           specifications: line.specifications || null,
+        });
+      }
+
+      let position = 0;
+      for (const term of dto.terms || []) {
+        await tx.insert(invoiceTerms).values({
+          invoiceId: invoice.id,
+          termId: term.termId || null,
+          position: position++,
+          content: term.content,
         });
       }
 
@@ -1079,7 +1161,6 @@ export class SalesService {
         totalShippingCharge: shipping.totalShippingCharge.toFixed(2),
       });
 
-      // Insert Packing List Containers if provided
       if (dto.containers && dto.containers.length > 0) {
         for (const c of dto.containers) {
           await tx.insert(containers).values({
@@ -1094,7 +1175,6 @@ export class SalesService {
         }
       }
 
-      // Audit Log
       await this.activityLogService.record(
         {
           companyId,
@@ -1118,20 +1198,40 @@ export class SalesService {
     return createdInvoice;
   }
 
-  async listCommercialInvoices(
-    companyId: string,
-  ): Promise<CommercialInvoice[]> {
+  async listCommercialInvoices(companyId: string): Promise<
+    Array<
+      CommercialInvoice & {
+        customerName: string | null;
+        orderNumber: string | null;
+      }
+    >
+  > {
     if (!this.databaseService.isConnected) return [];
-    return this.databaseService.db
-      .select()
+    const rows = await this.databaseService.db
+      .select({
+        inv: commercialInvoices,
+        customerName: customers.name,
+        orderNumber: productionOrders.documentNumber,
+      })
       .from(commercialInvoices)
+      .leftJoin(customers, eq(commercialInvoices.customerId, customers.id))
+      .leftJoin(
+        productionOrders,
+        eq(commercialInvoices.productionOrderId, productionOrders.id),
+      )
       .where(
         and(
           eq(commercialInvoices.companyId, companyId),
           isNull(commercialInvoices.deletedAt),
         ),
       )
-      .orderBy(desc(commercialInvoices.documentDate));
+      .orderBy(desc(commercialInvoices.createdAt));
+
+    return rows.map((r) => ({
+      ...r.inv,
+      customerName: r.customerName,
+      orderNumber: r.orderNumber,
+    }));
   }
 
   async getCommercialInvoiceById(
@@ -1139,15 +1239,31 @@ export class SalesService {
     id: string,
   ): Promise<{
     invoice: CommercialInvoice;
-    items: InvoiceItem[];
+    items: Array<
+      InvoiceItem & { productName: string | null; packingName: string | null }
+    >;
     shippingCharges: ShippingCharge | null;
     containers: Container[];
+    terms: InvoiceTerm[];
+    buyer: { name: string; address: string; country: string } | null;
+    consignee: { name: string; address: string; country: string } | null;
+    notifyParty: { name: string; address: string; country: string } | null;
+    shippingLineName: string | null;
+    bank: {
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+      ifscCode: string | null;
+      swiftCode: string;
+      adCode: string;
+    } | null;
   }> {
     if (!this.databaseService.isConnected) {
       throw new NotFoundException('Database not connected in mock mode');
     }
+    const db = this.databaseService.db;
 
-    const [invoice] = await this.databaseService.db
+    const [invoice] = await db
       .select()
       .from(commercialInvoices)
       .where(
@@ -1157,32 +1273,136 @@ export class SalesService {
           isNull(commercialInvoices.deletedAt),
         ),
       );
+    if (!invoice) throw new NotFoundException(`Invoice ${id} not found`);
 
-    if (!invoice) {
-      throw new NotFoundException(`Invoice ${id} not found`);
-    }
-
-    const items = await this.databaseService.db
-      .select()
+    const items = await db
+      .select({
+        item: invoiceItems,
+        productName: products.name,
+        packingName: packingTypes.name,
+      })
       .from(invoiceItems)
-      .where(eq(invoiceItems.invoiceId, id));
+      .leftJoin(products, eq(invoiceItems.productId, products.id))
+      .leftJoin(packingTypes, eq(invoiceItems.packingTypeId, packingTypes.id))
+      .where(eq(invoiceItems.invoiceId, id))
+      .orderBy(asc(invoiceItems.lineNumber));
 
-    const [shipping] = await this.databaseService.db
+    const [shipping] = await db
       .select()
       .from(shippingCharges)
       .where(eq(shippingCharges.invoiceId, id));
-
-    const containerList = await this.databaseService.db
+    const containerList = await db
       .select()
       .from(containers)
       .where(eq(containers.invoiceId, id));
+    const terms = await db
+      .select()
+      .from(invoiceTerms)
+      .where(eq(invoiceTerms.invoiceId, id))
+      .orderBy(asc(invoiceTerms.position));
+
+    const partyById = async (customerId: string | null) => {
+      if (!customerId) return null;
+      const [c] = await db
+        .select()
+        .from(customers)
+        .where(eq(customers.id, customerId));
+      return c
+        ? { name: c.name, address: c.address, country: c.country }
+        : null;
+    };
+
+    let shippingLineName: string | null = null;
+    if (invoice.shippingLineId) {
+      const [sl] = await db
+        .select()
+        .from(shippingLines)
+        .where(eq(shippingLines.id, invoice.shippingLineId));
+      shippingLineName = sl?.name ?? null;
+    }
+
+    let bank = null as null | {
+      bankName: string;
+      accountName: string;
+      accountNumber: string;
+      ifscCode: string | null;
+      swiftCode: string;
+      adCode: string;
+    };
+    if (invoice.bankDetailsId) {
+      const [b] = await db
+        .select()
+        .from(bankDetails)
+        .where(eq(bankDetails.id, invoice.bankDetailsId));
+      if (b) {
+        bank = {
+          bankName: b.bankName,
+          accountName: b.accountName,
+          accountNumber: b.accountNumber,
+          ifscCode: b.ifscCode,
+          swiftCode: b.swiftCode,
+          adCode: b.adCode,
+        };
+      }
+    }
 
     return {
       invoice,
-      items,
+      items: items.map((r) => ({
+        ...r.item,
+        productName: r.productName,
+        packingName: r.packingName,
+      })),
       shippingCharges: shipping || null,
       containers: containerList,
+      terms,
+      buyer: await partyById(invoice.customerId),
+      consignee: await partyById(invoice.consigneeId),
+      notifyParty: await partyById(invoice.notifyPartyId),
+      shippingLineName,
+      bank,
     };
+  }
+
+  async deleteCommercialInvoice(
+    companyId: string,
+    id: string,
+    userId: string,
+    username: string,
+    reason?: string,
+  ): Promise<{ message: string }> {
+    if (!this.databaseService.isConnected) {
+      throw new NotFoundException('Database not connected');
+    }
+    const [existing] = await this.databaseService.db
+      .select()
+      .from(commercialInvoices)
+      .where(
+        and(
+          eq(commercialInvoices.id, id),
+          eq(commercialInvoices.companyId, companyId),
+          isNull(commercialInvoices.deletedAt),
+        ),
+      );
+    if (!existing) throw new NotFoundException(`Invoice ${id} not found`);
+
+    await this.databaseService.db
+      .update(commercialInvoices)
+      .set({ deletedAt: new Date(), updatedAt: new Date(), updatedBy: userId })
+      .where(eq(commercialInvoices.id, id));
+
+    await this.activityLogService.record({
+      companyId,
+      userId,
+      username,
+      action: 'DELETE',
+      entityTable: 'commercial_invoices',
+      entityId: id,
+      deletionReason: reason || 'Deleted from Invoices screen',
+      previousValues: { documentNumber: existing.documentNumber },
+    });
+
+    return { message: 'Invoice deleted successfully' };
   }
 
   // -------------------------------------------------------------------------

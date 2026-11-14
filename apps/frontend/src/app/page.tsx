@@ -7,7 +7,7 @@ import { Sidebar } from '../components/layout/Sidebar';
 import { ExecutiveDashboard } from '../components/dashboard/ExecutiveDashboard';
 import { ProformaInvoices } from '../components/proforma/ProformaInvoices';
 import { ProductionOrders } from '../components/production/ProductionOrders';
-import { CommercialInvoiceForm } from '../components/sales/CommercialInvoiceForm';
+import { Invoices } from '../components/invoice/Invoices';
 import { RegistersView } from '../components/reports/RegistersView';
 import { DocumentHubChecklist } from '../components/documents/DocumentHubChecklist';
 import { LoginScreen } from '../components/auth/LoginScreen';
@@ -48,7 +48,7 @@ function Workstation() {
 
           {currentSection === 'production-orders' && <ProductionOrders />}
 
-          {currentSection === 'commercial-invoices' && <CommercialInvoiceForm />}
+          {currentSection === 'commercial-invoices' && <Invoices />}
 
           {currentSection === 'registers' && <RegistersView />}
 

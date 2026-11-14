@@ -433,6 +433,98 @@ export class SalesController {
     );
   }
 
+  @Get('invoices/:id/pdf')
+  @ApiOperation({ summary: 'Download the print-faithful Commercial Invoice PDF' })
+  @ApiParam({ name: 'id', description: 'Commercial Invoice UUID' })
+  async getCommercialInvoicePdf(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Res() res: Response,
+  ) {
+    const { companyId } = this.getCompanyContext(req);
+    const detail = await this.salesService.getCommercialInvoiceById(companyId, id);
+    const company = await this.companiesService.getCompanyById(companyId);
+    const inv = detail.invoice;
+    const address = `${company.addressLine1}, ${company.city}, ${company.state} - ${company.pincode}`;
+
+    const pdf = await this.pdfService.generateCommercialInvoicePdf({
+      company: {
+        name: company.legalName || company.name,
+        code: company.code,
+        address,
+        gstin: company.gstin || undefined,
+        iec: company.iecCode || undefined,
+        email: company.contactEmail || undefined,
+      },
+      buyer: detail.buyer || { name: '-', address: '', country: '' },
+      consignee: detail.consignee || undefined,
+      documentNumber: inv.documentNumber,
+      documentDate: inv.documentDate,
+      financialYear: inv.financialYear,
+      buyerPoNumber: inv.buyerPoNumber || undefined,
+      portOfLoading: inv.portOfLoading || '-',
+      portOfDischarge: inv.portOfDischarge || '-',
+      countryOfDestination: inv.countryOfDestination || '-',
+      incoterm: inv.incoterm,
+      currency: inv.currency,
+      items: detail.items.map((it) => ({
+        productName: it.productName || 'Product',
+        packingDescription: it.packingText || it.packingName || '',
+        quantityMt: Number(it.quantityMt),
+        ratePerMt: Number(it.ratePerMt),
+        amount: Number(it.amount),
+        specifications: it.specifications || undefined,
+      })),
+      totalFobAmount: Number(inv.totalFobAmount),
+      oceanFreightAmount: Number(inv.oceanFreightAmount),
+      insuranceAmount: Number(inv.insuranceAmount),
+      totalInvoiceAmount: Number(inv.totalInvoiceAmount),
+      amountInWords: inv.amountInWords || '',
+      bankDetails: detail.bank
+        ? {
+            bankName: detail.bank.bankName,
+            accountNumber: detail.bank.accountNumber,
+            swiftCode: detail.bank.swiftCode,
+          }
+        : undefined,
+      containers: detail.containers.map((c) => ({
+        containerNumber: c.containerNumber,
+        sealNumber: c.sealNumber,
+        containerSize: c.containerSize,
+        totalBags: c.totalBags,
+        grossWeightKg: Number(c.grossWeightKg),
+        netWeightKg: Number(c.netWeightKg),
+      })),
+    });
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="Invoice_${inv.documentNumber.replace(/[^a-zA-Z0-9]/g, '_')}.pdf"`,
+      'Content-Length': pdf.length,
+    });
+    res.end(pdf);
+  }
+
+  @Delete('invoices/:id')
+  @ApiOperation({ summary: 'Soft-delete a Commercial Invoice' })
+  @ApiParam({ name: 'id', description: 'Commercial Invoice UUID' })
+  @ApiQuery({ name: 'reason', required: false })
+  async deleteCommercialInvoice(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Query('reason') reason?: string,
+  ) {
+    const { companyId } = this.getCompanyContext(req);
+    const user = (req as any).user;
+    return this.salesService.deleteCommercialInvoice(
+      companyId,
+      id,
+      user?.sub || 'usr-mock',
+      user?.username || 'admin',
+      reason,
+    );
+  }
+
   // ----------------------------------------------------
   // PAYMENT RECEIPTS
   // ----------------------------------------------------

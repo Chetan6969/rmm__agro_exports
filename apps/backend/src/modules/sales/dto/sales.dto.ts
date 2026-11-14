@@ -708,20 +708,65 @@ export class InvoiceItemDto {
   @IsNotEmpty()
   productId!: string;
 
-  @ApiProperty({ description: 'Packing Type UUID' })
+  @ApiProperty({ required: false, description: 'Packing Type UUID' })
   @IsUUID()
-  @IsNotEmpty()
-  packingTypeId!: string;
+  @IsOptional()
+  packingTypeId?: string;
 
-  @ApiProperty({ example: 100.0, description: 'Quantity in Metric Tons (MT)' })
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  packingText?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  hsCode?: string;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  noOfBags?: number;
+
+  @ApiProperty({ example: 100.0, description: 'Net weight in MT' })
   @IsNumber()
   @Min(0.001)
   quantityMt!: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  grossWtMt?: number;
 
   @ApiProperty({ example: 980.0, description: 'FOB Rate per MT' })
   @IsNumber()
   @Min(0.01)
   ratePerMt!: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  cgst?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  sgst?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  igst?: number;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  brokenBelow?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  fcl?: boolean;
 
   @ApiProperty({ required: false })
   @IsString()
@@ -730,10 +775,25 @@ export class InvoiceItemDto {
 }
 
 export class CreateCommercialInvoiceDto {
+  @ApiProperty({ required: false, description: 'Manual invoice number; auto if omitted' })
+  @IsString()
+  @IsOptional()
+  documentNumber?: string;
+
   @ApiProperty({ example: '2026-11-08' })
   @IsString()
   @IsNotEmpty()
   documentDate!: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  status?: string;
+
+  @ApiProperty({ required: false, description: 'White / Custom etc.' })
+  @IsString()
+  @IsOptional()
+  invoiceType?: string;
 
   @ApiProperty({ description: 'Referenced Proforma Invoice UUID', required: false })
   @IsUUID()
@@ -765,35 +825,151 @@ export class CreateCommercialInvoiceDto {
   @IsOptional()
   notifyPartyId?: string;
 
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  lcNumber?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  lcDate?: string;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  exchangeRate?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  freightAmount?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  insuranceAmount?: number;
+
+  @ApiProperty({ required: false })
+  @IsNumber()
+  @IsOptional()
+  grossWtMt?: number;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  fcl?: string;
+
+  @ApiProperty({ required: false })
+  @IsUUID()
+  @IsOptional()
+  shippingLineId?: string;
+
+  // Shipping
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  preCarriageBy?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  placeOfReceipt?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  countryOfOrigin?: string;
+
   @ApiProperty({ example: 'SB-8877665', required: false })
   @IsString()
   @IsOptional()
   shippingBillNumber?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  shippingBillDate?: string;
 
   @ApiProperty({ example: 'MSCU-DXB-001', required: false })
   @IsString()
   @IsOptional()
   blNumber?: string;
 
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  blDate?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  ladingBlNumber?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  ladingBlDate?: string;
+
   @ApiProperty({ example: 'MSC REGINA', required: false })
   @IsString()
   @IsOptional()
   vesselFlightName?: string;
 
-  @ApiProperty({ example: 'Mundra Port, India' })
+  @ApiProperty({ required: false })
   @IsString()
-  @IsNotEmpty()
-  portOfLoading!: string;
+  @IsOptional()
+  voyageNumber?: string;
 
-  @ApiProperty({ example: 'Jebel Ali, UAE' })
+  @ApiProperty({ required: false })
   @IsString()
-  @IsNotEmpty()
-  portOfDischarge!: string;
+  @IsOptional()
+  containerNo?: string;
 
-  @ApiProperty({ example: 'United Arab Emirates' })
+  @ApiProperty({ required: false })
   @IsString()
-  @IsNotEmpty()
-  countryOfDestination!: string;
+  @IsOptional()
+  sealNo?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  portOfLoading?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  portOfDischarge?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  countryOfDestination?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  termsOf?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  paymentTerm?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  brand?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  marksNumbers?: string;
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  goodsDescription?: string;
 
   @ApiProperty({ enum: ['FOB', 'CFR', 'CIF'], example: 'CIF' })
   @IsEnum(['FOB', 'CFR', 'CIF'])
@@ -808,6 +984,18 @@ export class CreateCommercialInvoiceDto {
   @IsUUID()
   @IsOptional()
   bankDetailsId?: string;
+
+  @ApiProperty({ required: false })
+  @IsBoolean()
+  @IsOptional()
+  showSignature?: boolean;
+
+  @ApiProperty({ type: [ProformaTermDto], required: false })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProformaTermDto)
+  @IsOptional()
+  terms?: ProformaTermDto[];
 
   @ApiProperty({ type: [InvoiceItemDto] })
   @IsArray()

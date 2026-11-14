@@ -205,6 +205,27 @@ export interface FieldUsage {
   rows: { value: string; count: number; totalAmount: number }[];
 }
 
+export interface ProductionOrderDetail {
+  order: {
+    id: string;
+    documentNumber: string;
+    customerId: string | null;
+    consigneeId: string | null;
+    notifyPartyId: string | null;
+    incoterm: string;
+    currency: string;
+    brand: string | null;
+    portOfLoading: string | null;
+    portOfDischarge: string | null;
+    destinationCountry: string | null;
+    paymentTerm: string | null;
+    specVariety: string | null;
+    buyerPoRef: string | null;
+  };
+  buyer: { name: string } | null;
+  consignee: { name: string } | null;
+}
+
 // ---- Production orders ----
 export interface ProductionOrderListItem {
   id: string;
@@ -298,6 +319,10 @@ export const api = {
   packingTypes: () => request<PackingType[]>('/master-data/packing-types'),
   ports: () => request<Port[]>('/master-data/ports'),
   bankDetails: () => request<BankDetail[]>('/master-data/bank-details'),
+  shippingLines: () =>
+    request<{ id: string; name: string; code: string | null }[]>(
+      '/master-data/shipping-lines',
+    ),
   terms: (documentType = 'PROFORMA') =>
     request<Term[]>(`/master-data/terms?documentType=${documentType}`),
 
@@ -320,6 +345,8 @@ export const api = {
 
   listProductionOrders: () =>
     request<ProductionOrderListItem[]>('/sales/production-orders'),
+  getProductionOrder: (id: string) =>
+    request<ProductionOrderDetail>(`/sales/production-orders/${id}`),
   createProductionOrder: (dto: CreateProductionOrderInput) =>
     request<{ id: string; documentNumber: string }>('/sales/production-orders', {
       method: 'POST',
@@ -342,7 +369,9 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(dto),
     }),
-  commercialInvoicePdfUrl: () => `${API_BASE}/pdf/sample-invoice`,
+  deleteInvoice: (id: string) =>
+    request<{ message: string }>(`/sales/invoices/${id}`, { method: 'DELETE' }),
+  invoicePdfUrl: (id: string) => `${API_BASE}/sales/invoices/${id}/pdf`,
   samplePackingListPdfUrl: () => `${API_BASE}/pdf/sample-packing-list`,
 
   // ---- Receipts ----
@@ -405,17 +434,26 @@ export interface CommercialInvoiceListItem {
   totalInvoiceAmount: string;
   totalQuantityMt?: string;
   status: string;
+  orderNumber?: string | null;
 }
 
 export interface InvoiceItemInput {
   productId: string;
-  packingTypeId: string;
+  packingTypeId?: string;
+  packingText?: string;
   packingDescription?: string;
+  noOfBags?: number;
   quantityMt: number;
+  grossWtMt?: number;
   ratePerMt: number;
   amount?: number;
   hsCode?: string;
   cropYear?: string;
+  cgst?: number;
+  sgst?: number;
+  igst?: number;
+  brokenBelow?: boolean;
+  fcl?: boolean;
   specifications?: string;
 }
 
@@ -440,22 +478,50 @@ export interface ShippingChargesInput {
 }
 
 export interface CreateCommercialInvoiceInput {
+  documentNumber?: string;
   documentDate: string;
+  status?: string;
+  invoiceType?: string;
   proformaInvoiceId?: string;
   productionOrderId?: string;
   buyerPoNumber?: string;
   customerId: string;
   consigneeId?: string;
   notifyPartyId?: string;
+  lcNumber?: string;
+  lcDate?: string;
+  exchangeRate?: number;
+  freightAmount?: number;
+  insuranceAmount?: number;
+  grossWtMt?: number;
+  fcl?: string;
+  shippingLineId?: string;
+  preCarriageBy?: string;
+  placeOfReceipt?: string;
+  countryOfOrigin?: string;
   shippingBillNumber?: string;
+  shippingBillDate?: string;
   blNumber?: string;
+  blDate?: string;
+  ladingBlNumber?: string;
+  ladingBlDate?: string;
   vesselFlightName?: string;
-  portOfLoading: string;
-  portOfDischarge: string;
-  countryOfDestination: string;
+  voyageNumber?: string;
+  containerNo?: string;
+  sealNo?: string;
+  portOfLoading?: string;
+  portOfDischarge?: string;
+  countryOfDestination?: string;
+  termsOf?: string;
+  paymentTerm?: string;
+  brand?: string;
+  marksNumbers?: string;
+  goodsDescription?: string;
   incoterm: 'FOB' | 'CFR' | 'CIF';
   currency?: string;
   bankDetailsId?: string;
+  showSignature?: boolean;
+  terms?: { termId?: string; content: string }[];
   items: InvoiceItemInput[];
   shippingCharges?: ShippingChargesInput;
   containers?: ContainerInput[];

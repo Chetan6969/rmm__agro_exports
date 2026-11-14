@@ -278,12 +278,16 @@ export class PdfService {
 
         const hr = (y: number, color = '#999999') =>
           doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.6).stroke(color);
-        const label = (t: string, x: number, y: number, w: number) =>
+        const label = (t: string, x: number, y: number, w: number) => {
           doc
             .font('Helvetica-Bold')
             .fontSize(7.5)
             .fillColor(gray)
             .text(t, x, y, { width: w });
+          const ly = doc.y + 1.5;
+          doc.moveTo(x, ly).lineTo(x + w, ly).lineWidth(0.4).stroke('#c2c2c2');
+          doc.y = ly + 2;
+        };
         const val = (t: string, x: number, y: number, w: number) =>
           doc
             .font('Helvetica')
@@ -592,30 +596,43 @@ export class PdfService {
         doc.on('end', () => resolve(Buffer.concat(chunks)));
         doc.on('error', (err) => reject(err));
 
-        // 1. HEADER (Top Letterhead)
+        // 1. HEADER (Top Letterhead) — centered in the left area, clear of the logo
         this.drawLogo(doc);
+        const HEADX = 36;
+        const HEADW = 396;
         doc
           .font('Helvetica-Bold')
-          .fontSize(16)
-          .text(data.company.name.toUpperCase(), { align: 'center' });
+          .fontSize(15)
+          .text(data.company.name.toUpperCase(), HEADX, 40, {
+            align: 'center',
+            width: HEADW,
+          });
 
         doc
           .font('Helvetica')
           .fontSize(9)
           .text(
             `${data.company.address || 'Export House, Taraori - 132116, Karnal, Haryana, India'}`,
-            { align: 'center' },
+            HEADX,
+            undefined,
+            { align: 'center', width: HEADW },
           )
           .text(
-            `GSTIN: ${data.company.gstin || '06AABCR1234F1Z5'} | IEC: ${data.company.iec || '0505012345'} | Phone: ${data.company.phone || '+91 1748 245000'}`,
-            { align: 'center' },
+            `GSTIN: ${data.company.gstin || '06AABCR1234F1Z5'} | IEC: ${data.company.iec || '0505012345'} | Email: ${data.company.email || 'exports@rmmagroexports.com'}`,
+            HEADX,
+            undefined,
+            { align: 'center', width: HEADW },
           );
 
-        doc.moveDown(0.5);
+        doc.moveDown(0.6);
         doc
           .font('Helvetica-Bold')
           .fontSize(12)
-          .text('COMMERCIAL EXPORT INVOICE', { align: 'center', underline: true });
+          .text('COMMERCIAL EXPORT INVOICE', HEADX, undefined, {
+            align: 'center',
+            width: 523,
+            underline: true,
+          });
 
         doc.moveDown(0.5);
 
@@ -750,12 +767,8 @@ export class PdfService {
 
         // Subtotals & Shipping breakdown
         doc.font('Helvetica-Bold');
-        doc.text('Total FOB Quantity (MT):', 70, currentY);
-        doc.text(totalQty.toFixed(3), 370, currentY, {
-          width: 60,
-          align: 'right',
-        });
-        doc.text('Total FOB Value:', 400, currentY);
+        doc.text(`Total FOB Quantity (MT): ${totalQty.toFixed(3)}`, 40, currentY);
+        doc.text('Total FOB Value:', 360, currentY, { width: 120 });
         doc.text(data.totalFobAmount.toFixed(2), 500, currentY, {
           width: 55,
           align: 'right',

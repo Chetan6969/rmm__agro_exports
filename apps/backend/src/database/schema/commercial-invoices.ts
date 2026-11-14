@@ -6,6 +6,7 @@ import {
   text,
   numeric,
   integer,
+  boolean,
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
@@ -16,6 +17,8 @@ import { packingTypes } from './packing-types.js';
 import { productionOrders } from './production-orders.js';
 import { products } from './products.js';
 import { proformaInvoices } from './proforma-invoices.js';
+import { shippingLines } from './shipping-lines.js';
+import { termsAndConditions } from './terms-and-conditions.js';
 import { users } from './users.js';
 
 export const commercialInvoices = pgTable(
@@ -43,20 +46,48 @@ export const commercialInvoices = pgTable(
     consigneeId: uuid('consignee_id').references(() => customers.id),
     notifyPartyId: uuid('notify_party_id').references(() => customers.id),
 
+    invoiceType: varchar('invoice_type', { length: 16 })
+      .default('WHITE')
+      .notNull(), // 'WHITE', 'CUSTOM', ...
+    lcNumber: varchar('lc_number', { length: 64 }),
+    lcDate: date('lc_date'),
+    shippingLineId: uuid('shipping_line_id').references(() => shippingLines.id),
+    preCarriageBy: varchar('pre_carriage_by', { length: 128 }),
+    placeOfReceipt: varchar('place_of_receipt', { length: 128 }),
+    containerNo: varchar('container_no', { length: 64 }),
+    sealNo: varchar('seal_no', { length: 64 }),
+    ladingBlNumber: varchar('lading_bl_number', { length: 64 }),
+    ladingBlDate: date('lading_bl_date'),
+    termsOf: varchar('terms_of', { length: 128 }),
+    paymentTerm: varchar('payment_term', { length: 255 }),
+    brand: varchar('brand', { length: 128 }),
+    marksNumbers: text('marks_numbers'),
+    goodsDescription: text('goods_description'),
+    grossWtMt: numeric('gross_wt_mt', { precision: 12, scale: 3 }),
+    fcl: varchar('fcl', { length: 32 }),
+    freightAmount: numeric('freight_amount', { precision: 15, scale: 2 })
+      .default('0.00')
+      .notNull(),
+    totalChargesAmount: numeric('total_charges_amount', {
+      precision: 15,
+      scale: 2,
+    })
+      .default('0.00')
+      .notNull(),
+    showSignature: boolean('show_signature').default(true).notNull(),
+
     shippingBillNumber: varchar('shipping_bill_number', { length: 64 }),
     shippingBillDate: date('shipping_bill_date'),
     blNumber: varchar('bl_number', { length: 64 }),
     blDate: date('bl_date'),
     vesselFlightName: varchar('vessel_flight_name', { length: 128 }),
     voyageNumber: varchar('voyage_number', { length: 64 }),
-    portOfLoading: varchar('port_of_loading', { length: 128 }).notNull(),
-    portOfDischarge: varchar('port_of_discharge', { length: 128 }).notNull(),
+    portOfLoading: varchar('port_of_loading', { length: 128 }),
+    portOfDischarge: varchar('port_of_discharge', { length: 128 }),
     countryOfOrigin: varchar('country_of_origin', { length: 64 })
       .default('India')
       .notNull(),
-    countryOfDestination: varchar('country_of_destination', {
-      length: 64,
-    }).notNull(),
+    countryOfDestination: varchar('country_of_destination', { length: 64 }),
 
     incoterm: varchar('incoterm', { length: 16 }).notNull(), // 'FOB', 'CFR', 'CIF'
     currency: varchar('currency', { length: 8 }).default('USD').notNull(),
@@ -82,7 +113,7 @@ export const commercialInvoices = pgTable(
     })
       .default('0.00')
       .notNull(),
-    amountInWords: text('amount_in_words').notNull(),
+    amountInWords: text('amount_in_words'),
 
     lutNumber: varchar('lut_number', { length: 64 }),
     bankDetailsId: uuid('bank_details_id').references(() => bankDetails.id),
@@ -118,16 +149,35 @@ export const invoiceItems = pgTable('invoice_items', {
   invoiceId: uuid('invoice_id')
     .notNull()
     .references(() => commercialInvoices.id, { onDelete: 'cascade' }),
+  lineNumber: integer('line_number').default(1).notNull(),
   productId: uuid('product_id')
     .notNull()
     .references(() => products.id),
-  packingTypeId: uuid('packing_type_id')
-    .notNull()
-    .references(() => packingTypes.id),
+  packingTypeId: uuid('packing_type_id').references(() => packingTypes.id),
+  packingText: text('packing_text'),
+  hsCode: varchar('hs_code', { length: 16 }),
+  noOfBags: integer('no_of_bags').default(0).notNull(),
   quantityMt: numeric('quantity_mt', { precision: 12, scale: 3 }).notNull(),
+  grossWtMt: numeric('gross_wt_mt', { precision: 12, scale: 3 }),
   ratePerMt: numeric('rate_per_mt', { precision: 15, scale: 2 }).notNull(),
   amount: numeric('amount', { precision: 15, scale: 2 }).notNull(),
+  cgst: numeric('cgst', { precision: 15, scale: 2 }).default('0.00').notNull(),
+  sgst: numeric('sgst', { precision: 15, scale: 2 }).default('0.00').notNull(),
+  igst: numeric('igst', { precision: 15, scale: 2 }).default('0.00').notNull(),
+  brokenBelow: boolean('broken_below').default(false).notNull(),
+  fcl: boolean('fcl').default(false).notNull(),
   specifications: text('specifications'),
+});
+
+// Each selected Term & Condition on an invoice is its own queryable row
+export const invoiceTerms = pgTable('invoice_terms', {
+  id: uuid('id').defaultRandom().primaryKey(),
+  invoiceId: uuid('invoice_id')
+    .notNull()
+    .references(() => commercialInvoices.id, { onDelete: 'cascade' }),
+  termId: uuid('term_id').references(() => termsAndConditions.id),
+  position: integer('position').default(0).notNull(),
+  content: text('content').notNull(),
 });
 
 // Rule 7: Incoterm-driven shipping charges
@@ -167,6 +217,8 @@ export type CommercialInvoice = typeof commercialInvoices.$inferSelect;
 export type NewCommercialInvoice = typeof commercialInvoices.$inferInsert;
 export type InvoiceItem = typeof invoiceItems.$inferSelect;
 export type NewInvoiceItem = typeof invoiceItems.$inferInsert;
+export type InvoiceTerm = typeof invoiceTerms.$inferSelect;
+export type NewInvoiceTerm = typeof invoiceTerms.$inferInsert;
 export type ShippingCharge = typeof shippingCharges.$inferSelect;
 export type NewShippingCharge = typeof shippingCharges.$inferInsert;
 export type Container = typeof containers.$inferSelect;
