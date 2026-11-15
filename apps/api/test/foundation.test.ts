@@ -223,6 +223,13 @@ describe('record integrity', () => {
     expect(Object.keys(r.body.fields).sort()).toEqual(['email', 'incoterm', 'name']);
   });
 
+  it('company short code rejects document patterns like RMM/EX/26-27', async () => {
+    const bad = await root.post('/masters/companies', { code: 'RMM/EX/26-27', name: 'X', legalName: 'X' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.fields.code).toMatch(/no "\/"/);
+    expect((await root.post('/masters/companies', { code: 'rmm-2', name: 'Y', legalName: 'Y' })).status).toBe(201);
+  });
+
   it('soft delete needs a reason and hides the record', async () => {
     const c = await alice.ok('POST', '/masters/customers', { name: 'To delete' });
     expect((await alice.del(`/masters/customers/${c.id}`, {})).status).toBe(400);

@@ -42,6 +42,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setUnauthorizedHandler(() => setSession(null));
   }, [setSession]);
 
+  /**
+   * Drop every cached list/record (they belong to the previous company or user) but keep the
+   * session query itself: qc.clear() would also detach the session observer, so the screen
+   * would never see the new session (the "switch does nothing" bug).
+   */
+  const resetCompanyData = useCallback(() => {
+    const notSession = (q: { queryKey: readonly unknown[] }) => q.queryKey[0] !== 'session';
+    qc.removeQueries({ predicate: notSession, type: 'inactive' });
+    void qc.resetQueries({ predicate: notSession, type: 'active' });
+  }, [qc]);
+
   const value = useMemo<SessionCtx>(() => {
     const session = q.data ?? null;
     const perms = new Set(session?.permissions ?? []);
@@ -56,17 +67,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setSession,
       switchCompany: async (id) => {
         const s = await api.post<SessionInfo>('/auth/switch-company', { companyId: id });
-        // every cached list belongs to the old company
-        qc.clear();
         qc.setQueryData(['session'], s);
+        resetCompanyData();
       },
       logout: async () => {
         await api.post('/auth/logout').catch(() => {});
-        qc.clear();
         qc.setQueryData(['session'], null);
+        resetCompanyData();
       },
     };
-  }, [q.data, q.isLoading, q.failureCount, qc, setSession]);
+  }, [q.data, q.isLoading, q.failureCount, qc, setSession, resetCompanyData]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

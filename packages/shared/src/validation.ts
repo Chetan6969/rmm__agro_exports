@@ -11,7 +11,12 @@ function fieldSchema(f: FieldDef): z.ZodType {
     case 'textarea': {
       let t = z.string().trim();
       if (f.maxLength) t = t.max(f.maxLength, `${f.label}: max ${f.maxLength} characters`);
-      s = f.upper ? t.transform((v) => v.toUpperCase()) : t;
+      let out: z.ZodType<string> = f.upper ? t.transform((v) => v.toUpperCase()) : t;
+      if (f.pattern) {
+        const re = new RegExp(f.pattern.regex);
+        out = out.refine((v) => re.test(v), f.pattern.message);
+      }
+      s = out;
       break;
     }
     case 'email':

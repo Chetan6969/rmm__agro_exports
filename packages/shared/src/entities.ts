@@ -46,6 +46,8 @@ export interface FieldDef {
   /** Default value for new records when the company has not configured one. */
   default?: string | number | boolean;
   help?: string;
+  /** Extra format rule (applied after upper-casing). */
+  pattern?: { regex: string; message: string };
   /** decimal precision/scale */
   precision?: number;
   scale?: number;
@@ -86,7 +88,20 @@ export const ENTITY_LIST = [
     scope: 'group',
     displayField: 'name',
     fields: [
-      { name: 'code', label: 'Short code', type: 'text', required: true, unique: true, upper: true, maxLength: 12, list: true, search: true, section: 'Identity', help: 'Used in document numbers, e.g. RMM/EX/26-27/001' },
+      {
+        name: 'code',
+        label: 'Short code',
+        type: 'text',
+        required: true,
+        unique: true,
+        upper: true,
+        maxLength: 12,
+        list: true,
+        search: true,
+        section: 'Identity',
+        help: 'Only the short code, e.g. RMM. Full number formats are set in Document numbering.',
+        pattern: { regex: '^[A-Z0-9][A-Z0-9-]{1,11}$', message: 'Short code: 2–12 letters, digits or "-" only (e.g. RMM), no "/"' },
+      },
       { name: 'name', label: 'Display name', type: 'text', required: true, list: true, search: true, span: 2 },
       { name: 'legalName', label: 'Legal name (as on documents)', type: 'text', required: true, span: 3 },
       { name: 'addressLine1', label: 'Address line 1', type: 'text', span: 3, section: 'Address' },
