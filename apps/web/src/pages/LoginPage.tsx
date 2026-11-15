@@ -2,7 +2,7 @@ import type { SessionInfo } from '@rmm/shared';
 import { Wheat } from 'lucide-react';
 import { useState } from 'react';
 import { Button, ErrorBox } from '../components/ui';
-import { api, ApiError } from '../lib/api';
+import { api } from '../lib/api';
 import { useSession } from '../lib/session';
 
 export function LoginPage() {
@@ -19,7 +19,7 @@ export function LoginPage() {
     try {
       setSession(await api.post<SessionInfo>('/auth/login', { username, password }));
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 429 ? new Error('Too many attempts. Wait a minute and try again.') : err);
+      setError(err);
     } finally {
       setBusy(false);
     }
@@ -62,7 +62,7 @@ export function ChangePasswordPage({ forced }: { forced?: boolean }) {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (next !== again) return setError(new Error('New passwords do not match'));
+    if (next !== again) return setError(new Error('The two new passwords do not match. Type the same new password in both boxes.'));
     setBusy(true);
     setError(null);
     try {

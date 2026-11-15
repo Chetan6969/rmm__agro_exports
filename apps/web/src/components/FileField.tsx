@@ -1,6 +1,6 @@
 import { ImageUp, Trash2 } from 'lucide-react';
 import { useRef, useState } from 'react';
-import { api, errorMessage } from '../lib/api';
+import { api, errorHint, errorMessage } from '../lib/api';
 
 /** Image upload for logos / letterheads / seals / signatures. Enter or Space opens the file picker. */
 export function FileField({
@@ -28,7 +28,7 @@ export function FileField({
       const res = await api.upload<{ id: string }>(`/files${scope === 'group' ? '?scope=group' : ''}`, f);
       onChange(res.id);
     } catch (e) {
-      setErr(errorMessage(e));
+      setErr([errorMessage(e), errorHint(e)].filter(Boolean).join('. '));
     } finally {
       setBusy(false);
       if (input.current) input.current.value = '';

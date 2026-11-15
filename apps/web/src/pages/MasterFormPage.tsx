@@ -7,7 +7,8 @@ import { toast } from 'sonner';
 import { EntityForm, type Values } from '../components/EntityForm';
 import { ConfirmDialog } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
-import { api, ApiError, errorMessage } from '../lib/api';
+import { api, ApiError } from '../lib/api';
+import { showError, showProblem } from '../lib/notify';
 import { useHotkeys } from '../lib/hotkeys';
 import { useSession } from '../lib/session';
 
@@ -99,7 +100,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
   };
 
   const saveDefaults = async () => {
-    if (!can('admin.defaults', 'edit')) return toast.error('You do not have permission to change defaults');
+    if (!can('admin.defaults', 'edit')) return showProblem('You do not have permission to change defaults', 'Ask an administrator to tick "edit" for Master default values in your role.');
     const v: Values = {};
     for (const f of def.fields) if (!f.unique && f.type !== 'file' && values[f.name] !== null && values[f.name] !== '') v[f.name] = values[f.name];
     try {
@@ -107,7 +108,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
       qc.invalidateQueries({ queryKey: ['defaults', def.key] });
       toast.success(`Saved as defaults for new ${def.plural.toLowerCase()} in ${session?.activeCompany?.code}`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError(e);
     }
   };
 
@@ -165,7 +166,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
           </>
         }
       />
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-5">
         <div className="mx-auto max-w-5xl space-y-3">
           {formError != null && <ErrorBox error={formError} />}
           <EntityForm
@@ -187,8 +188,8 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
             }}
           />
           {!readOnly && (
-            <div className="flex items-center justify-between pb-6 text-[12px] text-slate-500">
-              <span>Enter = next field · Shift+Enter = previous · Ctrl+S = save{isNew ? ' · Ctrl+Shift+S = save & new' : ''}</span>
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
+              <span className="max-sm:hidden">Enter = next field · Shift+Enter = previous · Ctrl+S = save{isNew ? ' · Ctrl+Shift+S = save & new' : ''}</span>
               {rec && <span>Last changed {new Date(rec.updatedAt as string).toLocaleString()} · v{rec.version}</span>}
             </div>
           )}

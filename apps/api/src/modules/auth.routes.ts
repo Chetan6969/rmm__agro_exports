@@ -48,7 +48,10 @@ export async function authRoutes(app: FastifyInstance) {
           action: 'login_failed',
           meta: { username: body.username },
         }).catch((e) => req.log.warn(e, 'audit failed'));
-        throw unauthorized('Invalid username or password');
+        throw unauthorized(
+          'Invalid username or password',
+          'Check Caps Lock and the spelling of your username. If you still cannot sign in, ask an administrator to reset your password.',
+        );
       }
 
       const list = await companiesForUser(db(), u.id, u.isSuperAdmin);
@@ -96,7 +99,9 @@ export async function authRoutes(app: FastifyInstance) {
     const ctx = requireCtx(req);
     const { companyId } = z.object({ companyId: z.uuid() }).parse(req.body);
     const list = await companiesForUser(db(), ctx.userId, ctx.isSuperAdmin);
-    if (!list.some((c) => c.id === companyId)) throw forbidden('You are not a member of that company');
+    if (!list.some((c) => c.id === companyId)) {
+      throw forbidden('You are not a member of that company', 'Ask an administrator to give you a role in that company (Administration → Users).');
+    }
     await db().update(sessions).set({ activeCompanyId: companyId }).where(eq(sessions.id, ctx.sessionId));
     const next: RequestContext = {
       ...ctx,
@@ -112,9 +117,17 @@ export async function authRoutes(app: FastifyInstance) {
     const body = z.object({ currentPassword: z.string().min(1), newPassword: passwordSchema }).parse(req.body);
     const [u] = await db().select().from(users).where(eq(users.id, ctx.userId));
     if (!(await argon2.verify(u.passwordHash, body.currentPassword))) {
-      throw badRequest('Current password is incorrect', { currentPassword: 'Incorrect' });
+      throw badRequest('Current password is incorrect', {
+        hint: 'Type the password you signed in with. If you have forgotten it, sign out and ask an administrator to reset it.',
+        fields: { currentPassword: 'Incorrect' },
+      });
     }
-    if (body.currentPassword === body.newPassword) throw badRequest('New password must differ', { newPassword: 'Must differ' });
+    if (body.currentPassword === body.newPassword) {
+      throw badRequest('The new password is the same as the current one', {
+        hint: 'Choose a password you have not used here before.',
+        fields: { newPassword: 'Must differ' },
+      });
+    }
     await db()
       .update(users)
       .set({ passwordHash: await argon2.hash(body.newPassword), mustChangePassword: false, updatedAt: new Date(), updatedBy: ctx.userId })

@@ -74,7 +74,13 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
       await api.register(filesRoutes);
       await api.register(auditRoutes);
 
-      api.setNotFoundHandler((_req, reply) => reply.status(404).send({ error: 'not_found', message: 'No such API route' }));
+      api.setNotFoundHandler((_req, reply) =>
+        reply.status(404).send({
+          error: 'not_found',
+          message: 'No such API route',
+          hint: 'Reload the page; if the app was just updated, a hard refresh (Ctrl+F5) loads the new version.',
+        }),
+      );
     },
     { prefix: '/api' },
   );

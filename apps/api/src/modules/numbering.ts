@@ -10,7 +10,7 @@ import { badRequest, notFound } from '../core/errors.js';
 
 const docType = (key: string) => {
   const d = DOC_TYPES.find((x) => x.key === key);
-  if (!d) throw notFound(`Unknown document type ${key}`);
+  if (!d) throw notFound(`Unknown document type ${key}`, 'Open Administration → Document numbering and pick the series from the list.');
   return d;
 };
 
@@ -96,7 +96,12 @@ export async function numberingRoutes(app: FastifyInstance) {
       .object({ pattern: z.string().trim().min(1).max(80), resetYearly: z.boolean(), nextSeq: z.number().int().min(1).optional() })
       .parse(req.body);
     const err = validatePattern(body.pattern, body.resetYearly);
-    if (err) throw badRequest(err, { pattern: err });
+    if (err) {
+      throw badRequest(err, {
+        hint: 'Use tokens like {CO}/EX/{FY}/{SEQ:3}. A yearly series needs {FY} or {FYL}; every series needs {SEQ} or {SEQ:n}.',
+        fields: { pattern: err },
+      });
+    }
 
     return inTenantTx(ctx, async (tx) => {
       const before = await seriesFor(tx, companyId, d.key);
@@ -110,7 +115,8 @@ export async function numberingRoutes(app: FastifyInstance) {
           .limit(1);
         if (issued) {
           throw badRequest('Numbers have already been issued in this series, so the yearly reset setting cannot change', {
-            resetYearly: 'Locked once numbers are issued',
+            hint: 'Keep the current setting. You can still change the pattern or raise Next no.; neither re-issues used numbers.',
+            fields: { resetYearly: 'Locked once numbers are issued' },
           });
         }
       }
@@ -130,7 +136,10 @@ export async function numberingRoutes(app: FastifyInstance) {
           .for('update');
         const issued = c?.last ?? 0;
         if (body.nextSeq <= issued) {
-          throw badRequest(`Numbers up to ${issued} are already issued. Next must be ${issued + 1} or higher.`, { nextSeq: 'Too low' });
+          throw badRequest(`Numbers up to ${issued} are already issued`, {
+            hint: `Set Next no. to ${issued + 1} or higher. Lower numbers would duplicate documents that already exist.`,
+            fields: { nextSeq: 'Too low' },
+          });
         }
         await tx
           .insert(numberCounters)

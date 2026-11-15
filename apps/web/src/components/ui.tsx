@@ -1,5 +1,6 @@
 import { Loader2 } from 'lucide-react';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { errorHint, errorMessage } from '../lib/api';
 import { keyLabel } from '../lib/hotkeys';
 
 type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
@@ -30,7 +31,7 @@ export function Button({
       {loading ? <Loader2 className="size-3.5 animate-spin" /> : icon}
       {children}
       {shortcut && (
-        <span className={`ml-1 text-[10.5px] ${variant === 'primary' || variant === 'danger' ? 'text-white/70' : 'text-slate-400'}`}>
+        <span className={`ml-1 text-[10.5px] max-sm:hidden ${variant === 'primary' || variant === 'danger' ? 'text-white/70' : 'text-slate-400'}`}>
           {keyLabel(shortcut)}
         </span>
       )}
@@ -67,7 +68,7 @@ export const Spinner = ({ label = 'Loading…' }: { label?: string }) => (
 
 export function PageHeader({ title, subtitle, actions }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-5 py-3">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-3 py-3 sm:px-5">
       <div className="min-w-0">
         <h1 className="truncate text-[17px] font-semibold text-slate-900">{title}</h1>
         {subtitle && <div className="text-[12.5px] text-slate-500">{subtitle}</div>}
@@ -79,9 +80,11 @@ export function PageHeader({ title, subtitle, actions }: { title: ReactNode; sub
 
 export function ErrorBox({ error }: { error: unknown }) {
   if (!error) return null;
+  const hint = errorHint(error);
   return (
     <div role="alert" className="rounded border border-red-200 bg-red-50 px-3 py-2 text-[13px] text-red-700">
-      {error instanceof Error ? error.message : String(error)}
+      <div className="font-medium">{errorMessage(error)}</div>
+      {hint && <div className="mt-0.5 text-[12.5px] text-red-600/90">How to fix: {hint}</div>}
     </div>
   );
 }

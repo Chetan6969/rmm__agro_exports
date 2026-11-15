@@ -46,15 +46,17 @@ export async function sharingRoutes(app: FastifyInstance) {
     const body = policySchema.parse(req.body);
     const sourceCompanyId = body.sourceCompanyId ?? requireCompany(ctx);
     if (!ctx.isSuperAdmin && sourceCompanyId !== ctx.companyId) {
-      throw forbidden('You can only share data of your active company');
+      throw forbidden('You can only share data of your active company', 'Switch to the company that owns the data (Alt+C) and create the policy there.');
     }
-    if (sourceCompanyId === body.targetCompanyId) throw badRequest('Source and target company must differ');
+    if (sourceCompanyId === body.targetCompanyId) {
+      throw badRequest('A company cannot share with itself', 'Pick a different company to share with.');
+    }
     const out = await inTenantTx(ctx, async (tx) => {
       const found = await tx
         .select({ id: companies.id })
         .from(companies)
         .where(or(eq(companies.id, sourceCompanyId), eq(companies.id, body.targetCompanyId)));
-      if (found.length !== 2) throw badRequest('Company not found');
+      if (found.length !== 2) throw badRequest('Company not found', 'Reload the page and pick the company from the list again.');
       const [dupe] = await tx
         .select({ id: sharingPolicies.id })
         .from(sharingPolicies)
@@ -65,7 +67,7 @@ export async function sharingRoutes(app: FastifyInstance) {
             eq(sharingPolicies.targetCompanyId, body.targetCompanyId),
           ),
         );
-      if (dupe) throw conflict('A policy for this master and these companies already exists. Edit it instead.');
+      if (dupe) throw conflict('A policy for this master and these companies already exists', 'Open the existing policy in the list and edit it instead.');
       const [p] = await tx
         .insert(sharingPolicies)
         .values({ ...body, sourceCompanyId, note: body.note ?? null, createdBy: ctx.userId })
@@ -82,8 +84,10 @@ export async function sharingRoutes(app: FastifyInstance) {
     const body = policySchema.pick({ access: true, recordIds: true, note: true }).parse(req.body);
     return inTenantTx(ctx, async (tx) => {
       const [before] = await tx.select().from(sharingPolicies).where(eq(sharingPolicies.id, req.params.id));
-      if (!before) throw notFound('Policy not found');
-      if (!ctx.isSuperAdmin && before.sourceCompanyId !== ctx.companyId) throw forbidden('Only the owning company can change this policy');
+      if (!before) throw notFound('Policy not found', 'It may have been removed. Reload the list.');
+      if (!ctx.isSuperAdmin && before.sourceCompanyId !== ctx.companyId) {
+        throw forbidden('Only the owning company can change this policy', 'Switch to the company that shares the data (Alt+C) to change it.');
+      }
       const [p] = await tx
         .update(sharingPolicies)
         .set({ access: body.access, recordIds: body.recordIds, note: body.note ?? null, updatedAt: new Date() })
@@ -99,8 +103,10 @@ export async function sharingRoutes(app: FastifyInstance) {
     requirePerm(ctx, 'admin.sharing', 'delete');
     return inTenantTx(ctx, async (tx) => {
       const [before] = await tx.select().from(sharingPolicies).where(eq(sharingPolicies.id, req.params.id));
-      if (!before) throw notFound('Policy not found');
-      if (!ctx.isSuperAdmin && before.sourceCompanyId !== ctx.companyId) throw forbidden('Only the owning company can remove this policy');
+      if (!before) throw notFound('Policy not found', 'It may have been removed. Reload the list.');
+      if (!ctx.isSuperAdmin && before.sourceCompanyId !== ctx.companyId) {
+        throw forbidden('Only the owning company can remove this policy', 'Switch to the company that shares the data (Alt+C) to remove it.');
+      }
       await tx.delete(sharingPolicies).where(eq(sharingPolicies.id, before.id));
       await audit(tx, ctx, { entity: 'sharing_policies', recordId: before.id, action: 'delete', before });
       return { ok: true };

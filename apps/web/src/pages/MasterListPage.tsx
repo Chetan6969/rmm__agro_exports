@@ -8,6 +8,7 @@ import { DataGrid, type Column, type DataGridHandle } from '../components/DataGr
 import { ConfirmDialog } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader } from '../components/ui';
 import { api, qs } from '../lib/api';
+import { showProblem } from '../lib/notify';
 import { useHotkeys } from '../lib/hotkeys';
 import { useSession } from '../lib/session';
 
@@ -93,7 +94,7 @@ function MasterList({ def }: { def: EntityDef }) {
   const open = (r: Row) => navigate(`/m/${def.key}/${r.id}`);
   const canCreate = can(mod, 'create') && (def.scope !== 'group' || session?.user.isSuperAdmin);
   const exportCsv = () => {
-    if (!can(mod, 'export')) return toast.error('You do not have export permission for this master');
+    if (!can(mod, 'export')) return showProblem(`You do not have export permission for ${def.plural}`, `Ask an administrator to tick "export" for ${def.plural} in your role (Administration → Roles & permissions).`);
     const a = document.createElement('a');
     a.href = `/api/masters/${def.key}/export${qs({ search: debounced, ownership: company ? ownership : undefined })}`;
     a.click();
@@ -144,7 +145,7 @@ function MasterList({ def }: { def: EntityDef }) {
           </>
         }
       />
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-5 py-2">
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-5">
         <div className="relative w-full max-w-xs">
           <Search className="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-slate-400" />
           <input
@@ -200,7 +201,7 @@ function MasterList({ def }: { def: EntityDef }) {
         loading={q.isFetching}
         onOpen={open}
         onExitTop={() => searchRef.current?.focus()}
-        onDelete={(r) => (can(mod, 'delete') ? setToDelete(r) : toast.error('You do not have delete permission'))}
+        onDelete={(r) => (can(mod, 'delete') ? setToDelete(r) : showProblem(`You do not have delete permission for ${def.plural}`, 'Ask an administrator to tick "delete" in your role, or mark the record inactive instead.'))}
         onPage={(d) => setPage((p) => Math.min(Math.max(p + d, 1), pages))}
         empty={
           debounced ? (
@@ -214,7 +215,7 @@ function MasterList({ def }: { def: EntityDef }) {
           )
         }
       />
-      <div className="flex items-center gap-4 border-t border-slate-200 bg-slate-50 px-5 py-1.5 text-[11.5px] text-slate-500">
+      <div className="flex items-center gap-4 border-t border-slate-200 bg-slate-50 px-5 py-1.5 text-[11.5px] text-slate-500 max-sm:hidden">
         <span>↑↓ move · Enter open · Del delete · PgUp/PgDn page · / search · F1 help</span>
       </div>
       <ConfirmDialog

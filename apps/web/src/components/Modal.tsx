@@ -1,6 +1,6 @@
 import { X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Button } from './ui';
+import { Button, ErrorBox } from './ui';
 
 const FOCUSABLE = 'input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
@@ -96,7 +96,7 @@ export function ConfirmDialog({
 }) {
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [err, setErr] = useState<unknown>(null);
   useEffect(() => {
     if (open) {
       setReason('');
@@ -104,13 +104,13 @@ export function ConfirmDialog({
     }
   }, [open]);
   const submit = async () => {
-    if (requireReason && !reason.trim()) return setErr('Please enter a reason');
+    if (requireReason && !reason.trim()) return setErr(new Error('Please enter a reason: it is saved in the audit log.'));
     setBusy(true);
     try {
       await onConfirm(reason.trim());
       onClose();
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed');
+      setErr(e);
     } finally {
       setBusy(false);
     }
@@ -149,7 +149,7 @@ export function ConfirmDialog({
             confirm
           </button>
         )}
-        {err && <div className="text-[12.5px] text-red-600">{err}</div>}
+        {err != null && <ErrorBox error={err} />}
       </form>
     </Modal>
   );

@@ -8,7 +8,7 @@ import { config } from '../config.js';
 import { files } from '../db/schema/index.js';
 import { audit } from '../core/audit.js';
 import { inTenantTx, requireCtx, requirePerm } from '../core/context.js';
-import { badRequest, notFound } from '../core/errors.js';
+import { badRequest, HINTS, notFound } from '../core/errors.js';
 
 /** Magic-byte sniffing: never trust the client's content type. SVG is rejected (can carry scripts). */
 function sniff(buf: Buffer): { mime: string; ext: string } | null {
@@ -28,14 +28,24 @@ export async function filesRoutes(app: FastifyInstance) {
     const ctx = requireCtx(req);
     const group = req.query.scope === 'group';
     if (group) requirePerm(ctx, 'master.companies', 'edit');
-    else if (!ctx.companyId) throw badRequest('Select a company first');
+    else if (!ctx.companyId) throw badRequest('No company is selected', HINTS.selectCompany);
 
     const part = await req.file({ limits: { fileSize: config.maxUploadBytes, files: 1 } });
-    if (!part) throw badRequest('No file received');
+    if (!part) throw badRequest('No file was received', 'Choose a file and upload it again. If uploads keep failing, check the network connection.');
     const buf = await part.toBuffer();
-    if (part.file.truncated) throw badRequest(`File is larger than ${config.maxUploadBytes / 1024 / 1024} MB`);
+    if (part.file.truncated) {
+      throw badRequest(
+        `The file is larger than ${config.maxUploadBytes / 1024 / 1024} MB`,
+        'Resize or compress the image (for example save it as JPG at a lower resolution) and upload it again.',
+      );
+    }
     const kind = sniff(buf);
-    if (!kind) throw badRequest('Only PNG, JPG, WEBP images or PDF files are allowed');
+    if (!kind) {
+      throw badRequest(
+        'This file type is not allowed',
+        'Upload a PNG, JPG or WEBP image, or a PDF. Renaming a file does not change its type: save or export it again in one of these formats.',
+      );
+    }
 
     const id = randomUUID();
     const rel = path.join(new Date().toISOString().slice(0, 7), `${id}.${kind.ext}`);
@@ -72,7 +82,7 @@ export async function filesRoutes(app: FastifyInstance) {
     const ctx = requireCtx(req);
     if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) throw notFound();
     const [f] = await inTenantTx(ctx, (tx) => tx.select().from(files).where(eq(files.id, req.params.id)));
-    if (!f) throw notFound('File not found');
+    if (!f) throw notFound('File not found', 'It may have been replaced, or it belongs to another company. Upload the file again.');
     const abs = path.resolve(config.storageDir, f.storagePath);
     if (!abs.startsWith(config.storageDir + path.sep)) throw notFound();
     return reply

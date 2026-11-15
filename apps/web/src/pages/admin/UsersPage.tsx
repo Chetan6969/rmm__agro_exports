@@ -7,7 +7,8 @@ import { DataGrid, type Column, type DataGridHandle } from '../../components/Dat
 import { enterNavigation } from '../../components/EntityForm';
 import { ConfirmDialog, Modal } from '../../components/Modal';
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../components/ui';
-import { api, ApiError, errorMessage } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
+import { showError } from '../../lib/notify';
 import { useHotkeys } from '../../lib/hotkeys';
 import { useSession } from '../../lib/session';
 
@@ -226,7 +227,7 @@ export function UserFormPage() {
           </>
         }
       />
-      <div className="flex-1 overflow-y-auto p-5" onKeyDown={enterNavigation}>
+      <div className="flex-1 overflow-y-auto p-3 sm:p-5" onKeyDown={enterNavigation}>
         <div className="mx-auto max-w-4xl space-y-4">
           {err != null && <ErrorBox error={err} />}
           <Card className="grid gap-3 p-4 sm:grid-cols-2">
@@ -323,7 +324,7 @@ export function UserFormPage() {
                   setResetOpen(false);
                   setNewPw('');
                 } catch (e) {
-                  toast.error(errorMessage(e));
+                  showError(e);
                 }
               }}
             >

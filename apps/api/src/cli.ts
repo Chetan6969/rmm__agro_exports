@@ -43,7 +43,7 @@ const commands: Record<string, () => Promise<void>> = {
         .set({ passwordHash: await argon2.hash(password), mustChangePassword: true, isActive: true })
         .where(and(sql`lower(${users.username}) = ${username}`, isNull(users.deletedAt)))
         .returning({ id: users.id });
-      if (!done.length) throw new Error(`user ${username} not found`);
+      if (!done.length) throw new Error(`User ${username} not found. Check the spelling; usernames are listed under Administration → Users.`);
       await d.update(sessions).set({ revokedAt: new Date() }).where(and(eq(sessions.userId, done[0].id), isNull(sessions.revokedAt)));
       console.log(`temporary password for ${username}: ${password}  (must be changed at next login)`);
     } finally {

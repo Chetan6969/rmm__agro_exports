@@ -56,11 +56,18 @@ async function withPermissions(tx: Tx, rows: (typeof roles.$inferSelect)[]) {
 async function guardEscalation(tx: Tx, ctx: RequestContext, permissions: string[], roleId?: string) {
   if (ctx.isSuperAdmin) return;
   const missing = permissions.filter((p) => !ctx.permissions.has(p));
-  if (missing.length) throw forbidden(`You cannot grant permissions you do not have: ${missing.slice(0, 3).join(', ')}`);
+  if (missing.length) {
+    throw forbidden(
+      `You cannot grant permissions you do not have: ${missing.slice(0, 3).join(', ')}`,
+      'Untick those permissions, or ask a super admin to make this change.',
+    );
+  }
   if (roleId) {
     const mine = new Set((await companiesForUser(tx, ctx.userId, false)).map((c) => c.id));
     const used = await tx.selectDistinct({ c: userCompanyRoles.companyId }).from(userCompanyRoles).where(eq(userCompanyRoles.roleId, roleId));
-    if (used.some((u) => !mine.has(u.c))) throw forbidden('This role is used in companies you do not manage');
+    if (used.some((u) => !mine.has(u.c))) {
+      throw forbidden('This role is used in companies you do not manage', 'Create a new role for your company instead, or ask a super admin to change this one.');
+    }
   }
 }
 
@@ -105,8 +112,10 @@ export async function rolesRoutes(app: FastifyInstance) {
     const body = roleSchema.extend({ version: z.number().int() }).parse(req.body);
     return inTenantTx(ctx, async (tx) => {
       const [before] = await tx.select().from(roles).where(and(eq(roles.id, req.params.id), isNull(roles.deletedAt)));
-      if (!before) throw notFound('Role not found');
-      if (before.isSystem) throw badRequest('The Administrator role always has every permission and cannot be edited');
+      if (!before) throw notFound('Role not found', 'It may have been deleted. Reload the roles list.');
+      if (before.isSystem) {
+        throw badRequest('The Administrator role always has every permission and cannot be edited', 'To give someone fewer rights, create a new role and assign that instead.');
+      }
       await guardEscalation(tx, ctx, body.permissions, before.id);
       const [beforeFull] = await withPermissions(tx, [before]);
       const [r] = await tx
@@ -114,7 +123,7 @@ export async function rolesRoutes(app: FastifyInstance) {
         .set({ name: body.name, description: body.description ?? null, version: sql`${roles.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
         .where(and(eq(roles.id, before.id), eq(roles.version, body.version)))
         .returning();
-      if (!r) throw conflict('This role was changed by someone else. Reload and try again.');
+      if (!r) throw conflict('This role was changed by someone else while you were editing');
       await tx.delete(rolePermissions).where(eq(rolePermissions.roleId, r.id));
       const perms = [...new Set(body.permissions)];
       if (perms.length) await tx.insert(rolePermissions).values(perms.map((permission) => ({ roleId: r.id, permission })));
@@ -134,10 +143,12 @@ export async function rolesRoutes(app: FastifyInstance) {
     requirePerm(ctx, 'admin.roles', 'delete');
     return inTenantTx(ctx, async (tx) => {
       const [r] = await tx.select().from(roles).where(and(eq(roles.id, req.params.id), isNull(roles.deletedAt)));
-      if (!r) throw notFound('Role not found');
-      if (r.isSystem) throw badRequest('System roles cannot be deleted');
+      if (!r) throw notFound('Role not found', 'It may have been deleted. Reload the roles list.');
+      if (r.isSystem) throw badRequest('System roles cannot be deleted', 'Remove the role from users instead (Administration → Users).');
       const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(userCompanyRoles).where(eq(userCompanyRoles.roleId, r.id));
-      if (n > 0) throw conflict(`This role is assigned ${n} time(s). Remove it from users first.`);
+      if (n > 0) {
+        throw conflict(`This role is still assigned ${n} time(s)`, 'Open Administration → Users, untick this role for each user, then delete it.');
+      }
       await guardEscalation(tx, ctx, [], r.id);
       await tx.update(roles).set({ deletedAt: new Date(), deletedBy: ctx.userId }).where(eq(roles.id, r.id));
       await audit(tx, ctx, { entity: 'roles', recordId: r.id, action: 'delete', meta: { name: r.name } });

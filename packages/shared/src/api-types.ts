@@ -25,7 +25,10 @@ export interface ListResult<T = Record<string, unknown>> {
 
 export interface ApiErrorBody {
   error: string;
+  /** What went wrong, in plain words. */
   message: string;
+  /** What the user can do to fix it (where to go, what to change, whom to ask). */
+  hint?: string;
   /** Field-level validation messages. */
   fields?: Record<string, string>;
 }

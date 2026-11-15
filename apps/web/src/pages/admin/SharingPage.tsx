@@ -7,7 +7,8 @@ import { DataGrid, type Column, type DataGridHandle } from '../../components/Dat
 import { enterNavigation } from '../../components/EntityForm';
 import { ConfirmDialog, Modal } from '../../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader } from '../../components/ui';
-import { api, errorMessage, qs } from '../../lib/api';
+import { api, qs } from '../../lib/api';
+import { showError, showProblem } from '../../lib/notify';
 import { useHotkeys } from '../../lib/hotkeys';
 import { useSession } from '../../lib/session';
 
@@ -58,10 +59,10 @@ export function SharingPage() {
         getId={(p) => p.id}
         loading={list.isFetching}
         onOpen={(p) => (mine(p) && can('admin.sharing', 'edit') ? setEditing(p) : toast.info('Only the owning company can change this policy'))}
-        onDelete={(p) => (mine(p) && can('admin.sharing', 'delete') ? setToDelete(p) : toast.error('Only the owning company can remove this policy'))}
+        onDelete={(p) => (mine(p) && can('admin.sharing', 'delete') ? setToDelete(p) : showProblem('Only the owning company can remove this policy', 'Switch to the company that shares the data (Alt+C) to remove it.'))}
         empty="Nothing is shared. Each company sees only its own data."
       />
-      <div className="border-t border-slate-200 bg-slate-50 px-5 py-1.5 text-[11.5px] text-slate-500">Enter edit · Del remove · Alt+N new</div>
+      <div className="border-t border-slate-200 bg-slate-50 px-5 py-1.5 text-[11.5px] text-slate-500 max-sm:hidden">Enter edit · Del remove · Alt+N new</div>
       {editing && (
         <PolicyDialog
           policy={editing === 'new' ? null : editing}
@@ -130,7 +131,7 @@ function PolicyDialog({ policy, onClose, onSaved }: { policy: Policy | null; onC
       toast.success('Sharing saved');
       onClose();
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError(e);
     } finally {
       setBusy(false);
     }

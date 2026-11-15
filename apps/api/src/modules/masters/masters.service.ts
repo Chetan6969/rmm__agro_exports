@@ -9,11 +9,11 @@ import { files, masterTables, type AnyTable } from '../../db/schema/index.js';
 import { companiesForUser } from '../../core/access.js';
 import { audit } from '../../core/audit.js';
 import { requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
-import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
+import { badRequest, conflict, forbidden, HINTS, notFound } from '../../core/errors.js';
 
 export function resolveEntity(key: string): { def: EntityDef; table: AnyTable } {
   const def = getEntity(key);
-  if (!def) throw notFound(`Unknown master "${key}"`);
+  if (!def) throw notFound(`Unknown master "${key}"`, 'Open the screen from the menu or with Ctrl+K instead of typing the address.');
   return { def, table: masterTables[def.key] };
 }
 
@@ -123,8 +123,13 @@ async function checkRefs(tx: Tx, def: EntityDef, values: Row) {
     const v = values[f.name];
     if (!v) continue;
     const [hit] = await tx.select({ id: files.id, mime: files.mimeType }).from(files).where(eq(files.id, v as string));
-    if (!hit) throw badRequest(`${f.label}: uploaded file not found`, { [f.name]: 'Not found' });
-    if (!hit.mime.startsWith('image/')) throw badRequest(`${f.label}: must be an image`, { [f.name]: 'Image required' });
+    if (!hit) throw badRequest(`${f.label}: the uploaded file was not found`, { hint: `Upload the ${f.label.toLowerCase()} again.`, fields: { [f.name]: 'Not found' } });
+    if (!hit.mime.startsWith('image/')) {
+      throw badRequest(`${f.label}: must be an image`, {
+        hint: 'Upload a PNG, JPG or WEBP image here; PDFs cannot be printed on documents.',
+        fields: { [f.name]: 'Image required' },
+      });
+    }
   }
   for (const f of def.fields.filter((x) => x.type === 'ref')) {
     const v = values[f.name];
@@ -134,14 +139,19 @@ async function checkRefs(tx: Tx, def: EntityDef, values: Row) {
       .select({ id: target.table.id })
       .from(target.table)
       .where(and(eq(target.table.id, v as string), isNull(target.table.deletedAt)));
-    if (!hit) throw badRequest(`${f.label}: selected record is not available`, { [f.name]: 'Not available' });
+    if (!hit) {
+      throw badRequest(`${f.label}: the selected record is not available`, {
+        hint: `It may have been deleted or not shared with your company. Pick another ${f.label.toLowerCase()} from the list.`,
+        fields: { [f.name]: 'Not available' },
+      });
+    }
   }
 }
 
 export async function createRecord(tx: Tx, ctx: RequestContext, key: string, body: unknown) {
   const { def, table } = resolveEntity(key);
   requirePerm(ctx, moduleKey(def), 'create');
-  if (def.scope === 'group' && !ctx.isSuperAdmin) throw forbidden('Only a super admin can create companies');
+  if (def.scope === 'group' && !ctx.isSuperAdmin) throw forbidden('Only a super admin can create companies', 'Ask a super admin to create the company.');
   const values = buildEntitySchema(def, 'create').parse(body ?? {}) as Row;
   for (const f of def.fields) {
     if ((values[f.name] === undefined || values[f.name] === null) && f.default !== undefined) values[f.name] = f.default;
@@ -159,7 +169,7 @@ export async function updateRecord(tx: Tx, ctx: RequestContext, key: string, id:
   const { def, table } = resolveEntity(key);
   requirePerm(ctx, moduleKey(def), 'edit');
   const { version, ...rest } = (body ?? {}) as Row;
-  if (typeof version !== 'number') throw badRequest('version is required for updates');
+  if (typeof version !== 'number') throw badRequest('The record version is missing', HINTS.reload);
   const values = buildEntitySchema(def, 'update').parse(rest) as Row;
   const before = await loadVisible(tx, ctx, def, table, id);
   await checkRefs(tx, def, values);
@@ -171,8 +181,11 @@ export async function updateRecord(tx: Tx, ctx: RequestContext, key: string, id:
     .returning()) as Row[];
 
   if (!updated.length) {
-    if (before.version !== version) throw conflict('This record was changed by another user. Reload and try again.');
-    throw forbidden('This record is shared with your company as read-only');
+    if (before.version !== version) throw conflict('This record was changed by another user while you were editing');
+    throw forbidden(
+      'This record is shared with your company as read-only',
+      'Ask the owning company to give your company edit access (Administration → Data sharing), or switch to that company with Alt+C.',
+    );
   }
   await audit(tx, ctx, {
     entity: def.key,
@@ -188,11 +201,21 @@ export async function updateRecord(tx: Tx, ctx: RequestContext, key: string, id:
 export async function deleteRecord(tx: Tx, ctx: RequestContext, key: string, id: string, reason: string) {
   const { def, table } = resolveEntity(key);
   requirePerm(ctx, moduleKey(def), 'delete');
-  if (def.scope === 'group' && !ctx.isSuperAdmin) throw forbidden('Only a super admin can delete companies');
-  if (!reason?.trim()) throw badRequest('A reason is required to delete', { reason: 'Required' });
+  if (def.scope === 'group' && !ctx.isSuperAdmin) {
+    throw forbidden('Only a super admin can delete companies', 'To stop using a company, a super admin can untick Active instead of deleting it.');
+  }
+  if (!reason?.trim()) {
+    throw badRequest('A reason is required to delete', {
+      hint: 'Type why this record is being deleted; it is kept in the audit log.',
+      fields: { reason: 'Required' },
+    });
+  }
   const before = await loadVisible(tx, ctx, def, table, id);
   if (def.scope === 'company' && before.companyId !== ctx.companyId) {
-    throw forbidden('Only the owning company can delete a shared record');
+    throw forbidden(
+      'Only the owning company can delete a shared record',
+      'Ask the owning company to delete it, or to stop sharing it with you (Administration → Data sharing).',
+    );
   }
   await tx
     .update(table)

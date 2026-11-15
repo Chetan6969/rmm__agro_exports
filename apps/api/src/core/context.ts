@@ -1,8 +1,8 @@
-import type { Action } from '@rmm/shared';
+import { type Action, MODULE_MAP } from '@rmm/shared';
 import { sql } from 'drizzle-orm';
 import type { FastifyRequest } from 'fastify';
 import { db, type Tx } from '../db/client.js';
-import { forbidden, unauthorized } from './errors.js';
+import { forbidden, HINTS, unauthorized } from './errors.js';
 
 export interface RequestContext {
   userId: string;
@@ -26,7 +26,7 @@ export function requireCtx(req: FastifyRequest): RequestContext {
 }
 
 export function requireCompany(ctx: RequestContext): string {
-  if (!ctx.companyId) throw forbidden('Select a company first');
+  if (!ctx.companyId) throw forbidden('No company is selected', HINTS.selectCompany);
   return ctx.companyId;
 }
 
@@ -35,7 +35,13 @@ export function can(ctx: RequestContext, module: string, action: Action): boolea
 }
 
 export function requirePerm(ctx: RequestContext, module: string, action: Action) {
-  if (!can(ctx, module, action)) throw forbidden(`Missing permission: ${module} → ${action}`);
+  if (!can(ctx, module, action)) {
+    const label = MODULE_MAP[module]?.label ?? module;
+    throw forbidden(
+      `You do not have the "${action}" permission for ${label}`,
+      `Ask an administrator to tick "${action}" for ${label} in your role (Administration → Roles & permissions). It applies on your next click.`,
+    );
+  }
 }
 
 /**

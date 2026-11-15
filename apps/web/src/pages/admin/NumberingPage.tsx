@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../components/ui';
-import { api, errorMessage } from '../../lib/api';
+import { api } from '../../lib/api';
+import { showError } from '../../lib/notify';
 import { useSession } from '../../lib/session';
 
 interface Series {
@@ -28,15 +29,15 @@ export function NumberingPage() {
         title="Document numbering"
         subtitle={`Number series of ${session.activeCompany.name}. Numbers are issued only when a document is saved, without gaps or duplicates.`}
       />
-      <div className="space-y-3 p-5">
+      <div className="space-y-3 p-3 sm:p-5">
         {q.error && <ErrorBox error={q.error} />}
         <Card className="p-3 text-[12.5px] text-slate-600">
           Tokens: <code className="font-mono">{'{CO}'}</code> company code · <code className="font-mono">{'{FY}'}</code> 26-27 ·{' '}
           <code className="font-mono">{'{FYL}'}</code> 2026-27 · <code className="font-mono">{'{YYYY}'}</code> · <code className="font-mono">{'{MM}'}</code> ·{' '}
           <code className="font-mono">{'{SEQ:3}'}</code> running number padded to 3 digits. Moving from Excel? Set <b>Next no.</b> to continue your current series.
         </Card>
-        <Card>
-          <table className="w-full">
+        <Card className="overflow-x-auto">
+          <table className="w-full min-w-[760px]">
             <thead className="bg-slate-50 text-[11.5px] text-slate-500 uppercase">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold">Document</th>
@@ -84,7 +85,7 @@ function SeriesRow({ s, code, editable }: { s: Series; code: string; editable: b
       await qc.invalidateQueries({ queryKey: ['numbering'] });
       toast.success(`${s.label} numbering saved`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError(e);
     } finally {
       setBusy(false);
     }

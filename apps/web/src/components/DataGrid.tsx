@@ -26,9 +26,12 @@ interface Props<T> {
   label: string;
 }
 
+/** Touch screens have no reliable double-click, so a tap opens the row there. */
+const isTouch = () => typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches;
+
 /**
  * Keyboard-driven table: ↑/↓ move, Home/End jump, Enter opens, Delete deletes,
- * PageUp/PageDown change page. Mouse: click selects, double-click opens.
+ * PageUp/PageDown change page. Mouse: click selects, double-click opens. Touch: tap opens.
  */
 function DataGridInner<T>(
   { columns, rows, getId, onOpen, onDelete, onPage, onExitTop, loading, empty, label }: Props<T>,
@@ -112,7 +115,10 @@ function DataGridInner<T>(
               data-row={i}
               role="row"
               aria-selected={i === sel}
-              onClick={() => setSel(i)}
+              onClick={() => {
+                setSel(i);
+                if (isTouch()) onOpen?.(r);
+              }}
               onDoubleClick={() => onOpen?.(r)}
               className="grid-row cursor-default border-b border-slate-100 hover:bg-slate-50"
             >

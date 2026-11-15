@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { ENTITIES } from '@rmm/shared';
-import { errorMessage } from '../lib/api';
+
+import { showError } from '../lib/notify';
 import { NAV } from '../lib/nav';
 import { useSession } from '../lib/session';
 
@@ -65,7 +66,7 @@ export function CommandPalette({ open, mode, onClose }: { open: boolean; mode: P
               toast.success(`Now working in ${c.name}`);
               navigate('/');
             } catch (e) {
-              toast.error(errorMessage(e));
+              showError(e);
             }
           }}
           className="palette-item"

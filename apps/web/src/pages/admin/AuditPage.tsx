@@ -80,7 +80,7 @@ export function AuditPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <PageHeader title="Audit log" subtitle="Every change, login and export. Entries cannot be edited or deleted." />
-      <div className="flex flex-wrap items-end gap-2 border-b border-slate-200 bg-white px-5 py-2">
+      <div className="flex flex-wrap items-end gap-2 border-b border-slate-200 bg-white px-3 py-2 sm:px-5">
         <label className="block">
           <span className="block text-[11.5px] text-slate-500">Master / area</span>
           <select className="field-input" value={filters.entity} onChange={(e) => set('entity', e.target.value)}>

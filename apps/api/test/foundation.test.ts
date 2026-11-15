@@ -475,3 +475,52 @@ describe('review fixes: sessions, numbering, exports', () => {
     expect(csv).toContain(`"'=HYPERLINK(""x"")"`);
   });
 });
+
+describe('every error tells the user how to fix it', () => {
+  it('missing permission names the module and where to grant it', async () => {
+    const r = await alice.get('/users');
+    expect(r.status).toBe(403);
+    expect(r.body.message).toBe('You do not have the "view" permission for Users');
+    expect(r.body.hint).toMatch(/Roles & permissions/);
+  });
+
+  it('duplicates say which value clashes and what to do', async () => {
+    await alice.ok('POST', '/masters/customers', { code: 'HINT1', name: 'Hint buyer' });
+    const r = await alice.post('/masters/customers', { code: 'HINT1', name: 'Hint buyer again' });
+    expect(r.status).toBe(409);
+    expect(r.body.fields).toHaveProperty('code');
+    expect(r.body.hint).toMatch(/different code|existing record/);
+  });
+
+  it('validation errors point at the fields', async () => {
+    const r = await alice.post('/masters/customers', { code: '', name: '' });
+    expect(r.status).toBe(400);
+    expect(r.body.fields).toHaveProperty('name');
+    expect(r.body.hint).toMatch(/highlighted fields/);
+  });
+
+  it('unknown API routes and anonymous calls explain the next step', async () => {
+    const missing = await alice.get('/no-such-route');
+    expect(missing.status).toBe(404);
+    expect(missing.body.hint).toBeTruthy();
+    const anon = await app.inject({ method: 'GET', url: '/api/masters/customers' });
+    expect(anon.json().hint).toMatch(/Sign in/);
+  });
+
+  it('rate-limited sign-ins say how long to wait', async () => {
+    let last = 0;
+    let body: { hint?: string } = {};
+    for (let i = 0; i < 12 && last !== 429; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        remoteAddress: '10.99.0.1',
+        payload: { username: 'alice', password: 'wrong-password-2' },
+      });
+      last = res.statusCode;
+      body = res.json();
+    }
+    expect(last).toBe(429);
+    expect(body.hint).toMatch(/Wait a minute/);
+  });
+});

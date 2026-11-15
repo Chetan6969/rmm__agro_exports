@@ -81,12 +81,14 @@ async function loadAccess(tx: Tx, userIds: string[], visibleCompanies: Set<strin
 async function applyAccess(tx: Tx, ctx: RequestContext, userId: string, access: z.infer<typeof accessSchema>) {
   const allowed = await manageableCompanies(tx, ctx);
   for (const a of access) {
-    if (!allowed.has(a.companyId)) throw forbidden('You cannot manage users of one of the selected companies');
+    if (!allowed.has(a.companyId)) {
+      throw forbidden('You cannot manage users of one of the selected companies', 'Only tick roles in companies where you administer users, or ask a super admin.');
+    }
   }
   const roleIds = [...new Set(access.flatMap((a) => a.roleIds))];
   if (roleIds.length) {
     const found = await tx.select({ id: roles.id }).from(roles).where(and(inArray(roles.id, roleIds), isNull(roles.deletedAt)));
-    if (found.length !== roleIds.length) throw badRequest('One of the selected roles does not exist');
+    if (found.length !== roleIds.length) throw badRequest('One of the selected roles no longer exists', 'Reload the page and choose the roles again.');
   }
   const before = await loadAccess(tx, [userId], allowed);
   await guardRoleAssignment(tx, ctx, before.get(userId) ?? [], access);
@@ -133,7 +135,10 @@ async function guardRoleAssignment(
     const rolesHere = new Set(added.filter((a) => a.companyId === companyId).map((a) => a.roleId));
     const missing = grants.filter((g) => rolesHere.has(g.roleId) && !mine.has(g.permission)).map((g) => g.permission);
     if (missing.length) {
-      throw forbidden(`You cannot assign a role with permissions you do not hold: ${[...new Set(missing)].slice(0, 3).join(', ')}`);
+      throw forbidden(
+        `You cannot assign a role with permissions you do not hold: ${[...new Set(missing)].slice(0, 3).join(', ')}`,
+        'Pick a role whose permissions you also have in that company, or ask a super admin to assign it.',
+      );
     }
   }
 }
@@ -160,12 +165,12 @@ async function myCompanyIds(tx: Tx, ctx: RequestContext): Promise<string[]> {
 async function loadUser(tx: Tx, id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound();
   const [u] = await tx.select(publicCols).from(users).where(and(eq(users.id, id), isNull(users.deletedAt)));
-  if (!u) throw notFound('User not found');
+  if (!u) throw notFound('User not found', 'The user may have been deleted. Reload the users list.');
   return u;
 }
 
 function guardTarget(ctx: RequestContext, target: { id: string; isSuperAdmin: boolean }) {
-  if (target.isSuperAdmin && !ctx.isSuperAdmin) throw forbidden('Only a super admin can change a super admin');
+  if (target.isSuperAdmin && !ctx.isSuperAdmin) throw forbidden('Only a super admin can change a super admin', 'Ask a super admin to make this change.');
 }
 
 /**
@@ -183,11 +188,14 @@ async function assertManageable(tx: Tx, ctx: RequestContext, target: { id: strin
   if (!memberOf.length) {
     const [row] = await tx.select({ createdBy: users.createdBy }).from(users).where(eq(users.id, target.id));
     if (row?.createdBy === ctx.userId) return;
-    throw forbidden('You can only manage users of the companies you administer');
+    throw forbidden('You can only manage users of the companies you administer', 'Ask the admin who created this user, or a super admin.');
   }
   const allowed = await manageableCompanies(tx, ctx);
   if (memberOf.some((c) => !allowed.has(c))) {
-    throw forbidden('This user also works in companies you do not administer. Ask a super admin.');
+    throw forbidden(
+      'This user also works in companies you do not administer',
+      'Ask a super admin to make this change, because it would also affect the other companies.',
+    );
   }
 }
 
@@ -215,7 +223,7 @@ export async function usersRoutes(app: FastifyInstance) {
       const u = await loadUser(tx, req.params.id);
       const mine = await myCompanyIds(tx, ctx);
       const [seen] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, u.id), visibleUsers(tx, ctx, mine)));
-      if (!seen) throw notFound('User not found');
+      if (!seen) throw notFound('User not found', 'The user may have been deleted or does not work in your companies.');
       const visible = ctx.isSuperAdmin ? null : new Set(mine);
       const access = await loadAccess(tx, [u.id], visible);
       return { ...u, access: access.get(u.id) ?? [] };
@@ -226,13 +234,18 @@ export async function usersRoutes(app: FastifyInstance) {
     const ctx = requireCtx(req);
     requirePerm(ctx, 'admin.users', 'create');
     const body = createSchema.parse(req.body);
-    if (body.isSuperAdmin && !ctx.isSuperAdmin) throw forbidden('Only a super admin can create a super admin');
+    if (body.isSuperAdmin && !ctx.isSuperAdmin) throw forbidden('Only a super admin can create a super admin', 'Untick Super admin, or ask a super admin to create this user.');
     const created = await inTenantTx(ctx, async (tx) => {
       const [dupe] = await tx
         .select({ id: users.id })
         .from(users)
         .where(and(sql`lower(${users.username}) = ${body.username}`, isNull(users.deletedAt)));
-      if (dupe) throw conflict('Username already exists');
+      if (dupe) {
+        throw conflict('This username is already taken', {
+          hint: 'Choose another username, for example add a number or the surname.',
+          fields: { username: 'Already exists' },
+        });
+      }
       const [u] = await tx
         .insert(users)
         .values({
@@ -264,14 +277,14 @@ export async function usersRoutes(app: FastifyInstance) {
       const before = await loadUser(tx, req.params.id);
       await assertManageable(tx, ctx, before);
       if (body.isSuperAdmin !== undefined && body.isSuperAdmin !== before.isSuperAdmin && !ctx.isSuperAdmin) {
-        throw forbidden('Only a super admin can grant super admin');
+        throw forbidden('Only a super admin can grant super admin', 'Untick Super admin, or ask a super admin.');
       }
       if (before.id === ctx.userId && (body.isActive === false || body.isSuperAdmin === false)) {
-        throw badRequest('You cannot deactivate yourself or remove your own super admin rights');
+        throw badRequest('You cannot deactivate yourself or remove your own super admin rights', 'Ask another super admin to make this change, so the group is never left without one.');
       }
       if (body.defaultCompanyId) {
         const [c] = await tx.select({ id: companies.id }).from(companies).where(eq(companies.id, body.defaultCompanyId));
-        if (!c) throw badRequest('Default company not found');
+        if (!c) throw badRequest('Default company not found', { hint: 'Pick the default company from the list again.', fields: { defaultCompanyId: 'Not found' } });
       }
       const { version, ...values } = body;
       const [u] = await tx
@@ -279,7 +292,7 @@ export async function usersRoutes(app: FastifyInstance) {
         .set({ ...values, version: sql`${users.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
         .where(and(eq(users.id, before.id), eq(users.version, version)))
         .returning(publicCols);
-      if (!u) throw conflict('This user was changed by someone else. Reload and try again.');
+      if (!u) throw conflict('This user was changed by someone else while you were editing');
       if (body.isActive === false) await revokeUserSessions(u.id);
       await audit(tx, ctx, { entity: 'users', recordId: u.id, action: 'update', before, after: u });
       return u;
@@ -319,8 +332,13 @@ export async function usersRoutes(app: FastifyInstance) {
     const ctx = requireCtx(req);
     requirePerm(ctx, 'admin.users', 'delete');
     const reason = req.body?.reason?.trim();
-    if (!reason) throw badRequest('A reason is required to delete', { reason: 'Required' });
-    if (req.params.id === ctx.userId) throw badRequest('You cannot delete yourself');
+    if (!reason) {
+      throw badRequest('A reason is required to delete', {
+        hint: 'Type why this user is being deleted; it is kept in the audit log.',
+        fields: { reason: 'Required' },
+      });
+    }
+    if (req.params.id === ctx.userId) throw badRequest('You cannot delete yourself', 'Ask another administrator to delete your account.');
     await inTenantTx(ctx, async (tx) => {
       const target = await loadUser(tx, req.params.id);
       await assertManageable(tx, ctx, target);
@@ -329,7 +347,7 @@ export async function usersRoutes(app: FastifyInstance) {
           .select({ n: sql<number>`count(*)::int` })
           .from(users)
           .where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt), ne(users.id, target.id)));
-        if (n === 0) throw badRequest('Cannot delete the last super admin');
+        if (n === 0) throw badRequest('Cannot delete the last super admin', 'Make another user a super admin first, then delete this one.');
       }
       await tx
         .update(users)

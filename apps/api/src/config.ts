@@ -2,7 +2,9 @@ import path from 'node:path';
 
 function req(name: string, fallback?: string): string {
   const v = process.env[name] ?? fallback;
-  if (v === undefined || v === '') throw new Error(`Missing required env var ${name}`);
+  if (v === undefined || v === '') {
+    throw new Error(`Missing required setting ${name}. Add it to apps/api/.env (copy apps/api/.env.example for the format), then restart.`);
+  }
   return v;
 }
 

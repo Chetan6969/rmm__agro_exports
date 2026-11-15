@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '../../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../../components/ui';
-import { api, errorMessage } from '../../lib/api';
+import { api } from '../../lib/api';
+import { showError } from '../../lib/notify';
 import { useHotkeys } from '../../lib/hotkeys';
 import { useSession } from '../../lib/session';
 import { useRoles, type RoleRow } from './UsersPage';
@@ -89,7 +90,7 @@ export function RolesPage() {
       setDirty(false);
       toast.success(`Role "${saved.name}" saved`);
     } catch (e) {
-      toast.error(errorMessage(e));
+      showError(e);
     } finally {
       setSaving(false);
     }
@@ -154,8 +155,11 @@ export function RolesPage() {
           )
         }
       />
-      <div className="flex min-h-0 flex-1">
-        <nav className="w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white" aria-label="Roles">
+      <div className="flex min-h-0 flex-1 max-md:flex-col">
+        <nav
+          className="shrink-0 overflow-y-auto border-slate-200 bg-white max-md:max-h-44 max-md:border-b md:w-60 md:border-r"
+          aria-label="Roles"
+        >
           <ul
             role="listbox"
             tabIndex={0}
@@ -193,8 +197,8 @@ export function RolesPage() {
 
         {selected && (selected === 'new' || role) ? (
           <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 bg-white px-5 py-3">
-              <label className="block w-60">
+            <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 bg-white px-3 py-3 sm:px-5">
+              <label className="block w-full sm:w-60">
                 <span className="mb-1 block text-[12.5px] font-medium text-slate-600">Role name</span>
                 <input
                   className="field-input"
@@ -207,7 +211,7 @@ export function RolesPage() {
                   }}
                 />
               </label>
-              <label className="block min-w-60 flex-1">
+              <label className="block w-full flex-1 sm:min-w-60">
                 <span className="mb-1 block text-[12.5px] font-medium text-slate-600">Description</span>
                 <input
                   className="field-input"
@@ -237,8 +241,8 @@ export function RolesPage() {
                 <ErrorBox error={new Error('Administrator is a system role: it always has every permission, including modules added later.')} />
               </div>
             )}
-            <div className="flex-1 overflow-auto p-5">
-              <table className="w-full max-w-4xl border-separate border-spacing-0 rounded-md border border-slate-200 bg-white" onKeyDown={onMatrixKey}>
+            <div className="flex-1 overflow-auto p-3 sm:p-5">
+              <table className="w-full min-w-[600px] max-w-4xl border-separate border-spacing-0 rounded-md border border-slate-200 bg-white" onKeyDown={onMatrixKey}>
                 <thead className="sticky top-0 z-10 bg-slate-50">
                   <tr>
                     <th className="border-b border-slate-200 px-3 py-2 text-left text-[11.5px] font-semibold text-slate-500 uppercase">Module</th>

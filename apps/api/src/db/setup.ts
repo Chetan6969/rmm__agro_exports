@@ -16,7 +16,9 @@ export async function setupDatabase(adminUrl = config.databaseAdminUrl(), appUrl
   const appRole = decodeURIComponent(app.username);
   const appPassword = process.env.APP_DB_PASSWORD || decodeURIComponent(app.password);
   if (!/^[a-z_][a-z0-9_]*$/.test(dbName) || !/^[a-z_][a-z0-9_]*$/.test(appRole)) {
-    throw new Error('Database and role names must be lowercase identifiers');
+    throw new Error(
+      'Database and role names must be lowercase identifiers (letters, digits, _). Fix the database name in DATABASE_ADMIN_URL and the user name in DATABASE_URL in apps/api/.env.',
+    );
   }
 
   // connect to the maintenance DB to create the target DB
