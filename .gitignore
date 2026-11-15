@@ -151,3 +151,6 @@ vite.config.ts.timestamp-*
 # App runtime storage (uploaded logos, seals, signatures)
 apps/api/storage/
 apps/api/storage-test/
+
+# Local development PostgreSQL cluster (scripts/dev-db.mjs)
+.dev-db/

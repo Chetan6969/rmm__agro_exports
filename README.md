@@ -29,21 +29,37 @@ packages/shared  Master registry, permission catalog, validation, numbering. Use
 
 ## First-time setup (development machine)
 
-Requirements: Node.js 22+, pnpm, PostgreSQL 15+ running locally.
+Requirements: Node.js 22+, pnpm, and the PostgreSQL 16+ command-line tools on `PATH`
+(Windows: add `C:\Program Files\PostgreSQL8in`). You do not need to touch an existing
+PostgreSQL service: development uses its own cluster in `./.dev-db` on `localhost:55432`.
 
 ```bash
 pnpm install
-cp apps/api/.env.example apps/api/.env      # then edit: set a strong APP_DB_PASSWORD (also in DATABASE_URL)
-pnpm db:setup                               # creates DB + non-superuser app role, migrations, RLS
-pnpm db:seed                                # first super admin + starter roles + currencies/ports/countries…
-pnpm dev                                    # API :4000, web :5173 (open http://localhost:5173)
+pnpm setup:dev      # one time: apps/api/.env with generated passwords, database cluster, migrations + RLS, seed
+pnpm dev            # API :4000, web :5173 (open http://localhost:5173, sign in as "admin")
 ```
 
-`db:seed` prints the super admin's temporary password once. If you lose it:
+`setup:dev` prints the super admin's temporary password once (you choose a new one at first sign-in).
+If `ADMIN_PASSWORD` is set in `apps/api/.env`, that password is used instead. Lost it?
 
 ```bash
 pnpm --filter @rmm/api exec tsx --env-file=.env src/cli.ts reset-password admin
 ```
+
+Day to day:
+
+| Command | What it does |
+|---|---|
+| `pnpm start:dev` | start the development database, then the API and web app |
+| `pnpm db:start` / `pnpm db:stop` / `pnpm db:status` | control the development database (needed again after a reboot) |
+| `pnpm db:migrate` | apply new migrations after pulling changes |
+
+Use another port with `DEV_DB_PORT` (and the same port in both URLs in `apps/api/.env`).
+Deleting `.dev-db` and `apps/api/.env`, then running `pnpm setup:dev`, gives a fresh local database
+(this erases local test data only).
+
+To use an existing PostgreSQL server instead, copy `apps/api/.env.example` to `apps/api/.env`, point
+`DATABASE_ADMIN_URL` at a superuser and `DATABASE_URL` at the app role, then run `pnpm db:setup` and `pnpm db:seed`.
 
 Then in the app: create each company → adjust roles → create users and tick their roles per company →
 set numbering (enter your current Excel numbers in **Next no.**) → set sharing between companies if needed.
