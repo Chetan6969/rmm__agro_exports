@@ -21,6 +21,8 @@ export const config = {
    * trusting it would let any client pick its own IP and dodge the login rate limit.
    */
   trustProxy: process.env.TRUST_PROXY === 'true',
+  /** Minutes before live exchange rates are re-checked when someone views them (providers update daily). */
+  exchangeRateRefreshMinutes: Math.max(5, Number(process.env.EXCHANGE_RATE_REFRESH_MINUTES ?? 60) || 60),
   storageDir: path.resolve(process.env.STORAGE_DIR ?? './storage'),
   webDist: process.env.WEB_DIST ?? path.resolve(import.meta.dirname, '../../web/dist'),
   maxUploadBytes: 5 * 1024 * 1024,

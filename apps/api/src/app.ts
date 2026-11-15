@@ -12,6 +12,7 @@ import { errorHandler, unauthorized } from './core/errors.js';
 import { loadSession } from './core/session.js';
 import { auditRoutes } from './modules/audit.routes.js';
 import { authRoutes } from './modules/auth.routes.js';
+import { exchangeRateRoutes } from './modules/exchange-rates.js';
 import { filesRoutes } from './modules/files.routes.js';
 import { mastersRoutes } from './modules/masters/masters.routes.js';
 import { numberingRoutes } from './modules/numbering.js';
@@ -73,6 +74,7 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
       await api.register(numberingRoutes);
       await api.register(filesRoutes);
       await api.register(auditRoutes);
+      await api.register(exchangeRateRoutes);
 
       api.setNotFoundHandler((_req, reply) =>
         reply.status(404).send({

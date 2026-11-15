@@ -2,10 +2,13 @@ import { sql } from 'drizzle-orm';
 import {
   bigserial,
   boolean,
+  check,
+  date,
   index,
   inet,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -172,6 +175,34 @@ export const numberCounters = pgTable(
     lastValue: integer('last_value').notNull().default(0),
   },
   (t) => [primaryKey({ columns: [t.companyId, t.docType, t.period] })],
+);
+
+// ------------------------------------------------------------------ live exchange rates (group-wide)
+/**
+ * Market reference rates fetched from public providers, one row per currency, source and
+ * rate date. The newest row per currency is what the UI shows; older rows are history.
+ * Not company data, so no RLS (like the global currencies master).
+ */
+export const exchangeRates = pgTable(
+  'exchange_rates',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    currencyCode: text('currency_code').notNull(),
+    /** Indian rupees per 1 unit of the currency. */
+    rateToInr: numeric('rate_to_inr', { precision: 18, scale: 6 }).notNull(),
+    /** Business date the provider published the rate for. */
+    rateDate: date('rate_date', { mode: 'string' }).notNull(),
+    /** 'ECB' (European Central Bank via Frankfurter) or 'fawazahmed0' (open market data). */
+    source: text('source').notNull(),
+    /** When this server last confirmed the rate with the provider. */
+    fetchedAt: timestamp('fetched_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('exchange_rates_code_source_date_uq').on(t.currencyCode, t.source, t.rateDate),
+    // latest rate per currency: WHERE currency_code = ? ORDER BY fetched_at DESC
+    index('exchange_rates_code_fetched_idx').on(t.currencyCode, t.fetchedAt),
+    check('exchange_rates_positive', sql`${t.rateToInr} > 0`),
+  ],
 );
 
 // ------------------------------------------------------------------ files (logos, seals, attachments)

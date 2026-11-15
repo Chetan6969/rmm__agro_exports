@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { DataGrid, type Column, type DataGridHandle } from '../components/DataGrid';
+import { LiveRatesBar, liveRateColumns, useLiveRates, useNow } from '../components/LiveRates';
 import { ConfirmDialog } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader } from '../components/ui';
 import { api, qs } from '../lib/api';
@@ -69,6 +70,9 @@ function MasterList({ def }: { def: EntityDef }) {
     enabled: !company || !!session?.activeCompany,
   });
   const rows = q.data?.rows ?? [];
+  const isCurrencies = def.key === 'currencies';
+  const live = useLiveRates(isCurrencies);
+  const now = useNow();
   const pages = Math.max(1, Math.ceil((q.data?.total ?? 0) / 50));
 
   const columns = useMemo<Column<Row>[]>(() => {
@@ -81,6 +85,12 @@ function MasterList({ def }: { def: EntityDef }) {
         className: f.name === 'code' ? 'font-mono text-[12.5px]' : f.name === def.displayField ? 'font-medium text-slate-900' : '',
         render: (r) => cellValue(def, f.name, r),
       }));
+    if (isCurrencies) {
+      // Live rate next to the name (visible on phones); comparison, source and age after the saved default.
+      const [rate, ...details] = liveRateColumns(live.byCode, now, live.query.isPending);
+      cols.splice(cols.findIndex((c) => c.key === 'name') + 1, 0, rate);
+      cols.splice(cols.findIndex((c) => c.key === 'exchangeRate') + 1, 0, ...details);
+    }
     if (company) {
       cols.push({
         key: '_owner',
@@ -89,7 +99,7 @@ function MasterList({ def }: { def: EntityDef }) {
       });
     }
     return cols;
-  }, [def, company]);
+  }, [def, company, isCurrencies, live.byCode, live.query.isPending, now]);
 
   const open = (r: Row) => navigate(`/m/${def.key}/${r.id}`);
   const canCreate = can(mod, 'create') && (def.scope !== 'group' || session?.user.isSuperAdmin);
@@ -187,6 +197,7 @@ function MasterList({ def }: { def: EntityDef }) {
           {pages > 1 && ` · page ${page} of ${pages}`}
         </div>
       </div>
+      {isCurrencies && <LiveRatesBar live={live} now={now} />}
       {q.error && (
         <div className="p-3">
           <ErrorBox error={q.error} />
