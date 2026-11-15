@@ -231,8 +231,8 @@ export async function lookup(tx: Tx, ctx: RequestContext, key: string, q: { q?: 
 function csvCell(v: unknown): string {
   if (v === null || v === undefined) return '';
   let s = v instanceof Date ? v.toISOString() : String(v);
-  // neutralise spreadsheet formula injection
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  // neutralise spreadsheet formula injection, but keep plain numbers (e.g. -5.00) numeric
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?$/.test(s)) s = `'${s}`;
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 

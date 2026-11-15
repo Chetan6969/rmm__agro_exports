@@ -63,11 +63,25 @@ export function formatDocNumber(
   });
 }
 
-export function validatePattern(pattern: string): string | null {
+/**
+ * Checks a numbering pattern. A series that restarts every financial year must print the FY
+ * ({FY} or {FYL}); otherwise each April would issue the same numbers again (INV/1, INV/2...).
+ * {YYYY} is not enough: January–March belong to the previous FY but carry the new calendar year.
+ */
+export function validatePattern(pattern: string, resetYearly?: boolean): string | null {
   if (!/\{SEQ(:\d{1,2})?\}/.test(pattern)) return 'Pattern must contain {SEQ} or {SEQ:n}';
   const unknown = pattern.match(/\{(?!(CO|FYL|FY|YYYY|MM|SEQ)(:\d{1,2})?\})[^}]*\}/);
   if (unknown) return `Unknown token ${unknown[0]}`;
+  if (resetYearly && !/\{FYL?\}/.test(pattern)) return 'A series that restarts every year must include {FY} or {FYL}';
   return null;
+}
+
+/**
+ * Today's calendar date (YYYY-MM-DD) in the business time zone. Documents are dated in IST, so
+ * the UTC date (toISOString) would put the first 5½ hours of 1 April in the previous FY.
+ */
+export function businessDate(now: Date = new Date(), timeZone = 'Asia/Kolkata'): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 }
 
 /** Document types that get numbered. Transaction modules add theirs here. */

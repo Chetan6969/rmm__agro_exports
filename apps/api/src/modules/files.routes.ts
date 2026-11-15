@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { eq } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
@@ -43,6 +43,8 @@ export async function filesRoutes(app: FastifyInstance) {
     await mkdir(path.dirname(abs), { recursive: true });
     await writeFile(abs, buf, { mode: 0o640 });
 
+    // The bytes are written before the row; if the row never commits, remove them again
+    // so the storage folder only holds files the database knows about.
     const row = await inTenantTx(ctx, async (tx) => {
       const [f] = await tx
         .insert(files)
@@ -59,6 +61,9 @@ export async function filesRoutes(app: FastifyInstance) {
         .returning();
       await audit(tx, ctx, { entity: 'files', recordId: f.id, action: 'upload', meta: { name: f.originalName, size: f.sizeBytes } });
       return f;
+    }).catch(async (err: unknown) => {
+      await rm(abs, { force: true }).catch((rmErr: unknown) => req.log.warn(rmErr, `could not remove orphaned upload ${rel}`));
+      throw err;
     });
     return reply.status(201).send({ id: row.id, originalName: row.originalName, mimeType: row.mimeType, sizeBytes: row.sizeBytes });
   });

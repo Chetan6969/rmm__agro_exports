@@ -27,7 +27,7 @@ declare module 'fastify' {
 
 export async function buildApp(opts: FastifyServerOptions = {}) {
   const app = Fastify({
-    trustProxy: true,
+    trustProxy: config.trustProxy,
     bodyLimit: 2 * 1024 * 1024,
     logger: opts.logger ?? { level: config.env === 'production' ? 'info' : 'warn' },
     ...opts,
@@ -55,8 +55,8 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
 
   await app.register(
     async (api) => {
-      api.addHook('onRequest', async (req) => {
-        await loadSession(req);
+      api.addHook('onRequest', async (req, reply) => {
+        await loadSession(req, reply);
         if (!req.routeOptions.config.public && !req.ctx) throw unauthorized();
       });
 

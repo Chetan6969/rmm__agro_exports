@@ -3,7 +3,7 @@ import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { config } from '../config.js';
 import { db } from '../db/client.js';
-import { sessions, users } from '../db/schema/index.js';
+import { companies, sessions, users } from '../db/schema/index.js';
 import { isMember, permissionsFor } from './access.js';
 
 export const COOKIE = 'rmm_sid';
@@ -30,9 +30,10 @@ export function clearSessionCookie(reply: FastifyReply) {
 
 /**
  * onRequest hook: resolve the session cookie into req.ctx.
- * Sessions slide: each request pushes expiry forward (written at most once a minute).
+ * Sessions slide: each request pushes expiry forward (written at most once a minute), and the
+ * cookie is re-issued with it so the browser does not drop an active session at login + N hours.
  */
-export async function loadSession(req: FastifyRequest) {
+export async function loadSession(req: FastifyRequest, reply: FastifyReply) {
   req.ctx = null;
   const token = req.cookies[COOKIE];
   if (!token) return;
@@ -63,12 +64,20 @@ export async function loadSession(req: FastifyRequest) {
   const newExpiry = new Date(now.getTime() + config.sessionHours * 3600_000);
   if (newExpiry.getTime() - row.expiresAt.getTime() > 60_000) {
     await db().update(sessions).set({ expiresAt: newExpiry }).where(eq(sessions.id, row.sessionId));
+    setSessionCookie(reply, token);
   }
 
-  // Membership can be revoked while a session is open: drop the company if no longer a member.
+  // The company may have been deactivated/deleted, or the membership revoked, while the
+  // session was open (super admins included): drop it so nothing is written there.
   let companyId = row.activeCompanyId;
-  if (companyId && !row.isSuperAdmin && !(await isMember(db(), row.userId, [companyId])).has(companyId)) {
-    companyId = null;
+  if (companyId) {
+    const [open] = await db()
+      .select({ id: companies.id })
+      .from(companies)
+      .where(and(eq(companies.id, companyId), eq(companies.isActive, true), isNull(companies.deletedAt)));
+    if (!open || (!row.isSuperAdmin && !(await isMember(db(), row.userId, [companyId])).has(companyId))) {
+      companyId = null;
+    }
   }
 
   req.ctx = {

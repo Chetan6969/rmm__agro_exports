@@ -14,6 +14,11 @@ export const config = {
   databaseAdminUrl: () => req('DATABASE_ADMIN_URL'),
   sessionHours: Number(process.env.SESSION_HOURS ?? 12),
   cookieSecure: process.env.COOKIE_SECURE === 'true',
+  /**
+   * Trust X-Forwarded-For only behind a reverse proxy that sets it. Served directly on the LAN,
+   * trusting it would let any client pick its own IP and dodge the login rate limit.
+   */
+  trustProxy: process.env.TRUST_PROXY === 'true',
   storageDir: path.resolve(process.env.STORAGE_DIR ?? './storage'),
   webDist: process.env.WEB_DIST ?? path.resolve(import.meta.dirname, '../../web/dist'),
   maxUploadBytes: 5 * 1024 * 1024,

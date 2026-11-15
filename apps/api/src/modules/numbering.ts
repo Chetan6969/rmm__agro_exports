@@ -1,5 +1,5 @@
-import { DOC_TYPES, financialYear, formatDocNumber, validatePattern } from '@rmm/shared';
-import { and, eq, sql } from 'drizzle-orm';
+import { businessDate, DOC_TYPES, financialYear, formatDocNumber, validatePattern } from '@rmm/shared';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Tx } from '../db/client.js';
@@ -52,7 +52,7 @@ export async function allocateNumber(tx: Tx, ctx: RequestContext, key: string, d
   return formatDocNumber(s.pattern, { companyCode: s.companyCode, date: docDate, seq: row.seq, fyStartMonth: s.fyStartMonth });
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => businessDate();
 
 export async function numberingRoutes(app: FastifyInstance) {
   app.get('/numbering', async (req) => {
@@ -95,11 +95,25 @@ export async function numberingRoutes(app: FastifyInstance) {
     const body = z
       .object({ pattern: z.string().trim().min(1).max(80), resetYearly: z.boolean(), nextSeq: z.number().int().min(1).optional() })
       .parse(req.body);
-    const err = validatePattern(body.pattern);
+    const err = validatePattern(body.pattern, body.resetYearly);
     if (err) throw badRequest(err, { pattern: err });
 
     return inTenantTx(ctx, async (tx) => {
       const before = await seriesFor(tx, companyId, d.key);
+      if (body.resetYearly !== before.resetYearly) {
+        // The counter key depends on resetYearly (FY start year vs 0), so switching would
+        // restart at 1 and re-issue numbers that already exist.
+        const [issued] = await tx
+          .select({ docType: numberCounters.docType })
+          .from(numberCounters)
+          .where(and(eq(numberCounters.companyId, companyId), eq(numberCounters.docType, d.key), gt(numberCounters.lastValue, 0)))
+          .limit(1);
+        if (issued) {
+          throw badRequest('Numbers have already been issued in this series, so the yearly reset setting cannot change', {
+            resetYearly: 'Locked once numbers are issued',
+          });
+        }
+      }
       await tx
         .insert(numberSeries)
         .values({ companyId, docType: d.key, pattern: body.pattern, resetYearly: body.resetYearly, updatedBy: ctx.userId })

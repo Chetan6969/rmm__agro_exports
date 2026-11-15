@@ -1,10 +1,10 @@
 import { passwordSchema } from '@rmm/shared';
 import argon2 from 'argon2';
-import { and, asc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull, ne, notExists, or, type SQL, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Tx } from '../db/client.js';
-import { companies, roles, userCompanyRoles, users } from '../db/schema/index.js';
+import { companies, rolePermissions, roles, userCompanyRoles, users } from '../db/schema/index.js';
 import { companiesForUser, permissionsFor } from '../core/access.js';
 import { audit } from '../core/audit.js';
 import { inTenantTx, requireCtx, requirePerm, type RequestContext } from '../core/context.js';
@@ -89,6 +89,7 @@ async function applyAccess(tx: Tx, ctx: RequestContext, userId: string, access: 
     if (found.length !== roleIds.length) throw badRequest('One of the selected roles does not exist');
   }
   const before = await loadAccess(tx, [userId], allowed);
+  await guardRoleAssignment(tx, ctx, before.get(userId) ?? [], access);
   // Replace assignments only inside companies the actor manages; leave others untouched.
   if (allowed.size) {
     await tx
@@ -106,6 +107,56 @@ async function applyAccess(tx: Tx, ctx: RequestContext, userId: string, access: 
   });
 }
 
+/**
+ * A non-super admin may only hand out roles whose permissions they hold themselves in that
+ * company; otherwise "Users: edit" alone would let anyone assign the Administrator role
+ * (to themselves included). Roles the user already had there are left alone.
+ */
+async function guardRoleAssignment(
+  tx: Tx,
+  ctx: RequestContext,
+  current: { companyId: string; roleIds: string[] }[],
+  requested: z.infer<typeof accessSchema>,
+) {
+  if (ctx.isSuperAdmin) return;
+  const held = new Map(current.map((e) => [e.companyId, new Set(e.roleIds)]));
+  const added = requested.flatMap((a) =>
+    [...new Set(a.roleIds)].filter((roleId) => !held.get(a.companyId)?.has(roleId)).map((roleId) => ({ companyId: a.companyId, roleId })),
+  );
+  if (!added.length) return;
+  const grants = await tx
+    .select({ roleId: rolePermissions.roleId, permission: rolePermissions.permission })
+    .from(rolePermissions)
+    .where(inArray(rolePermissions.roleId, [...new Set(added.map((a) => a.roleId))]));
+  for (const companyId of new Set(added.map((a) => a.companyId))) {
+    const mine = await permissionsFor(tx, ctx.userId, companyId);
+    const rolesHere = new Set(added.filter((a) => a.companyId === companyId).map((a) => a.roleId));
+    const missing = grants.filter((g) => rolesHere.has(g.roleId) && !mine.has(g.permission)).map((g) => g.permission);
+    if (missing.length) {
+      throw forbidden(`You cannot assign a role with permissions you do not hold: ${[...new Set(missing)].slice(0, 3).join(', ')}`);
+    }
+  }
+}
+
+/**
+ * Users a non-super admin may see: members of a company the actor belongs to, plus users the
+ * actor created that have no company yet (so they can still be given access).
+ */
+function visibleUsers(tx: Tx, ctx: RequestContext, myCompanyIds: string[]): SQL | undefined {
+  if (ctx.isSuperAdmin) return undefined;
+  return or(
+    inArray(users.id, tx.select({ id: userCompanyRoles.userId }).from(userCompanyRoles).where(inArray(userCompanyRoles.companyId, myCompanyIds))),
+    and(
+      eq(users.createdBy, ctx.userId),
+      notExists(tx.select({ one: sql`1` }).from(userCompanyRoles).where(eq(userCompanyRoles.userId, users.id))),
+    ),
+  );
+}
+
+async function myCompanyIds(tx: Tx, ctx: RequestContext): Promise<string[]> {
+  return (await companiesForUser(tx, ctx.userId, ctx.isSuperAdmin)).map((c) => c.id);
+}
+
 async function loadUser(tx: Tx, id: string) {
   if (!/^[0-9a-f-]{36}$/i.test(id)) throw notFound();
   const [u] = await tx.select(publicCols).from(users).where(and(eq(users.id, id), isNull(users.deletedAt)));
@@ -117,13 +168,41 @@ function guardTarget(ctx: RequestContext, target: { id: string; isSuperAdmin: bo
   if (target.isSuperAdmin && !ctx.isSuperAdmin) throw forbidden('Only a super admin can change a super admin');
 }
 
+/**
+ * Editing, resetting the password of, or deleting an account is only allowed when every company
+ * the account works in is one the actor administers. Otherwise an admin of company A could take
+ * over a company B user (reset their password, sign in as them) and read B's data.
+ * Accounts with no company yet are manageable by the admin who created them.
+ */
+async function assertManageable(tx: Tx, ctx: RequestContext, target: { id: string; isSuperAdmin: boolean }) {
+  guardTarget(ctx, target);
+  if (ctx.isSuperAdmin) return;
+  const memberOf = (
+    await tx.selectDistinct({ c: userCompanyRoles.companyId }).from(userCompanyRoles).where(eq(userCompanyRoles.userId, target.id))
+  ).map((r) => r.c);
+  if (!memberOf.length) {
+    const [row] = await tx.select({ createdBy: users.createdBy }).from(users).where(eq(users.id, target.id));
+    if (row?.createdBy === ctx.userId) return;
+    throw forbidden('You can only manage users of the companies you administer');
+  }
+  const allowed = await manageableCompanies(tx, ctx);
+  if (memberOf.some((c) => !allowed.has(c))) {
+    throw forbidden('This user also works in companies you do not administer. Ask a super admin.');
+  }
+}
+
 export async function usersRoutes(app: FastifyInstance) {
   app.get('/users', async (req) => {
     const ctx = requireCtx(req);
     requirePerm(ctx, 'admin.users', 'view');
     return inTenantTx(ctx, async (tx) => {
-      const rows = await tx.select(publicCols).from(users).where(isNull(users.deletedAt)).orderBy(asc(users.fullName));
-      const visible = ctx.isSuperAdmin ? null : new Set((await companiesForUser(tx, ctx.userId, false)).map((c) => c.id));
+      const mine = await myCompanyIds(tx, ctx);
+      const rows = await tx
+        .select(publicCols)
+        .from(users)
+        .where(and(isNull(users.deletedAt), visibleUsers(tx, ctx, mine)))
+        .orderBy(asc(users.fullName));
+      const visible = ctx.isSuperAdmin ? null : new Set(mine);
       const access = await loadAccess(tx, rows.map((r) => r.id), visible);
       return rows.map((r) => ({ ...r, access: access.get(r.id) ?? [] }));
     });
@@ -134,7 +213,10 @@ export async function usersRoutes(app: FastifyInstance) {
     requirePerm(ctx, 'admin.users', 'view');
     return inTenantTx(ctx, async (tx) => {
       const u = await loadUser(tx, req.params.id);
-      const visible = ctx.isSuperAdmin ? null : new Set((await companiesForUser(tx, ctx.userId, false)).map((c) => c.id));
+      const mine = await myCompanyIds(tx, ctx);
+      const [seen] = await tx.select({ id: users.id }).from(users).where(and(eq(users.id, u.id), visibleUsers(tx, ctx, mine)));
+      if (!seen) throw notFound('User not found');
+      const visible = ctx.isSuperAdmin ? null : new Set(mine);
       const access = await loadAccess(tx, [u.id], visible);
       return { ...u, access: access.get(u.id) ?? [] };
     });
@@ -180,7 +262,7 @@ export async function usersRoutes(app: FastifyInstance) {
     const body = updateSchema.parse(req.body);
     return inTenantTx(ctx, async (tx) => {
       const before = await loadUser(tx, req.params.id);
-      guardTarget(ctx, before);
+      await assertManageable(tx, ctx, before);
       if (body.isSuperAdmin !== undefined && body.isSuperAdmin !== before.isSuperAdmin && !ctx.isSuperAdmin) {
         throw forbidden('Only a super admin can grant super admin');
       }
@@ -222,7 +304,7 @@ export async function usersRoutes(app: FastifyInstance) {
     const { password } = z.object({ password: passwordSchema }).parse(req.body);
     await inTenantTx(ctx, async (tx) => {
       const target = await loadUser(tx, req.params.id);
-      guardTarget(ctx, target);
+      await assertManageable(tx, ctx, target);
       await tx
         .update(users)
         .set({ passwordHash: await argon2.hash(password), mustChangePassword: true, updatedAt: new Date(), updatedBy: ctx.userId })
@@ -241,7 +323,7 @@ export async function usersRoutes(app: FastifyInstance) {
     if (req.params.id === ctx.userId) throw badRequest('You cannot delete yourself');
     await inTenantTx(ctx, async (tx) => {
       const target = await loadUser(tx, req.params.id);
-      guardTarget(ctx, target);
+      await assertManageable(tx, ctx, target);
       if (target.isSuperAdmin) {
         const [{ n }] = await tx
           .select({ n: sql<number>`count(*)::int` })

@@ -92,7 +92,7 @@ WantedBy=multi-user.target
 sudo systemctl enable --now rmm-erp
 ```
 
-Users open `http://<server-ip>:4000`. For HTTPS on the LAN put Caddy/nginx in front and set `COOKIE_SECURE=true`.
+Users open `http://<server-ip>:4000`. For HTTPS on the LAN put Caddy/nginx in front and set `COOKIE_SECURE=true` and `TRUST_PROXY=true` (so the login rate limit and audit log see real client IPs). Leave `TRUST_PROXY=false` when browsers connect to the API directly; otherwise any client could fake its IP.
 
 **Backups (do this from day one):**
 

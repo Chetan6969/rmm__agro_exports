@@ -1,4 +1,4 @@
-import { formatDocNumber, validatePattern } from '@rmm/shared';
+import { businessDate, formatDocNumber, validatePattern } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -71,9 +71,9 @@ function SeriesRow({ s, code, editable }: { s: Series; code: string; editable: b
     setNext(String(s.nextSeq));
   }, [s]);
 
-  const err = validatePattern(pattern);
+  const err = validatePattern(pattern, reset);
   const seq = Number(next) || 1;
-  const preview = err ? '—' : formatDocNumber(pattern, { companyCode: code, date: new Date(), seq });
+  const preview = err ? '—' : formatDocNumber(pattern, { companyCode: code, date: businessDate(), seq });
   const dirty = pattern !== s.pattern || reset !== s.resetYearly || next !== String(s.nextSeq);
 
   const save = async () => {

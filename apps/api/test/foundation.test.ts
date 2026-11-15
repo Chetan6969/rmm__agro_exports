@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { sql } from 'drizzle-orm';
+import { businessDate } from '@rmm/shared';
+import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, db } from '../src/db/client.js';
-import { masterTables } from '../src/db/schema/index.js';
+import { masterTables, sessions } from '../src/db/schema/index.js';
+import { hashToken } from '../src/core/session.js';
 import { inCompanyTx, type RequestContext } from '../src/core/context.js';
 import { allocateNumber } from '../src/modules/numbering.js';
 import { Client, createSuperAdmin, makeApp, PASSWORD } from './helpers.js';
@@ -345,5 +347,131 @@ describe('files and defaults', () => {
     await root.ok('PUT', '/defaults/customers', { values: { incoterm: 'CIF', city: 'Dubai' } });
     expect((await alice.get('/defaults/customers')).body.values).toMatchObject({ incoterm: 'CIF', city: 'Dubai', isActive: true });
     expect((await bob.get('/defaults/customers')).body.values.incoterm).toBeUndefined();
+  });
+});
+
+describe("review fixes: user administration stays inside the admin's companies", () => {
+  let dave: Client;
+  let userAdminRole: string;
+  let adminRole: string;
+
+  beforeAll(async () => {
+    userAdminRole = (
+      await root.ok('POST', '/roles', {
+        name: 'Company user admin',
+        permissions: ['admin.users:view', 'admin.users:create', 'admin.users:edit', 'admin.users:delete', 'admin.roles:view'],
+      })
+    ).id;
+    adminRole = (await root.ok('GET', '/roles')).find((r: { name: string }) => r.name === 'Administrator').id;
+    const mk = async (username: string, access: { companyId: string; roleIds: string[] }[]) => {
+      users[username] = (
+        await root.ok('POST', '/users', { username, fullName: username, password: PASSWORD, mustChangePassword: false, access })
+      ).id;
+    };
+    await mk('dave', [{ companyId: co.A, roleIds: [docRole, userAdminRole] }]);
+    await mk('erin', [{ companyId: co.B, roleIds: [docRole] }]);
+    await mk('frank', [{ companyId: co.A, roleIds: [docRole] }]);
+    await mk('gina', [
+      { companyId: co.A, roleIds: [docRole] },
+      { companyId: co.B, roleIds: [docRole] },
+    ]);
+    dave = new Client(app);
+    await dave.login('dave');
+  });
+
+  it('cannot reset the password of, edit or delete a user of another company', async () => {
+    expect((await dave.post(`/users/${users.erin}/reset-password`, { password: 'Hijack-pass-1' })).status).toBe(403);
+    const erin = (await root.get(`/users/${users.erin}`)).body;
+    expect((await dave.put(`/users/${users.erin}`, { fullName: 'renamed', version: erin.version })).status).toBe(403);
+    expect((await dave.del(`/users/${users.erin}`, { reason: 'test' })).status).toBe(403);
+    // gina works in A but also in B, which dave does not administer
+    expect((await dave.post(`/users/${users.gina}/reset-password`, { password: 'Hijack-pass-1' })).status).toBe(403);
+    // erin's password still works
+    await new Client(app).login('erin');
+  });
+
+  it('still manages users who only work in companies the admin administers', async () => {
+    expect((await dave.post(`/users/${users.frank}/reset-password`, { password: 'Frank-pass-2' })).status).toBe(200);
+    await new Client(app).login('frank', 'Frank-pass-2');
+  });
+
+  it("only lists users of the admin's own companies", async () => {
+    const names = (await dave.ok('GET', '/users')).map((u: { username: string }) => u.username);
+    expect(names).toEqual(expect.arrayContaining(['alice', 'dave', 'frank', 'gina']));
+    expect(names).not.toContain('erin');
+    expect(names).not.toContain('bob');
+    expect((await dave.get(`/users/${users.erin}`)).status).toBe(404);
+  });
+
+  it('cannot assign a role holding permissions the admin lacks, including to themselves', async () => {
+    const self = await dave.put(`/users/${users.dave}/access`, {
+      access: [{ companyId: co.A, roleIds: [docRole, userAdminRole, adminRole] }],
+    });
+    expect(self.status).toBe(403);
+    expect((await dave.put(`/users/${users.frank}/access`, { access: [{ companyId: co.A, roleIds: [adminRole] }] })).status).toBe(403);
+    expect(
+      (await dave.put(`/users/${users.frank}/access`, { access: [{ companyId: co.A, roleIds: [docRole, userAdminRole] }] })).status,
+    ).toBe(200);
+    expect((await dave.get('/auth/me')).body.permissions).not.toContain('admin.roles:edit');
+  });
+});
+
+describe('review fixes: sessions, numbering, exports', () => {
+  it('ignores X-Forwarded-For by default, so the login rate limit cannot be dodged', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        remoteAddress: '10.20.30.40',
+        headers: { 'x-forwarded-for': `203.0.113.${i}` },
+        payload: { username: 'alice', password: 'wrong-password-1' },
+      });
+      statuses.push(res.statusCode);
+    }
+    expect(statuses).toContain(429);
+  });
+
+  it('re-issues the session cookie when the session slides', async () => {
+    const c = new Client(app);
+    await c.login('bob');
+    const token = c.cookie.split('=')[1]!;
+    await db().update(sessions).set({ expiresAt: new Date(Date.now() + 3600_000) }).where(eq(sessions.tokenHash, hashToken(token)));
+    const res = await app.inject({ method: 'GET', url: '/api/auth/me', headers: { cookie: c.cookie } });
+    expect(res.statusCode).toBe(200);
+    expect(String(res.headers['set-cookie'])).toMatch(/rmm_sid=.+Max-Age=/);
+  });
+
+  it('drops a deactivated company from open sessions, super admins included', async () => {
+    await root.ok('POST', '/auth/switch-company', { companyId: co.C });
+    const c = (await root.get(`/masters/companies/${co.C}`)).body;
+    await root.ok('PUT', `/masters/companies/${co.C}`, { isActive: false, version: c.version });
+    expect((await root.get('/auth/me')).body.activeCompany).toBeNull();
+    expect((await root.post('/masters/customers', { code: 'GHOST', name: 'Ghost buyer' })).status).toBe(403);
+    const again = (await root.get(`/masters/companies/${co.C}`)).body;
+    await root.ok('PUT', `/masters/companies/${co.C}`, { isActive: true, version: again.version });
+  });
+
+  it('refuses numbering settings that would re-issue existing numbers', async () => {
+    await root.ok('POST', '/auth/switch-company', { companyId: co.A });
+    // commercial invoices were already issued in A
+    expect((await root.put('/numbering/commercial_invoice', { pattern: '{CO}/EX/{FY}/{SEQ:3}', resetYearly: false })).status).toBe(400);
+    // a yearly series without the FY would repeat ENQ/1 every April
+    expect((await root.put('/numbering/enquiry', { pattern: 'ENQ/{SEQ}', resetYearly: true })).status).toBe(400);
+    expect((await root.put('/numbering/enquiry', { pattern: 'ENQ/{FY}/{SEQ}', resetYearly: true })).status).toBe(200);
+  });
+
+  it('dates documents in IST, not UTC', () => {
+    // 19:00 UTC on 31 March is 00:30 IST on 1 April: already the new financial year
+    expect(businessDate(new Date('2027-03-31T19:00:00Z'))).toBe('2027-04-01');
+    expect(businessDate(new Date('2027-03-31T18:00:00Z'))).toBe('2027-03-31');
+  });
+
+  it('exports negative numbers as numbers, while still neutralising formulas', async () => {
+    await root.ok('POST', '/masters/units', { code: 'ADJ', name: '=HYPERLINK("x")', kgFactor: '-5.0000' });
+    const csv = (await root.req('GET', '/masters/units/export')).body as string;
+    expect(csv).toContain('-5.0000');
+    expect(csv).not.toContain("'-5.0000");
+    expect(csv).toContain(`"'=HYPERLINK(""x"")"`);
   });
 });
