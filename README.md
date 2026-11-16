@@ -51,6 +51,10 @@ Day to day:
 | Command | What it does |
 |---|---|
 | `pnpm start:dev` | start the development database, then the API and web app |
+| `pnpm serve:lan` | run the built app for other computers on the office network (see below) |
+| `pnpm demo:load` | add the demo company **DEMO** (buyers, products, PIs, production orders, invoices) — switch to it with Alt+C |
+| `pnpm demo:reset` | delete the DEMO company and everything in it; real companies are not touched |
+| `pnpm db:reset -- --yes` | erase the whole local database and uploads, then set up and seed again (`--demo` also loads the demo) |
 | `pnpm db:start` / `pnpm db:stop` / `pnpm db:status` | control the development database (needed again after a reboot) |
 | `pnpm db:migrate` | apply new migrations after pulling changes |
 
@@ -73,6 +77,28 @@ pnpm --filter @rmm/api test     # uses a separate database <name>_test, created 
 The integration tests prove the important guarantees: cross-company isolation (including raw SQL under RLS),
 sharing (read / write / record-level / revoke), privilege-escalation guards, membership revocation,
 optimistic locking, audit immutability, gap-free numbering under 25 parallel saves, upload validation.
+
+## Office network from this Windows PC (quick)
+
+To let other computers on the office network (Ethernet or Wi-Fi) use the ERP running on this PC:
+
+```bash
+pnpm serve:lan            # build, migrate, then serve website + API on port 4000 for the LAN
+pnpm serve:lan --no-build # same, without rebuilding (nothing changed since the last run)
+```
+
+It prints the addresses to open on other computers, e.g. `http://192.168.1.20:4000` (wired adapter first).
+Stop `pnpm dev` first (both use port 4000). The database stays on localhost; only port 4000 is reachable.
+
+One-time Windows setup on this PC (in **PowerShell as Administrator**):
+
+```powershell
+New-NetFirewallRule -DisplayName "RMM Export ERP (TCP 4000)" -Direction Inbound -Protocol TCP -LocalPort 4000 -Action Allow -Profile Private,Domain
+Get-NetConnectionProfile   # the office network must show NetworkCategory : Private (or DomainAuthenticated)
+```
+
+If it shows `Public`, change it to Private in Settings → Network & internet → Ethernet → Network profile type.
+Give this PC a fixed IP (DHCP reservation in the router, or a static IP) so the address does not change.
 
 ## Production on the office LAN (no Docker)
 

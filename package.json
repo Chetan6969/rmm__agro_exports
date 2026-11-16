@@ -7,6 +7,7 @@
     "start:dev": "node scripts/dev-db.mjs start && pnpm dev",
     "build": "pnpm --filter @rmm/web build && pnpm --filter @rmm/api build",
     "start": "pnpm --filter @rmm/api start",
+    "serve:lan": "node scripts/serve-lan.mjs",
     "db:setup": "pnpm --filter @rmm/api db:setup",
     "db:generate": "pnpm --filter @rmm/api db:generate",
     "db:migrate": "pnpm --filter @rmm/api db:migrate",
@@ -16,6 +17,9 @@
     "setup:dev": "node scripts/dev-setup.mjs",
     "db:start": "node scripts/dev-db.mjs start",
     "db:stop": "node scripts/dev-db.mjs stop",
-    "db:status": "node scripts/dev-db.mjs status"
+    "db:status": "node scripts/dev-db.mjs status",
+    "db:reset": "node scripts/dev-reset.mjs",
+    "demo:load": "pnpm --filter @rmm/api demo",
+    "demo:reset": "pnpm --filter @rmm/api demo:reset"
   }
 }

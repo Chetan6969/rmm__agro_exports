@@ -4,6 +4,8 @@
  *   migrate  apply pending migrations + RLS
  *   seed     create first super admin, system roles and baseline masters (idempotent)
  *   reset-password <username>   set a new random temporary password (printed once)
+ *   demo / demo-reset            load / remove the demo company (DEMO) and its data
+ *   wipe     drop the whole LOCAL database (refused for non-local servers and NODE_ENV=production)
  *
  * Dev:  pnpm db:setup | db:migrate | db:seed
  * Prod: node --env-file=.env dist/cli.js <command>
@@ -13,6 +15,8 @@ import argon2 from 'argon2';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { adminSql, closeDb } from './db/client.js';
+import { loadDemo, resetDemo } from './db/demo.js';
+import { wipeLocalDatabase } from './db/wipe.js';
 import { sessions, users } from './db/schema/index.js';
 import { migrateDatabase } from './db/migrate.js';
 import { seedDatabase } from './db/seed.js';
@@ -30,6 +34,17 @@ const commands: Record<string, () => Promise<void>> = {
   },
   seed: async () => {
     await seedDatabase();
+  },
+  demo: async () => {
+    await loadDemo();
+    console.log('Demo data loaded into company DEMO (Demo Agro Exports). Switch to it in the app with Alt+C. Remove it with "pnpm demo:reset".');
+  },
+  'demo-reset': async () => {
+    console.log((await resetDemo()) ? 'Demo company DEMO and all its data were deleted. Real companies were not touched.' : 'No demo data found (company DEMO does not exist).');
+  },
+  /** Drops the whole local database (dev only); "pnpm db:reset" recreates it afterwards. */
+  wipe: async () => {
+    await wipeLocalDatabase();
   },
   'reset-password': async () => {
     const username = process.argv[3]?.toLowerCase();

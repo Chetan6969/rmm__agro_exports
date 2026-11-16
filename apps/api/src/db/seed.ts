@@ -65,24 +65,27 @@ const UNITS: [string, string, string][] = [
 const all = (module: string, actions: Action[]) => actions.map((a) => perm(module, a));
 const mastersWith = (actions: Action[]) =>
   MODULES.filter((m) => m.key.startsWith('master.')).flatMap((m) => all(m.key, actions.filter((a) => m.actions.includes(a))));
+const salesWith = (actions: Action[]) =>
+  MODULES.filter((m) => m.key.startsWith('sales.')).flatMap((m) => all(m.key, actions.filter((a) => m.actions.includes(a))));
 
 const STARTER_ROLES: { name: string; description: string; permissions: string[] }[] = [
   {
     name: 'Documentation Executive',
     description: 'Maintains parties, products and logistics masters; prepares documents',
-    permissions: [...mastersWith(['view', 'create', 'edit', 'export']), perm('admin.numbering', 'view')],
+    permissions: [...mastersWith(['view', 'create', 'edit', 'export']), ...salesWith(['view', 'create', 'edit', 'print', 'export']), perm('admin.numbering', 'view')],
   },
   {
     name: 'Accounts',
     description: 'Finance masters and bank accounts; read-only on the rest',
     permissions: [
       ...mastersWith(['view', 'export']),
+      ...salesWith(['view', 'print', 'export']),
       ...all('master.bankAccounts', ['create', 'edit']),
       ...all('master.currencies', ['create', 'edit']),
       ...all('master.paymentTerms', ['create', 'edit']),
     ],
   },
-  { name: 'Viewer', description: 'Read-only access to masters', permissions: mastersWith(['view']) },
+  { name: 'Viewer', description: 'Read-only access to masters and sales documents', permissions: [...mastersWith(['view']), ...salesWith(['view'])] },
 ];
 
 export async function seedDatabase(url?: string) {
