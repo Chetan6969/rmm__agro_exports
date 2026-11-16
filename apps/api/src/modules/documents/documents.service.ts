@@ -36,7 +36,7 @@ import { z } from 'zod';
 import type { Tx } from '../../db/client.js';
 import { docTables, masterTables, type DocTables } from '../../db/schema/index.js';
 import { audit } from '../../core/audit.js';
-import { requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
+import { can, requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
 import { badRequest, conflict, notFound } from '../../core/errors.js';
 import { allocateNumber } from '../numbering.js';
 
@@ -448,6 +448,9 @@ export async function listDocuments(tx: Tx, ctx: RequestContext, key: string, q:
 export async function lookupDocuments(tx: Tx, ctx: RequestContext, key: string, q: { q?: string; ids?: string }) {
   const { def, t } = resolveDoc(key);
   requireCompany(ctx);
+  // Who may see these numbers: viewers of this document, or anyone creating/editing a document generated against it.
+  const pickers = childDocs(def.key).flatMap((c) => [[c.module, 'create'], [c.module, 'edit']] as [string, Action][]);
+  if (!can(ctx, def.module, 'view') && !pickers.some(([m, a]) => can(ctx, m, a))) requirePerm(ctx, def.module, 'view');
   const h = t.header;
   const conds: SQL[] = [isNull(h.deletedAt)];
   const ids = q.ids?.split(',').filter(isUuid);

@@ -93,7 +93,7 @@ function DocumentList({ def }: { def: DocDef }) {
         align: 'right',
         className: 'tabular-nums',
         render: (r) =>
-          r._remainingMt === undefined ? '' : <span className={Number(r._remainingMt) > 0 ? 'text-amber-700' : 'text-slate-400'}>{formatAmount(String(r._remainingMt), 3)}</span>,
+          r._remainingMt === undefined || r.status === 'CANCELLED' ? <span className="text-slate-300">—</span> : <span className={Number(r._remainingMt) > 0 ? 'text-amber-700' : 'text-slate-400'}>{formatAmount(String(r._remainingMt), 3)}</span>,
       });
     }
     return cols;

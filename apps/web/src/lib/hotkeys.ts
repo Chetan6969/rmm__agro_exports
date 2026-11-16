@@ -78,7 +78,8 @@ export const SHORTCUTS: { section: string; items: [string, string][] }[] = [
   {
     section: 'Anywhere',
     items: [
-      ['mod+k', 'Command palette: open any screen or action'],
+      ['mod+k', 'Search: screens, buyers, products, PI / invoice numbers, actions'],
+      ['mod+\\', 'Collapse / expand the sidebar'],
       ['alt+c', 'Switch company'],
       ['f1', 'Show keyboard shortcuts'],
       ['alt+h', 'Go to home'],

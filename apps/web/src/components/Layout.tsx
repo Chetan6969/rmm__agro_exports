@@ -1,21 +1,23 @@
-import { Building2, ChevronsUpDown, Command as CmdIcon, Keyboard, LogOut, Menu, Wheat, X } from 'lucide-react';
+import { Building2, Keyboard, LogOut, Menu, PanelLeftOpen, Search } from 'lucide-react';
 import { useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router';
+import { Outlet, useNavigate } from 'react-router';
 import { SHORTCUTS, useHotkeys } from '../lib/hotkeys';
-import { NAV } from '../lib/nav';
 import { useSession } from '../lib/session';
 import { CommandPalette, type PaletteMode } from './CommandPalette';
 import { Modal } from './Modal';
+import { Sidebar, SIDEBAR_SHORTCUT, useSidebarCollapsed } from './Sidebar';
 import { Kbd } from './ui';
 
 export function Layout() {
-  const { session, can, logout } = useSession();
+  const { session, logout } = useSession();
   const navigate = useNavigate();
   const [palette, setPalette] = useState<PaletteMode | null>(null);
   const [help, setHelp] = useState(false);
   /** Below the md breakpoint the sidebar is an off-canvas drawer. */
   const [navOpen, setNavOpen] = useState(false);
+  const { collapsed, toggle } = useSidebarCollapsed();
   const closeNav = () => setNavOpen(false);
+  const isDesktop = () => window.matchMedia('(min-width: 768px)').matches;
 
   useHotkeys(
     {
@@ -24,107 +26,65 @@ export function Layout() {
       'f1, shift+?': () => setHelp(true),
       'alt+h': () => navigate('/'),
       'alt+l': () => logout(),
-      escape: () => setNavOpen(false),
+      [SIDEBAR_SHORTCUT]: () => (isDesktop() ? toggle() : setNavOpen((o) => !o)),
+      // only while the phone drawer is open; otherwise Esc belongs to the page (forms, menus)
+      ...(navOpen ? { escape: () => setNavOpen(false) } : {}),
     },
-    [navigate, logout],
+    [navigate, logout, collapsed, navOpen],
   );
 
   if (!session) return null;
-  const items = NAV.filter((n) => !n.perm || can(n.perm[0], n.perm[1]));
-  const groups = [...new Set(items.map((i) => i.group))];
 
   return (
     <div className="flex h-full">
       {navOpen && <div className="fixed inset-0 z-30 bg-slate-900/50 md:hidden" aria-hidden="true" onClick={closeNav} />}
-      <aside
-        id="main-nav"
-        className={`flex w-56 shrink-0 flex-col border-r border-slate-200 bg-slate-900 text-slate-300 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-64 max-md:shadow-2xl max-md:transition-transform ${navOpen ? '' : 'max-md:-translate-x-full'}`}
-      >
-        <div className="flex items-center gap-2 px-4 py-3 text-white">
-          <Wheat className="size-5 text-amber-300" />
-          <span className="flex-1 font-semibold tracking-tight">Export ERP</span>
-          <button type="button" onClick={closeNav} className="rounded p-1 text-slate-400 hover:bg-slate-800 md:hidden" aria-label="Close menu">
-            <X className="size-4" />
-          </button>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            closeNav();
-            setPalette('company');
-          }}
-          className="mx-2 mb-2 flex items-center gap-2 rounded bg-slate-800 px-2.5 py-2 text-left hover:bg-slate-700"
-          title="Switch company (Alt+C)"
-        >
-          <Building2 className="size-4 shrink-0 text-amber-300" />
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-[13px] font-medium text-white">{session.activeCompany?.name ?? 'No company selected'}</span>
-            <span className="block text-[11px] text-slate-400">{session.activeCompany?.code ?? 'Alt+C to choose'}</span>
-          </span>
-          <ChevronsUpDown className="size-3.5 text-slate-500" />
-        </button>
-        <nav className="flex-1 overflow-y-auto px-2 pb-3" aria-label="Main">
-          {groups.map((g) => (
-            <div key={g} className="mt-3">
-              <div className="px-2 pb-1 text-[10.5px] font-semibold tracking-wider text-slate-500 uppercase">{g}</div>
-              {items
-                .filter((i) => i.group === g)
-                .map((i) => (
-                  <NavLink
-                    key={i.id}
-                    to={i.path}
-                    end={i.path === '/'}
-                    onClick={closeNav}
-                    className={({ isActive }) =>
-                      `block truncate rounded px-2 py-1 text-[13px] ${isActive ? 'bg-brand-700 text-white' : 'hover:bg-slate-800 hover:text-white'}`
-                    }
-                  >
-                    {i.label}
-                  </NavLink>
-                ))}
-            </div>
-          ))}
-        </nav>
-      </aside>
+      <Sidebar collapsed={collapsed} drawerOpen={navOpen} onToggle={toggle} onCloseDrawer={closeNav} onSwitchCompany={() => setPalette('company')} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2 sm:gap-3 sm:px-4">
-          <button
-            type="button"
-            onClick={() => setNavOpen(true)}
-            className="rounded p-1.5 text-slate-600 hover:bg-slate-100 md:hidden"
-            aria-label="Open menu"
-            aria-controls="main-nav"
-            aria-expanded={navOpen}
-          >
-            <Menu className="size-5" />
-          </button>
+        <header className="grid h-12 shrink-0 grid-cols-[auto_1fr_auto] items-center gap-2 border-b border-slate-200 bg-white px-2 sm:gap-3 sm:px-4">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setNavOpen(true)}
+              className="rounded-md p-1.5 text-slate-600 hover:bg-slate-100 md:hidden"
+              aria-label="Open menu"
+              aria-controls="main-nav"
+              aria-expanded={navOpen}
+            >
+              <Menu className="size-5" />
+            </button>
+            {collapsed && (
+              <button type="button" onClick={toggle} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 max-md:hidden" title="Expand sidebar" aria-label="Expand sidebar">
+                <PanelLeftOpen className="size-4" />
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setPalette('all')}
-            className="flex min-w-0 flex-1 items-center gap-2 rounded border border-slate-200 bg-slate-50 px-2.5 py-1 text-left text-slate-400 hover:border-slate-300 sm:max-w-md"
-            aria-label="Search screens and actions"
+            className="group mx-auto flex w-full max-w-lg min-w-0 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-left text-slate-400 transition-colors hover:border-slate-300 hover:bg-white"
+            aria-label="Search screens, records and actions"
           >
-            <CmdIcon className="size-3.5 shrink-0" />
-            <span className="flex-1 truncate text-[13px]">Search…</span>
+            <Search className="size-4 shrink-0" />
+            <span className="flex-1 truncate text-[13px]">Search screens, buyers, products, PI or invoice no.…</span>
             <span className="max-sm:hidden">
               <Kbd k="mod+k" />
             </span>
           </button>
-          <button
-            type="button"
-            onClick={() => setPalette('company')}
-            className="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-[13px] font-medium md:hidden"
-            aria-label="Switch company"
-          >
-            <Building2 className="size-4" /> {session.activeCompany?.code ?? 'Company'}
-          </button>
-          <div className="ml-auto flex shrink-0 items-center gap-1">
-            <button type="button" onClick={() => setHelp(true)} className="rounded p-1.5 text-slate-500 hover:bg-slate-100 max-sm:hidden" title="Keyboard shortcuts (F1)">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setPalette('company')}
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[13px] font-medium text-slate-700 hover:bg-slate-100 md:hidden"
+              aria-label="Switch company"
+            >
+              <Building2 className="size-4" /> {session.activeCompany?.code ?? 'Company'}
+            </button>
+            <button type="button" onClick={() => setHelp(true)} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 max-sm:hidden" title="Keyboard shortcuts (F1)">
               <Keyboard className="size-4" />
             </button>
-            <span className="max-w-40 truncate px-2 text-[13px] text-slate-600 max-sm:hidden">{session.user.fullName}</span>
-            <button type="button" onClick={() => logout()} className="rounded p-1.5 text-slate-500 hover:bg-slate-100" title="Log out (Alt+L)">
+            <span className="max-w-40 truncate px-2 text-[13px] text-slate-600 max-lg:hidden">{session.user.fullName}</span>
+            <button type="button" onClick={() => logout()} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100" title="Log out (Alt+L)">
               <LogOut className="size-4" />
             </button>
           </div>

@@ -251,6 +251,9 @@ describe('reports, isolation and permissions', () => {
     expect((await viewer.get('/documents/proformaInvoices')).status).toBe(200);
     expect((await viewer.get(`/documents/proformaInvoices/${pi.id}/pdf`)).status).toBe(403);
     expect((await viewer.get('/documents/commercialInvoices')).status).toBe(403);
+    // document numbers are not readable through the lookup without permission either
+    expect((await viewer.get('/documents/commercialInvoices/lookup?q=')).status).toBe(403);
+    expect((await viewer.get('/documents/proformaInvoices/lookup?q=')).status).toBe(200);
     expect((await viewer.post('/documents/proformaInvoices', {})).status).toBe(403);
   });
 });
