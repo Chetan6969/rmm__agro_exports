@@ -51,7 +51,7 @@ export function ProformaInvoices() {
 
   const loadMaster = useCallback(async () => {
     try {
-      const [customers, products, packingTypes, ports, banks, terms] =
+      const [customers, products, packingTypes, ports, banks, terms, countries] =
         await Promise.all([
           api.customers(),
           api.products(),
@@ -59,8 +59,9 @@ export function ProformaInvoices() {
           api.ports(),
           api.bankDetails(),
           api.terms('PROFORMA'),
+          api.countries(),
         ]);
-      setMaster({ customers, products, packingTypes, ports, banks, terms });
+      setMaster({ customers, products, packingTypes, ports, banks, terms, countries });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load master data');
     }

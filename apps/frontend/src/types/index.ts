@@ -59,5 +59,9 @@ export type NavigationSection =
   | 'customers'
   | 'products'
   | 'suppliers'
+  | 'ports'
+  | 'shipping-lines'
+  | 'countries'
+  | 'terms'
   | 'registers'
   | 'settings';

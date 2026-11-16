@@ -9,6 +9,7 @@ export * from './suppliers.js';
 export * from './packing-types.js';
 export * from './ports.js';
 export * from './shipping-lines.js';
+export * from './countries.js';
 export * from './bank-details.js';
 export * from './terms-and-conditions.js';
 export * from './proforma-invoices.js';

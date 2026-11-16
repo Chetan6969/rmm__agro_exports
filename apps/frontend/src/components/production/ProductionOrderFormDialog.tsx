@@ -22,6 +22,7 @@ export interface ProdMasterData {
   ports: Port[];
   terms: Term[];
   proformas: ProformaListItem[];
+  countries: { name: string }[];
 }
 
 interface Props {
@@ -378,7 +379,10 @@ export function ProductionOrderFormDialog({ master, onSaved, onClose }: Props) {
                   {dischargePorts.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
                 </select>
               </Field>
-              <Field label="Destination country"><input className="ef-input" value={destinationCountry} onChange={(e) => setDestinationCountry(e.target.value)} /></Field>
+              <Field label="Destination country">
+                <input className="ef-input" list="ef-countries-po" value={destinationCountry} onChange={(e) => setDestinationCountry(e.target.value)} />
+                <datalist id="ef-countries-po">{master.countries.map((c) => <option key={c.name} value={c.name} />)}</datalist>
+              </Field>
             </div>
           )}
 

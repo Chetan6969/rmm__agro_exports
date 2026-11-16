@@ -143,6 +143,67 @@ export interface ProductionOrderPdfData {
   footer?: { line: string };
 }
 
+export interface InvoiceItemLinePdf {
+  description: string; // packing + qty text line
+  quantityMt: number;
+  pricePerMt: number;
+  amount: number;
+}
+
+export interface InvoicePdfData {
+  company: CompanyHeaderData & {
+    legalName?: string;
+    addressLines?: string[];
+    lutNumber?: string;
+  };
+  documentNumber: string;
+  documentDate: string;
+  buyerOrderNoAndDate?: string;
+  consignee?: CustomerPartyData;
+  buyer?: CustomerPartyData;
+  notifyParty?: CustomerPartyData;
+  bank?: {
+    bankName: string;
+    accountNumber: string;
+    swiftCode: string;
+    adCode?: string;
+    ifscCode?: string | null;
+  };
+  currency: string;
+  incoterm: string;
+  shipping: {
+    preCarriageBy?: string;
+    placeOfReceipt?: string;
+    countryOfOrigin?: string;
+    destinationCountry?: string;
+    vesselFlightNo?: string;
+    portOfLoading?: string;
+    portOfDischarge?: string;
+    finalDestination?: string;
+    termsOfDelivery?: string;
+    payment?: string;
+  };
+  brand?: string;
+  marksNumbers?: string;
+  hsCode?: string;
+  goodsIntro?: string; // SAID TO CONTAIN / variety block
+  items: InvoiceItemLinePdf[];
+  totalQuantityMt: number;
+  totalNetWeightMt: number;
+  totalGrossWeightMt?: number;
+  totalFobValue: number;
+  oceanFreightAmount: number;
+  insuranceAmount: number;
+  totalCfrValue: number;
+  amountInWords: string;
+  blNumber?: string;
+  blDate?: string;
+  shippingBillNumber?: string;
+  shippingBillDate?: string;
+  showSignature: boolean;
+  footer?: { addressLine: string; contactLine: string };
+}
+
 export interface CommercialInvoicePdfData {
   company: CompanyHeaderData;
   buyer: CustomerPartyData;

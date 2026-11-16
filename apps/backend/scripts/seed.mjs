@@ -132,6 +132,26 @@ async function main() {
       ON CONFLICT (id) DO NOTHING`;
   }
 
+  // 9b. Destination / origin countries
+  const countryList = [
+    ['0000001d-0000-4000-8000-000000000001', 'India', 'IND', 'South Asia'],
+    ['0000001d-0000-4000-8000-000000000002', 'Iraq', 'IRQ', 'Middle East'],
+    ['0000001d-0000-4000-8000-000000000003', 'United Arab Emirates', 'ARE', 'Middle East'],
+    ['0000001d-0000-4000-8000-000000000004', 'Saudi Arabia', 'SAU', 'Middle East'],
+    ['0000001d-0000-4000-8000-000000000005', 'Bahrain', 'BHR', 'Middle East'],
+    ['0000001d-0000-4000-8000-000000000006', 'Oman', 'OMN', 'Middle East'],
+    ['0000001d-0000-4000-8000-000000000007', 'Qatar', 'QAT', 'Middle East'],
+    ['0000001d-0000-4000-8000-000000000008', 'Kuwait', 'KWT', 'Middle East'],
+    ['0000001d-0000-4000-8000-000000000009', 'Yemen', 'YEM', 'Middle East'],
+    ['0000001d-0000-4000-8000-00000000000a', 'Jordan', 'JOR', 'Middle East'],
+  ];
+  for (const [id, name, code, region] of countryList) {
+    await sql`
+      INSERT INTO countries (id, company_id, name, code, region, is_active)
+      VALUES (${id}, ${COMPANY_ID}, ${name}, ${code}, ${region}, true)
+      ON CONFLICT (id) DO NOTHING`;
+  }
+
   // 10. Proforma counter so next number looks like the legacy sequence
   await sql`
     INSERT INTO document_counters (company_id, document_type, financial_year, last_number, prefix)

@@ -6,6 +6,7 @@ import type {
   CommercialInvoicePdfData,
   CompanyHeaderData,
   CustomerPartyData,
+  InvoicePdfData,
   ProductionOrderPdfData,
   ProformaInvoicePdfData,
 } from './pdf.types.js';
@@ -568,6 +569,241 @@ export class PdfService {
               align: 'center',
               lineBreak: false,
             });
+        }
+
+        doc.end();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  }
+
+  /**
+   * Generates a print-faithful A4 Commercial Invoice PDF in the same layout
+   * family as the Proforma Invoice (parties, shipping details, goods, totals).
+   */
+  async generateInvoicePdf(data: InvoicePdfData): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ size: 'A4', margin: 36, bufferPages: true });
+        const chunks: Buffer[] = [];
+        doc.on('data', (c) => chunks.push(c));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', reject);
+
+        const LEFT = 40;
+        const RIGHT = 555;
+        const MIDX = 306;
+        const RW = RIGHT - MIDX; // right column width
+        const GAP = 9;
+        const gray = '#555555';
+        const dark = '#111111';
+        const blue = '#13529c';
+        const ruleColor = '#b7c6da';
+
+        const heading = (t: string, x: number, yy: number, w: number): number => {
+          doc.font('Helvetica-Bold').fontSize(8).fillColor(blue).text(t, x, yy, { width: w });
+          const ly = doc.y + 2;
+          doc.moveTo(x, ly).lineTo(x + w, ly).lineWidth(0.5).stroke(ruleColor);
+          return ly + 3;
+        };
+        const party = (title: string, p: CustomerPartyData | undefined, x: number, w: number, yy: number): number => {
+          let py = heading(title, x, yy, w);
+          if (p) {
+            doc.font('Helvetica-Bold').fontSize(9).fillColor(dark).text(p.name, x, py, { width: w });
+            py = doc.y + 1;
+            doc.font('Helvetica').fontSize(8.3).fillColor(dark).text(p.address, x, py, { width: w, lineGap: 1 });
+            py = doc.y;
+            doc.text(p.country, x, py, { width: w });
+            py = doc.y;
+          } else {
+            doc.font('Helvetica').fontSize(8.3).fillColor(gray).text('-', x, py);
+            py = doc.y;
+          }
+          return py;
+        };
+        const kvRows = (rows: Array<[string, string | undefined]>, x: number, w: number, startY: number): number => {
+          let ry = startY;
+          const labelW = 104;
+          for (const [k, v] of rows) {
+            doc.font('Helvetica').fontSize(8).fillColor(gray).text(k, x, ry, { width: labelW });
+            doc.font('Helvetica-Bold').fontSize(8.3).fillColor(dark).text(v || '-', x + labelW + 6, ry, { width: w - labelW - 6 });
+            ry = Math.max(doc.y, ry + 12.5);
+          }
+          return ry;
+        };
+
+        // ---- Header: logo (top-right) + title + subtitle below the logo ----
+        this.drawLogo(doc);
+        doc.font('Helvetica-Bold').fontSize(16).fillColor(dark)
+          .text('COMMERCIAL INVOICE', LEFT, 40, { width: RIGHT - LEFT, align: 'center' });
+        doc.font('Helvetica').fontSize(7).fillColor(gray)
+          .text(
+            `SUPPLY MEANT FOR EXPORT UNDER LETTER OF UNDERTAKING WITHOUT PAYMENT OF IGST${data.company.lutNumber ? `   |   LUT ARN: ${data.company.lutNumber}` : ''}`,
+            LEFT, 74, { width: RIGHT - LEFT, align: 'center' },
+          );
+        let y = doc.y + 6;
+        doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.8).stroke('#7f93ad');
+        y += GAP;
+
+        // ---- Exporter + Invoice detail ----
+        let ey = heading('EXPORTER', LEFT, y, MIDX - LEFT - 12);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor(dark)
+          .text(data.company.legalName || data.company.name, LEFT, ey, { width: MIDX - LEFT - 12 });
+        ey = doc.y + 1;
+        doc.font('Helvetica').fontSize(8.3).fillColor(dark);
+        for (const ln of data.company.addressLines || [data.company.address || '']) {
+          doc.text(ln, LEFT, ey, { width: MIDX - LEFT - 12, lineGap: 1 });
+          ey = doc.y;
+        }
+
+        const ry0 = heading('INVOICE DETAIL $', MIDX, y, RW);
+        const ry = kvRows(
+          [
+            ['Invoice No.', data.documentNumber],
+            ['Date', data.documentDate],
+            ['IEC No.', data.company.iec || '-'],
+            ["Buyer's Order No. & Date", data.buyerOrderNoAndDate || '-'],
+          ],
+          MIDX, RW, ry0,
+        );
+        y = Math.max(ey, ry) + GAP;
+
+        // ---- Consignee + Buyer ----
+        const cY = party('CONSIGNEE', data.consignee, LEFT, MIDX - LEFT - 12, y);
+        const bY = party('BUYER (IF OTHER THAN CONSIGNEE)', data.buyer || data.consignee, MIDX, RW, y);
+        y = Math.max(cY, bY) + GAP;
+
+        // ---- Notify + Our bank ----
+        const nY = party('NOTIFY PARTY', data.notifyParty || data.consignee, LEFT, MIDX - LEFT - 12, y);
+        const by0 = heading('OUR BANK (FOR REMITTANCE)', MIDX, y, RW);
+        const byy = data.bank
+          ? kvRows(
+              [
+                ['Bank', data.bank.bankName],
+                ['A/C No.', data.bank.accountNumber],
+                ['Branch / SWIFT', data.bank.swiftCode],
+                ['AD Code', data.bank.adCode || '-'],
+              ],
+              MIDX, RW, by0,
+            )
+          : by0;
+        y = Math.max(nY, byy) + GAP;
+
+        // ---- Shipping details (two columns) ----
+        const sh0 = heading('SHIPPING DETAILS $', LEFT, y, RIGHT - LEFT);
+        const s = data.shipping;
+        const ly2 = kvRows(
+          [
+            ['Pre-carriage by', s.preCarriageBy],
+            ['Country of Origin', s.countryOfOrigin],
+            ['Vessel / Flight No.', s.vesselFlightNo],
+            ['Port of Discharge', s.portOfDischarge],
+            ['Terms of Delivery', s.termsOfDelivery || data.incoterm],
+          ],
+          LEFT, MIDX - LEFT - 12, sh0,
+        );
+        const ry3 = kvRows(
+          [
+            ['Place of Receipt', s.placeOfReceipt],
+            ['Destination Country', s.destinationCountry],
+            ['Port of Loading', s.portOfLoading],
+            ['Final Destination', s.finalDestination],
+            ['Payment', s.payment],
+          ],
+          MIDX, RW, sh0,
+        );
+        y = Math.max(ly2, ry3) + GAP;
+
+        // ---- Goods table ----
+        const col = { marks: LEFT, desc: 112, qty: 392, price: 448, amt: 502 };
+        const qtyW = 50, priceW = 48, amtW = RIGHT - col.amt;
+        doc.font('Helvetica-Bold').fontSize(7.8).fillColor(gray);
+        doc.text('Marks / HS', col.marks, y, { width: col.desc - col.marks - 6 });
+        doc.text('Number & Kind of Packages, Description of Goods', col.desc, y, { width: col.qty - col.desc - 6 });
+        doc.text('Qty (MT)', col.qty, y, { width: qtyW, align: 'right' });
+        doc.text('Price $/MT', col.price, y, { width: priceW, align: 'right' });
+        doc.text('Amount $', col.amt, y, { width: amtW, align: 'right' });
+        y += 13;
+        doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.7).stroke('#6f7f93');
+        y += 5;
+
+        const marksTop = y;
+        doc.font('Helvetica').fontSize(7.8).fillColor(dark);
+        if (data.marksNumbers) doc.text(data.marksNumbers, col.marks, y, { width: col.desc - col.marks - 6 });
+        if (data.hsCode) doc.text(`HS CODE: ${data.hsCode}`, col.marks, doc.y + 2, { width: col.desc - col.marks - 6 });
+
+        let dy = marksTop;
+        if (data.goodsIntro) {
+          doc.font('Helvetica').fontSize(8).fillColor(dark)
+            .text(data.goodsIntro, col.desc, dy, { width: col.qty - col.desc - 6, lineGap: 1 });
+          dy = doc.y + 3;
+        }
+        for (const it of data.items) {
+          const top = dy;
+          doc.font('Helvetica').fontSize(8).fillColor(dark)
+            .text(it.description, col.desc, top, { width: col.qty - col.desc - 6 });
+          const lineBottom = doc.y;
+          doc.font('Helvetica').fontSize(8).fillColor(dark);
+          doc.text(it.quantityMt.toFixed(3), col.qty, top, { width: qtyW, align: 'right' });
+          doc.text(it.pricePerMt.toFixed(2), col.price, top, { width: priceW, align: 'right' });
+          doc.text(it.amount.toFixed(2), col.amt, top, { width: amtW, align: 'right' });
+          dy = Math.max(lineBottom, top + 12) + 4;
+        }
+        y = Math.max(dy, doc.y, marksTop) + 3;
+        doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.7).stroke('#6f7f93');
+        y += 7;
+
+        // ---- Totals: left weights/igst, right value breakdown ----
+        const totalsTop = y;
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(dark)
+          .text(`Total Net Weight (MT): ${data.totalNetWeightMt.toFixed(3)}`, LEFT, y);
+        if (data.totalGrossWeightMt != null) {
+          doc.text(`Total Gross Weight (MT): ${data.totalGrossWeightMt.toFixed(3)}`, LEFT, doc.y + 2);
+        }
+        doc.font('Helvetica').fontSize(8).fillColor(dark)
+          .text('IGST @ 0% (export under LUT): NIL', LEFT, doc.y + 2);
+
+        const cur = data.currency === 'USD' ? '$' : data.currency;
+        let ty = totalsTop;
+        const totRow = (k: string, v: number, bold = false) => {
+          doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 9.5 : 8.3).fillColor(dark)
+            .text(k, 360, ty, { width: 120 });
+          doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(bold ? 9.5 : 8.3)
+            .text(v.toFixed(2), 480, ty, { width: RIGHT - 480, align: 'right' });
+          ty += bold ? 16 : 13;
+        };
+        totRow(`Total CFR Value ${cur}`, data.totalCfrValue);
+        totRow('Insurance', data.insuranceAmount);
+        totRow('Ocean Freight', data.oceanFreightAmount);
+        totRow(`Total FOB Value ${cur}`, data.totalFobValue, true);
+
+        y = Math.max(doc.y, ty) + 7;
+        doc.moveTo(LEFT, y).lineTo(RIGHT, y).lineWidth(0.5).stroke('#999999');
+        y += 6;
+
+        doc.font('Helvetica-Bold').fontSize(8.3).fillColor(dark)
+          .text('AMOUNT IN WORDS: ', LEFT, y, { continued: true })
+          .font('Helvetica').text(data.amountInWords);
+        y = doc.y + 10;
+
+        // ---- BL / Shipping bill (left) + signature block (right) ----
+        const refTop = y;
+        doc.font('Helvetica').fontSize(8).fillColor(dark);
+        if (data.blNumber) { doc.text(`BILL OF LADING NO.: ${data.blNumber}    DATED: ${data.blDate || '-'}`, LEFT, y, { width: 280 }); y = doc.y + 2; }
+        if (data.shippingBillNumber) { doc.text(`SHIPPING BILL NO.: ${data.shippingBillNumber}    DATED: ${data.shippingBillDate || '-'}`, LEFT, y, { width: 280 }); y = doc.y + 2; }
+        doc.font('Helvetica').fontSize(7).fillColor(gray)
+          .text('We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.', LEFT, y + 4, { width: 280, lineGap: 1 });
+
+        if (data.showSignature) {
+          this.drawSignatureBlock(doc, MIDX, refTop, RW, data.company.legalName || data.company.name);
+        }
+
+        if (data.footer) {
+          const fy = doc.page.height - 64;
+          doc.font('Helvetica').fontSize(7).fillColor(gray)
+            .text(data.footer.addressLine, LEFT, fy, { width: RIGHT - LEFT, align: 'center', lineBreak: false })
+            .text(data.footer.contactLine, LEFT, fy + 10, { width: RIGHT - LEFT, align: 'center', lineBreak: false });
         }
 
         doc.end();

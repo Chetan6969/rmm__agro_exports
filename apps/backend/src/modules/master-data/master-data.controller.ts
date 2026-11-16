@@ -22,6 +22,12 @@ import {
   UpdateCustomerDto,
 } from './dto/customer.dto.js';
 import { CreateProductDto } from './dto/product.dto.js';
+import {
+  CreateCountryDto,
+  CreatePortDto,
+  CreateShippingLineDto,
+  CreateTermDto,
+} from './dto/master-refs.dto.js';
 import { MasterDataService } from './master-data.service.js';
 
 @ApiTags('Master Data')
@@ -132,16 +138,98 @@ export class MasterDataController {
     return this.masterDataService.listPackingTypes(this.getCompanyId(req));
   }
 
+  // Ports
   @Get('ports')
   @ApiOperation({ summary: 'List ports of loading and discharge' })
   async listPorts(@Req() req: Request) {
     return this.masterDataService.listPorts(this.getCompanyId(req));
   }
 
+  @Post('ports')
+  @ApiOperation({ summary: 'Create a port' })
+  async createPort(@Req() req: Request, @Body() dto: CreatePortDto) {
+    return this.masterDataService.createPort(this.getCompanyId(req), dto);
+  }
+
+  @Put('ports/:id')
+  @ApiOperation({ summary: 'Update a port' })
+  async updatePort(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: CreatePortDto,
+  ) {
+    return this.masterDataService.updatePort(this.getCompanyId(req), id, dto);
+  }
+
+  @Delete('ports/:id')
+  @ApiOperation({ summary: 'Soft-delete a port' })
+  async deletePort(@Req() req: Request, @Param('id') id: string) {
+    return this.masterDataService.deletePort(this.getCompanyId(req), id);
+  }
+
+  // Shipping lines
   @Get('shipping-lines')
   @ApiOperation({ summary: 'List carrier shipping lines' })
   async listShippingLines(@Req() req: Request) {
     return this.masterDataService.listShippingLines(this.getCompanyId(req));
+  }
+
+  @Post('shipping-lines')
+  @ApiOperation({ summary: 'Create a shipping line' })
+  async createShippingLine(
+    @Req() req: Request,
+    @Body() dto: CreateShippingLineDto,
+  ) {
+    return this.masterDataService.createShippingLine(this.getCompanyId(req), dto);
+  }
+
+  @Put('shipping-lines/:id')
+  @ApiOperation({ summary: 'Update a shipping line' })
+  async updateShippingLine(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: CreateShippingLineDto,
+  ) {
+    return this.masterDataService.updateShippingLine(
+      this.getCompanyId(req),
+      id,
+      dto,
+    );
+  }
+
+  @Delete('shipping-lines/:id')
+  @ApiOperation({ summary: 'Soft-delete a shipping line' })
+  async deleteShippingLine(@Req() req: Request, @Param('id') id: string) {
+    return this.masterDataService.deleteShippingLine(this.getCompanyId(req), id);
+  }
+
+  // Countries
+  @Get('countries')
+  @ApiOperation({ summary: 'List destination / origin countries' })
+  async listCountries(@Req() req: Request) {
+    return this.masterDataService.listCountries(this.getCompanyId(req));
+  }
+
+  @Post('countries')
+  @ApiOperation({ summary: 'Create a country' })
+  async createCountry(@Req() req: Request, @Body() dto: CreateCountryDto) {
+    return this.masterDataService.createCountry(this.getCompanyId(req), dto);
+  }
+
+  @Put('countries/:id')
+  @ApiOperation({ summary: 'Update a country' })
+  async updateCountry(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: CreateCountryDto,
+  ) {
+    return this.masterDataService.updateCountry(this.getCompanyId(req), id, dto);
+  }
+
+  @Delete('countries/:id')
+  @ApiOperation({ summary: 'Soft-delete a country' })
+  async deleteCountry(@Req() req: Request, @Param('id') id: string) {
+    return this.masterDataService.deleteCountry(this.getCompanyId(req), id);
   }
 
   @Get('bank-details')
@@ -161,5 +249,27 @@ export class MasterDataController {
       this.getCompanyId(req),
       documentType,
     );
+  }
+
+  @Post('terms')
+  @ApiOperation({ summary: 'Create a term & condition' })
+  async createTerm(@Req() req: Request, @Body() dto: CreateTermDto) {
+    return this.masterDataService.createTerm(this.getCompanyId(req), dto);
+  }
+
+  @Put('terms/:id')
+  @ApiOperation({ summary: 'Update a term & condition' })
+  async updateTerm(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() dto: CreateTermDto,
+  ) {
+    return this.masterDataService.updateTerm(this.getCompanyId(req), id, dto);
+  }
+
+  @Delete('terms/:id')
+  @ApiOperation({ summary: 'Soft-delete a term & condition' })
+  async deleteTerm(@Req() req: Request, @Param('id') id: string) {
+    return this.masterDataService.deleteTerm(this.getCompanyId(req), id);
   }
 }

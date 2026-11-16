@@ -126,6 +126,13 @@ export interface Term {
   isDefault: boolean;
   documentType: string;
 }
+export interface CountryItem {
+  id: string;
+  name: string;
+  code: string | null;
+  region: string | null;
+  isActive: boolean;
+}
 
 // ---- Proforma ----
 export interface ProformaListItem {
@@ -325,6 +332,21 @@ export const api = {
     ),
   terms: (documentType = 'PROFORMA') =>
     request<Term[]>(`/master-data/terms?documentType=${documentType}`),
+  countries: () => request<CountryItem[]>('/master-data/countries'),
+
+  // ---- Reference master CRUD ----
+  createPort: (d: Record<string, unknown>) => request('/master-data/ports', { method: 'POST', body: JSON.stringify(d) }),
+  updatePort: (id: string, d: Record<string, unknown>) => request(`/master-data/ports/${id}`, { method: 'PUT', body: JSON.stringify(d) }),
+  deletePort: (id: string) => request(`/master-data/ports/${id}`, { method: 'DELETE' }),
+  createShippingLine: (d: Record<string, unknown>) => request('/master-data/shipping-lines', { method: 'POST', body: JSON.stringify(d) }),
+  updateShippingLine: (id: string, d: Record<string, unknown>) => request(`/master-data/shipping-lines/${id}`, { method: 'PUT', body: JSON.stringify(d) }),
+  deleteShippingLine: (id: string) => request(`/master-data/shipping-lines/${id}`, { method: 'DELETE' }),
+  createCountry: (d: Record<string, unknown>) => request('/master-data/countries', { method: 'POST', body: JSON.stringify(d) }),
+  updateCountry: (id: string, d: Record<string, unknown>) => request(`/master-data/countries/${id}`, { method: 'PUT', body: JSON.stringify(d) }),
+  deleteCountry: (id: string) => request(`/master-data/countries/${id}`, { method: 'DELETE' }),
+  createTerm: (d: Record<string, unknown>) => request('/master-data/terms', { method: 'POST', body: JSON.stringify(d) }),
+  updateTerm: (id: string, d: Record<string, unknown>) => request(`/master-data/terms/${id}`, { method: 'PUT', body: JSON.stringify(d) }),
+  deleteTerm: (id: string) => request(`/master-data/terms/${id}`, { method: 'DELETE' }),
 
   listProformas: () => request<ProformaListItem[]>('/sales/proformas'),
   getProforma: (id: string) => request<ProformaDetail>(`/sales/proformas/${id}`),

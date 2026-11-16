@@ -23,6 +23,7 @@ export interface MasterData {
   ports: Port[];
   banks: BankDetail[];
   terms: Term[];
+  countries: { name: string }[];
 }
 
 interface Props {
@@ -372,7 +373,10 @@ export function ProformaFormDialog({ master, onSaved, onClose }: Props) {
               </div>
               <div>
                 <label className="ef-label">Destination</label>
-                <input className="ef-input" value={finalDestination} onChange={(e) => setFinalDestination(e.target.value)} placeholder="Country" />
+                <input className="ef-input" list="ef-countries" value={finalDestination} onChange={(e) => setFinalDestination(e.target.value)} placeholder="Country" />
+                <datalist id="ef-countries">
+                  {master.countries.map((c) => <option key={c.name} value={c.name} />)}
+                </datalist>
               </div>
               <div>
                 <label className="ef-label">Destination port</label>

@@ -13,6 +13,10 @@ import {
   Users,
   Wheat,
   Truck,
+  Anchor,
+  Ship,
+  Globe,
+  ScrollText,
   BarChart3,
   Settings,
 } from 'lucide-react';
@@ -42,6 +46,10 @@ export function Sidebar({ currentSection, onSelectSection }: SidebarProps) {
         { id: 'customers' as NavigationSection, label: 'Customers (Buyers)', icon: Users },
         { id: 'products' as NavigationSection, label: 'Basmati Varieties', icon: Wheat },
         { id: 'suppliers' as NavigationSection, label: 'Rice Mill Suppliers', icon: Truck },
+        { id: 'ports' as NavigationSection, label: 'Ports', icon: Anchor },
+        { id: 'shipping-lines' as NavigationSection, label: 'Shipping Lines', icon: Ship },
+        { id: 'countries' as NavigationSection, label: 'Destination Countries', icon: Globe },
+        { id: 'terms' as NavigationSection, label: 'Terms & Conditions', icon: ScrollText },
       ],
     },
     {

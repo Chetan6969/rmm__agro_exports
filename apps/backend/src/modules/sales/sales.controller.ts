@@ -445,56 +445,91 @@ export class SalesController {
     const detail = await this.salesService.getCommercialInvoiceById(companyId, id);
     const company = await this.companiesService.getCompanyById(companyId);
     const inv = detail.invoice;
-    const address = `${company.addressLine1}, ${company.city}, ${company.state} - ${company.pincode}`;
 
-    const pdf = await this.pdfService.generateCommercialInvoicePdf({
+    const addressLines = [
+      company.addressLine1,
+      company.addressLine2 || '',
+      `${company.city}, ${company.state} - ${company.pincode}`,
+      `GSTIN: ${company.gstin || '-'}`,
+    ].filter(Boolean);
+
+    const totalNet = detail.items.reduce((a, it) => a + Number(it.quantityMt), 0);
+    const introParts = [
+      detail.items.reduce((a, it) => a + (it.noOfBags || 0), 0)
+        ? `TOTAL ${detail.items.reduce((a, it) => a + (it.noOfBags || 0), 0)} BAGS`
+        : '',
+      inv.brand ? `BAGS MARKS: ${inv.brand}` : '',
+      inv.goodsDescription || '',
+    ].filter(Boolean);
+
+    const pdf = await this.pdfService.generateInvoicePdf({
       company: {
-        name: company.legalName || company.name,
+        name: company.name,
         code: company.code,
-        address,
+        legalName: company.legalName,
+        addressLines,
         gstin: company.gstin || undefined,
         iec: company.iecCode || undefined,
-        email: company.contactEmail || undefined,
+        lutNumber: company.lutNumber || undefined,
       },
-      buyer: detail.buyer || { name: '-', address: '', country: '' },
-      consignee: detail.consignee || undefined,
       documentNumber: inv.documentNumber,
       documentDate: inv.documentDate,
-      financialYear: inv.financialYear,
-      buyerPoNumber: inv.buyerPoNumber || undefined,
-      portOfLoading: inv.portOfLoading || '-',
-      portOfDischarge: inv.portOfDischarge || '-',
-      countryOfDestination: inv.countryOfDestination || '-',
-      incoterm: inv.incoterm,
-      currency: inv.currency,
-      items: detail.items.map((it) => ({
-        productName: it.productName || 'Product',
-        packingDescription: it.packingText || it.packingName || '',
-        quantityMt: Number(it.quantityMt),
-        ratePerMt: Number(it.ratePerMt),
-        amount: Number(it.amount),
-        specifications: it.specifications || undefined,
-      })),
-      totalFobAmount: Number(inv.totalFobAmount),
-      oceanFreightAmount: Number(inv.oceanFreightAmount),
-      insuranceAmount: Number(inv.insuranceAmount),
-      totalInvoiceAmount: Number(inv.totalInvoiceAmount),
-      amountInWords: inv.amountInWords || '',
-      bankDetails: detail.bank
+      buyerOrderNoAndDate: inv.buyerPoNumber || undefined,
+      consignee: detail.consignee || undefined,
+      buyer: detail.buyer || undefined,
+      notifyParty: detail.notifyParty || undefined,
+      bank: detail.bank
         ? {
             bankName: detail.bank.bankName,
             accountNumber: detail.bank.accountNumber,
             swiftCode: detail.bank.swiftCode,
+            adCode: detail.bank.adCode,
+            ifscCode: detail.bank.ifscCode,
           }
         : undefined,
-      containers: detail.containers.map((c) => ({
-        containerNumber: c.containerNumber,
-        sealNumber: c.sealNumber,
-        containerSize: c.containerSize,
-        totalBags: c.totalBags,
-        grossWeightKg: Number(c.grossWeightKg),
-        netWeightKg: Number(c.netWeightKg),
+      currency: inv.currency,
+      incoterm: inv.incoterm,
+      shipping: {
+        preCarriageBy: inv.preCarriageBy || undefined,
+        placeOfReceipt: inv.placeOfReceipt || undefined,
+        countryOfOrigin: inv.countryOfOrigin || undefined,
+        destinationCountry: inv.countryOfDestination || undefined,
+        vesselFlightNo: inv.vesselFlightName || undefined,
+        portOfLoading: inv.portOfLoading || undefined,
+        portOfDischarge: inv.portOfDischarge || undefined,
+        finalDestination: inv.countryOfDestination || undefined,
+        termsOfDelivery: inv.termsOf || `${inv.incoterm}`,
+        payment: inv.paymentTerm || undefined,
+      },
+      brand: inv.brand || undefined,
+      marksNumbers: inv.brand || inv.marksNumbers || undefined,
+      hsCode: detail.items[0]?.hsCode || undefined,
+      goodsIntro: introParts.join('\n') || undefined,
+      items: detail.items.map((it) => ({
+        description:
+          `${it.packingText || it.packingName || it.productName || ''}` +
+          (it.noOfBags ? ` (BAGS ${it.noOfBags})` : ''),
+        quantityMt: Number(it.quantityMt),
+        pricePerMt: Number(it.ratePerMt),
+        amount: Number(it.amount),
       })),
+      totalQuantityMt: totalNet,
+      totalNetWeightMt: totalNet,
+      totalGrossWeightMt: inv.grossWtMt != null ? Number(inv.grossWtMt) : undefined,
+      totalFobValue: Number(inv.totalFobAmount),
+      oceanFreightAmount: Number(inv.oceanFreightAmount),
+      insuranceAmount: Number(inv.insuranceAmount),
+      totalCfrValue: Number(inv.totalInvoiceAmount),
+      amountInWords: inv.amountInWords || '',
+      blNumber: inv.blNumber || inv.ladingBlNumber || undefined,
+      blDate: inv.blDate || inv.ladingBlDate || undefined,
+      shippingBillNumber: inv.shippingBillNumber || undefined,
+      shippingBillDate: inv.shippingBillDate || undefined,
+      showSignature: inv.showSignature,
+      footer: {
+        addressLine: `${company.legalName}, ${company.addressLine1}, ${company.city}, ${company.state}`,
+        contactLine: `GSTIN: ${company.gstin || '-'}  |  IEC: ${company.iecCode || '-'}  |  Email: ${company.contactEmail || '-'}`,
+      },
     });
 
     res.set({

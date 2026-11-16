@@ -40,10 +40,10 @@ export function ProductionOrders() {
 
   const loadMaster = useCallback(async () => {
     try {
-      const [customers, products, packingTypes, ports, terms, proformas] = await Promise.all([
-        api.customers(), api.products(), api.packingTypes(), api.ports(), api.terms('PROFORMA'), api.listProformas(),
+      const [customers, products, packingTypes, ports, terms, proformas, countries] = await Promise.all([
+        api.customers(), api.products(), api.packingTypes(), api.ports(), api.terms('PROFORMA'), api.listProformas(), api.countries(),
       ]);
-      setMaster({ customers, products, packingTypes, ports, terms, proformas });
+      setMaster({ customers, products, packingTypes, ports, terms, proformas, countries });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load master data');
     }

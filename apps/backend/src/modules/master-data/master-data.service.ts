@@ -7,6 +7,7 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import { DatabaseService } from '../../database/database.service.js';
 import {
   bankDetails,
+  countries,
   customers,
   packingTypes,
   ports,
@@ -14,6 +15,7 @@ import {
   shippingLines,
   termsAndConditions,
   type BankDetail,
+  type Country,
   type Customer,
   type NewCustomer,
   type NewProduct,
@@ -29,6 +31,12 @@ import type {
   UpdateCustomerDto,
 } from './dto/customer.dto.js';
 import type { CreateProductDto } from './dto/product.dto.js';
+import type {
+  CreateCountryDto,
+  CreatePortDto,
+  CreateShippingLineDto,
+  CreateTermDto,
+} from './dto/master-refs.dto.js';
 
 @Injectable()
 export class MasterDataService {
@@ -444,5 +452,224 @@ export class MasterDataService {
       );
 
     return query.orderBy(desc(termsAndConditions.isDefault));
+  }
+
+  // ----------------------------------------------------
+  // PORTS — CRUD
+  // ----------------------------------------------------
+  async createPort(companyId: string, dto: CreatePortDto): Promise<Port> {
+    const [row] = await this.databaseService.db
+      .insert(ports)
+      .values({
+        companyId,
+        name: dto.name,
+        code: dto.code || null,
+        portType: dto.portType,
+        country: dto.country,
+        version: 1,
+      })
+      .returning();
+    return row;
+  }
+
+  async updatePort(
+    companyId: string,
+    id: string,
+    dto: CreatePortDto,
+  ): Promise<Port> {
+    const [row] = await this.databaseService.db
+      .update(ports)
+      .set({
+        name: dto.name,
+        code: dto.code || null,
+        portType: dto.portType,
+        country: dto.country,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(ports.id, id), eq(ports.companyId, companyId)))
+      .returning();
+    if (!row) throw new NotFoundException(`Port ${id} not found`);
+    return row;
+  }
+
+  async deletePort(companyId: string, id: string): Promise<{ message: string }> {
+    await this.databaseService.db
+      .update(ports)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(ports.id, id), eq(ports.companyId, companyId)));
+    return { message: 'Port deleted' };
+  }
+
+  // ----------------------------------------------------
+  // SHIPPING LINES — CRUD
+  // ----------------------------------------------------
+  async createShippingLine(
+    companyId: string,
+    dto: CreateShippingLineDto,
+  ): Promise<ShippingLine> {
+    const [row] = await this.databaseService.db
+      .insert(shippingLines)
+      .values({
+        companyId,
+        name: dto.name,
+        code: dto.code || null,
+        contactDetails: dto.contactDetails || null,
+        version: 1,
+      })
+      .returning();
+    return row;
+  }
+
+  async updateShippingLine(
+    companyId: string,
+    id: string,
+    dto: CreateShippingLineDto,
+  ): Promise<ShippingLine> {
+    const [row] = await this.databaseService.db
+      .update(shippingLines)
+      .set({
+        name: dto.name,
+        code: dto.code || null,
+        contactDetails: dto.contactDetails || null,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(shippingLines.id, id), eq(shippingLines.companyId, companyId)))
+      .returning();
+    if (!row) throw new NotFoundException(`Shipping line ${id} not found`);
+    return row;
+  }
+
+  async deleteShippingLine(
+    companyId: string,
+    id: string,
+  ): Promise<{ message: string }> {
+    await this.databaseService.db
+      .update(shippingLines)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(shippingLines.id, id), eq(shippingLines.companyId, companyId)));
+    return { message: 'Shipping line deleted' };
+  }
+
+  // ----------------------------------------------------
+  // COUNTRIES — CRUD
+  // ----------------------------------------------------
+  async listCountries(companyId: string): Promise<Country[]> {
+    if (!this.databaseService.isConnected) return [];
+    return this.databaseService.db
+      .select()
+      .from(countries)
+      .where(and(eq(countries.companyId, companyId), isNull(countries.deletedAt)))
+      .orderBy(countries.name);
+  }
+
+  async createCountry(
+    companyId: string,
+    dto: CreateCountryDto,
+  ): Promise<Country> {
+    const [row] = await this.databaseService.db
+      .insert(countries)
+      .values({
+        companyId,
+        name: dto.name,
+        code: dto.code || null,
+        region: dto.region || null,
+        isActive: dto.isActive ?? true,
+        version: 1,
+      })
+      .returning();
+    return row;
+  }
+
+  async updateCountry(
+    companyId: string,
+    id: string,
+    dto: CreateCountryDto,
+  ): Promise<Country> {
+    const [row] = await this.databaseService.db
+      .update(countries)
+      .set({
+        name: dto.name,
+        code: dto.code || null,
+        region: dto.region || null,
+        isActive: dto.isActive ?? true,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(countries.id, id), eq(countries.companyId, companyId)))
+      .returning();
+    if (!row) throw new NotFoundException(`Country ${id} not found`);
+    return row;
+  }
+
+  async deleteCountry(
+    companyId: string,
+    id: string,
+  ): Promise<{ message: string }> {
+    await this.databaseService.db
+      .update(countries)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(countries.id, id), eq(countries.companyId, companyId)));
+    return { message: 'Country deleted' };
+  }
+
+  // ----------------------------------------------------
+  // TERMS & CONDITIONS — CRUD
+  // ----------------------------------------------------
+  async createTerm(
+    companyId: string,
+    dto: CreateTermDto,
+  ): Promise<TermsAndCondition> {
+    const [row] = await this.databaseService.db
+      .insert(termsAndConditions)
+      .values({
+        companyId,
+        title: dto.title,
+        documentType: dto.documentType || 'PROFORMA',
+        content: dto.content,
+        isDefault: dto.isDefault ?? false,
+        version: 1,
+      })
+      .returning();
+    return row;
+  }
+
+  async updateTerm(
+    companyId: string,
+    id: string,
+    dto: CreateTermDto,
+  ): Promise<TermsAndCondition> {
+    const [row] = await this.databaseService.db
+      .update(termsAndConditions)
+      .set({
+        title: dto.title,
+        documentType: dto.documentType || 'PROFORMA',
+        content: dto.content,
+        isDefault: dto.isDefault ?? false,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(termsAndConditions.id, id),
+          eq(termsAndConditions.companyId, companyId),
+        ),
+      )
+      .returning();
+    if (!row) throw new NotFoundException(`Term ${id} not found`);
+    return row;
+  }
+
+  async deleteTerm(
+    companyId: string,
+    id: string,
+  ): Promise<{ message: string }> {
+    await this.databaseService.db
+      .update(termsAndConditions)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(termsAndConditions.id, id),
+          eq(termsAndConditions.companyId, companyId),
+        ),
+      );
+    return { message: 'Term deleted' };
   }
 }

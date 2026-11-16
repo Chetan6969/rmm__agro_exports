@@ -26,6 +26,7 @@ export interface InvMasterData {
   terms: Term[];
   shippingLines: { id: string; name: string }[];
   productionOrders: ProductionOrderListItem[];
+  countries: { name: string }[];
 }
 
 interface Props {
@@ -376,7 +377,10 @@ export function InvoiceFormDialog({ master, onSaved, onClose }: Props) {
               <Field label="Payment term"><input className="ef-input" value={paymentTerm} onChange={(e) => setPaymentTerm(e.target.value)} /></Field>
               <Field label="Country of origin"><input className="ef-input" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} /></Field>
               <Field label="Container no"><input className="ef-input" value={containerNo} onChange={(e) => setContainerNo(e.target.value)} /></Field>
-              <Field label="Country final dest."><input className="ef-input" value={countryOfDestination} onChange={(e) => setCountryOfDestination(e.target.value)} /></Field>
+              <Field label="Country final dest.">
+                <input className="ef-input" list="ef-countries-inv" value={countryOfDestination} onChange={(e) => setCountryOfDestination(e.target.value)} />
+                <datalist id="ef-countries-inv">{master.countries.map((c) => <option key={c.name} value={c.name} />)}</datalist>
+              </Field>
               <Field label="Seal no"><input className="ef-input" value={sealNo} onChange={(e) => setSealNo(e.target.value)} /></Field>
               <Field label="Vessel / Flight no"><input className="ef-input" value={vesselFlightName} onChange={(e) => setVesselFlightName(e.target.value)} /></Field>
               <Field label="Lading B/L no"><input className="ef-input" value={ladingBlNumber} onChange={(e) => setLadingBlNumber(e.target.value)} /></Field>
@@ -399,7 +403,9 @@ export function InvoiceFormDialog({ master, onSaved, onClose }: Props) {
                 </select>
               </Field>
               <Field label="Shipping bill no"><input className="ef-input" value={shippingBillNumber} onChange={(e) => setShippingBillNumber(e.target.value)} /></Field>
-              <Field label="Final destination"><input className="ef-input" value={finalDestination} onChange={(e) => setFinalDestination(e.target.value)} /></Field>
+              <Field label="Final destination">
+                <input className="ef-input" list="ef-countries-inv" value={finalDestination} onChange={(e) => setFinalDestination(e.target.value)} />
+              </Field>
               <Field label="Shipping bill date">
                 <div className="flex items-center gap-2">
                   <input type="checkbox" className="ef-check" checked={shippingBillDateOn} onChange={(e) => setShippingBillDateOn(e.target.checked)} />

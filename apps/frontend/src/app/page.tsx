@@ -8,6 +8,12 @@ import { ExecutiveDashboard } from '../components/dashboard/ExecutiveDashboard';
 import { ProformaInvoices } from '../components/proforma/ProformaInvoices';
 import { ProductionOrders } from '../components/production/ProductionOrders';
 import { Invoices } from '../components/invoice/Invoices';
+import {
+  PortsMaster,
+  ShippingLinesMaster,
+  CountriesMaster,
+  TermsMaster,
+} from '../components/masterdata/ReferenceMasters';
 import { RegistersView } from '../components/reports/RegistersView';
 import { DocumentHubChecklist } from '../components/documents/DocumentHubChecklist';
 import { LoginScreen } from '../components/auth/LoginScreen';
@@ -50,6 +56,11 @@ function Workstation() {
 
           {currentSection === 'commercial-invoices' && <Invoices />}
 
+          {currentSection === 'ports' && <PortsMaster />}
+          {currentSection === 'shipping-lines' && <ShippingLinesMaster />}
+          {currentSection === 'countries' && <CountriesMaster />}
+          {currentSection === 'terms' && <TermsMaster />}
+
           {currentSection === 'registers' && <RegistersView />}
 
           {(currentSection === 'document-hub' ||
@@ -61,7 +72,11 @@ function Workstation() {
             currentSection !== 'commercial-invoices' &&
             currentSection !== 'registers' &&
             currentSection !== 'document-hub' &&
-            currentSection !== 'packing-lists' && (
+            currentSection !== 'packing-lists' &&
+            currentSection !== 'ports' &&
+            currentSection !== 'shipping-lines' &&
+            currentSection !== 'countries' &&
+            currentSection !== 'terms' && (
               <div className="ef-card p-8 text-center space-y-2">
                 <h2 className="text-base font-bold text-slate-800 capitalize">
                   {currentSection.replace('-', ' ')}
