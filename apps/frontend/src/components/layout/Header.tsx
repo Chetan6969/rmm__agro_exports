@@ -2,48 +2,52 @@
 
 import React from 'react';
 import { useCompany } from '../../context/CompanyContext';
-import { Building2, ChevronDown, ShieldCheck, Wifi, UserCheck } from 'lucide-react';
+import { Building2, ChevronDown, ShieldCheck, LogOut, Wheat } from 'lucide-react';
 
 export function Header() {
-  const { companies, activeCompany, financialYear, switchCompany, currentUser } =
+  const { companies, activeCompany, financialYear, switchCompany, currentUser, logout } =
     useCompany();
 
+  const initials = (currentUser.username || 'U')
+    .split(' ')
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+
   return (
-    <header className="h-14 border-b border-slate-700 bg-slate-900 text-slate-100 flex items-center justify-between px-4 sticky top-0 z-50 shadow-md">
-      {/* Brand & Sister Company Identity */}
+    <header className="h-14 border-b border-[#c9d2de] bg-white text-slate-800 flex items-center justify-between px-4 sticky top-0 z-50 shadow-sm">
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded bg-amber-600 flex items-center justify-center font-bold text-white shadow">
-            EF
+          <div className="h-8 w-8 rounded bg-blue-700 flex items-center justify-center font-bold text-white shadow-sm">
+            <Wheat className="w-4 h-4" />
           </div>
           <div>
-            <div className="font-bold text-sm tracking-wide flex items-center gap-1.5">
-              <span>EXPORTFLY WEB</span>
-              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono border border-amber-500/30">
-                ENTERPRISE
+            <div className="font-bold text-sm tracking-wide flex items-center gap-1.5 text-slate-800">
+              <span>ExportFly</span>
+              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-mono border border-blue-200">
+                RMM AGRO
               </span>
             </div>
-            <div className="text-[10px] text-slate-400">
-              Basmati Rice Export ERP
+            <div className="text-[10px] text-slate-500">
+              Enterprise Export Management
             </div>
           </div>
         </div>
 
-        {/* Vertical divider */}
-        <div className="h-5 w-px bg-slate-700 mx-1" />
+        <div className="h-6 w-px bg-slate-200 mx-1" />
 
-        {/* Company Switcher Dropdown */}
         <div className="relative flex items-center">
-          <Building2 className="w-4 h-4 text-amber-400 absolute left-2.5 pointer-events-none" />
+          <Building2 className="w-4 h-4 text-blue-700 absolute left-2.5 pointer-events-none" />
           <select
             aria-label="Active Exporting Entity"
             value={activeCompany.id}
             onChange={(e) => switchCompany(e.target.value)}
-            className="pl-8 pr-7 py-1 text-xs font-semibold rounded bg-slate-800 border border-slate-600 text-amber-300 hover:border-amber-400 focus:outline-none focus:ring-1 focus:ring-amber-400 cursor-pointer appearance-none transition-colors"
+            className="pl-8 pr-7 py-1.5 text-xs font-semibold rounded bg-white border border-[#aab6c6] text-slate-700 hover:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-400 cursor-pointer appearance-none"
           >
             {companies.map((c) => (
-              <option key={c.id} value={c.id} className="bg-slate-900 text-slate-200">
-                {c.name} ({c.code})
+              <option key={c.id} value={c.id}>
+                {c.name} {c.code ? `(${c.code})` : ''}
               </option>
             ))}
           </select>
@@ -51,35 +55,37 @@ export function Header() {
         </div>
       </div>
 
-      {/* Center status badges */}
-      <div className="hidden md:flex items-center gap-3 text-xs">
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[11px]">
+      <div className="hidden md:flex items-center gap-2 text-xs">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-slate-50 border border-slate-200 text-slate-600 font-mono text-[11px]">
           <span className="text-slate-400">FY:</span>
-          <span className="text-emerald-400 font-bold">{financialYear}</span>
+          <span className="text-blue-700 font-bold">{financialYear}</span>
         </div>
-
-        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/60 border border-emerald-700/50 text-emerald-300 text-[11px]">
-          <Wifi className="w-3 h-3 text-emerald-400 animate-pulse" />
-          <span>Office LAN • Online</span>
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-50 border border-green-200 text-green-700 text-[11px]">
+          <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+          <span>Online</span>
         </div>
       </div>
 
-      {/* Right User & Security Info */}
       <div className="flex items-center gap-3">
         <div className="text-right hidden sm:block">
-          <div className="text-xs font-semibold text-slate-200 flex items-center justify-end gap-1">
-            <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-            <span>{currentUser.username}</span>
+          <div className="text-xs font-semibold text-slate-700">
+            {currentUser.username}
           </div>
-          <div className="text-[10px] text-amber-400 font-mono flex items-center justify-end gap-1">
-            <ShieldCheck className="w-3 h-3 text-amber-400" />
+          <div className="text-[10px] text-blue-700 font-mono flex items-center justify-end gap-1">
+            <ShieldCheck className="w-3 h-3" />
             <span>{currentUser.role}</span>
           </div>
         </div>
-
-        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-700 to-indigo-600 text-white font-bold text-xs flex items-center justify-center border border-indigo-400/30 shadow">
-          NK
+        <div className="w-8 h-8 rounded-full bg-blue-700 text-white font-bold text-xs flex items-center justify-center shadow-sm">
+          {initials}
         </div>
+        <button
+          onClick={() => void logout()}
+          title="Sign out"
+          className="ef-btn px-2 py-1.5"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+        </button>
       </div>
     </header>
   );
