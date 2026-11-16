@@ -1,4 +1,4 @@
-import { ENTITIES } from '@rmm/shared';
+import { DOC_LIST, ENTITIES, getDoc } from '@rmm/shared';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -59,7 +59,7 @@ export function AuditPage() {
     { key: 'at', label: 'When', render: (l) => new Date(l.at).toLocaleString() },
     { key: 'user', label: 'User', render: (l) => l.fullName ?? l.username ?? '—' },
     { key: 'action', label: 'Action', render: (l) => <Badge tone={tone(l.action)}>{l.action.replace('_', ' ')}</Badge> },
-    { key: 'entity', label: 'What', render: (l) => ENTITIES[l.entity]?.label ?? l.entity.replace('_', ' ') },
+    { key: 'entity', label: 'What', render: (l) => ENTITIES[l.entity]?.label ?? getDoc(l.entity)?.label ?? l.entity.replace('_', ' ') },
     {
       key: 'changes',
       label: 'Changes',
@@ -85,7 +85,7 @@ export function AuditPage() {
           <span className="block text-[11.5px] text-slate-500">Master / area</span>
           <select className="field-input" value={filters.entity} onChange={(e) => set('entity', e.target.value)}>
             <option value="">All</option>
-            {[...Object.values(ENTITIES).map((e) => [e.key, e.plural]), ['users', 'Users'], ['roles', 'Roles'], ['auth', 'Logins'], ['sharing_policies', 'Sharing'], ['number_series', 'Numbering']].map(([k, l]) => (
+            {[...DOC_LIST.map((d) => [d.key, d.plural]), ...Object.values(ENTITIES).map((e) => [e.key, e.plural]), ['users', 'Users'], ['roles', 'Roles'], ['auth', 'Logins'], ['sharing_policies', 'Sharing'], ['number_series', 'Numbering']].map(([k, l]) => (
               <option key={k} value={k}>
                 {l}
               </option>

@@ -1,65 +1,73 @@
-import { ImageUp, Trash2 } from 'lucide-react';
-import { useRef, useState } from 'react';
-import { api, errorHint, errorMessage } from '../lib/api';
+import { ImageUp, Pencil, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ImageEditor, type ImageKind } from './ImageEditor';
 
-/** Image upload for logos / letterheads / seals / signatures. Enter or Space opens the file picker. */
+/**
+ * Branding image (logo, letterhead, footer, stamp/seal, signature).
+ * Choosing a file opens the editor (background removal, crop, rotate) before upload;
+ * "Edit" re-opens the current image in the editor. Enter or Space opens the file picker.
+ */
 export function FileField({
   id,
   value,
   onChange,
   disabled,
-  scope = 'group',
+  kind = 'image',
 }: {
   id?: string;
   value: string | null;
   onChange: (id: string | null) => void;
   disabled?: boolean;
-  scope?: 'group' | 'company';
+  kind?: ImageKind;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [source, setSource] = useState<{ url: string; name: string; file?: File } | null>(null);
 
-  const pick = async (f: File | undefined) => {
+  // free the object URL of a picked file when the editor closes
+  useEffect(() => {
+    const url = source?.file ? source.url : null;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [source]);
+
+  const pick = (f: File | undefined) => {
     if (!f) return;
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await api.upload<{ id: string }>(`/files${scope === 'group' ? '?scope=group' : ''}`, f);
-      onChange(res.id);
-    } catch (e) {
-      setErr([errorMessage(e), errorHint(e)].filter(Boolean).join('. '));
-    } finally {
-      setBusy(false);
-      if (input.current) input.current.value = '';
-    }
+    setSource({ url: URL.createObjectURL(f), name: f.name, file: f });
+    if (input.current) input.current.value = '';
   };
 
   return (
     <div>
       <div className="flex items-center gap-2">
-        <div className="flex h-16 w-28 items-center justify-center overflow-hidden rounded border border-dashed border-slate-300 bg-slate-50">
+        <div className="flex h-16 w-28 items-center justify-center overflow-hidden rounded border border-dashed border-slate-300 bg-[conic-gradient(#f1f5f9_25%,#fff_0_50%,#f1f5f9_0_75%,#fff_0)] bg-[length:12px_12px]">
           {value ? <img src={`/api/files/${value}`} alt="" className="max-h-full max-w-full object-contain" /> : <ImageUp className="size-5 text-slate-300" />}
         </div>
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col items-start gap-1">
           <button
             id={id}
             type="button"
-            disabled={disabled || busy}
+            data-nav="1"
+            disabled={disabled}
             onClick={() => input.current?.click()}
             className="rounded border border-slate-300 bg-white px-2 py-1 text-[12.5px] hover:bg-slate-50 disabled:opacity-50"
           >
-            {busy ? 'Uploading…' : value ? 'Replace…' : 'Upload…'}
+            {value ? 'Replace…' : 'Upload…'}
           </button>
           {value && !disabled && (
-            <button type="button" onClick={() => onChange(null)} className="inline-flex items-center gap-1 text-[12px] text-slate-500 hover:text-red-600">
-              <Trash2 className="size-3" /> Remove
-            </button>
+            <span className="flex gap-2">
+              <button type="button" onClick={() => setSource({ url: `/api/files/${value}`, name: `${kind}.png` })} className="inline-flex items-center gap-1 text-[12px] text-slate-600 hover:text-brand-700">
+                <Pencil className="size-3" /> Edit
+              </button>
+              <button type="button" onClick={() => onChange(null)} className="inline-flex items-center gap-1 text-[12px] text-slate-500 hover:text-red-600">
+                <Trash2 className="size-3" /> Remove
+              </button>
+            </span>
           )}
         </div>
       </div>
       <input ref={input} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => pick(e.target.files?.[0])} />
-      {err && <div className="mt-1 text-[12px] text-red-600">{err}</div>}
+      <ImageEditor open={!!source} source={source} kind={kind} onClose={() => setSource(null)} onSaved={(fid) => onChange(fid)} />
     </div>
   );
 }

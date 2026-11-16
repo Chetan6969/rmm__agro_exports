@@ -20,7 +20,9 @@ export type FieldType =
   | 'ref'
   | 'date'
   | 'email'
-  | 'file';
+  | 'file'
+  /** A link to a sales document (DocDef key in `ref`). */
+  | 'doc';
 
 export interface FieldDef {
   name: string;
@@ -33,7 +35,7 @@ export interface FieldDef {
   upper?: boolean;
   maxLength?: number;
   options?: readonly string[];
-  /** For type 'ref': the referenced entity key (checked at startup by assertRegistry). */
+  /** For type 'ref': the referenced entity key (checked at startup by assertRegistry). For 'doc': the document key. */
   ref?: string;
   /** Shown as a column in list screens. */
   list?: boolean;
@@ -404,7 +406,7 @@ export const ENTITY_LIST = [
     displayField: 'name',
     fields: [
       { name: 'name', label: 'Name', type: 'text', required: true, list: true, search: true, span: 2 },
-      { name: 'docType', label: 'Document type', type: 'select', required: true, options: ['Proforma Invoice', 'Sales Contract', 'Commercial Invoice', 'Purchase Order', 'General'], list: true },
+      { name: 'docType', label: 'Document type', type: 'select', required: true, options: ['Proforma Invoice', 'Production Order', 'Sales Contract', 'Commercial Invoice', 'Purchase Order', 'General'], list: true },
       { name: 'body', label: 'Terms text (one per line)', type: 'textarea', required: true, span: 3 },
       { name: 'isDefault', label: 'Default for this document type', type: 'boolean', default: false, list: true },
       active,

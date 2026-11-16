@@ -1,3 +1,4 @@
+import { DOC_LIST } from './documents.js';
 import { ENTITY_LIST, type EntityDef } from './entities.js';
 
 /**
@@ -24,7 +25,15 @@ const masterModules: ModuleDef[] = (ENTITY_LIST as readonly EntityDef[]).map((e)
   actions: MASTER_ACTIONS,
 }));
 
+const salesModules: ModuleDef[] = DOC_LIST.map((d) => ({
+  key: d.module,
+  label: d.plural,
+  group: 'Sales',
+  actions: ['view', 'create', 'edit', 'delete', 'print', 'export'],
+}));
+
 export const MODULES: ModuleDef[] = [
+  ...salesModules,
   ...masterModules,
   { key: 'admin.users', label: 'Users', group: 'Administration', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'admin.roles', label: 'Roles & permissions', group: 'Administration', actions: ['view', 'create', 'edit', 'delete'] },

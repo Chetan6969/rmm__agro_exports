@@ -27,7 +27,7 @@ export type AnyTable = PgTableWithColumns<any>;
 
 export const masterTables: Record<string, AnyTable> = {};
 
-function column(f: FieldDef): PgColumnBuilderBase {
+export function column(f: FieldDef): PgColumnBuilderBase {
   const name = snake(f.name);
   let c;
   switch (f.type) {
@@ -50,6 +50,9 @@ function column(f: FieldDef): PgColumnBuilderBase {
       c = date(name);
       break;
     case 'file':
+      c = uuid(name);
+      break;
+    case 'doc':
       c = uuid(name);
       break;
     case 'ref':

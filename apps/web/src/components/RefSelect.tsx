@@ -23,8 +23,11 @@ export function RefSelect({
   disabled,
   placeholder = 'Type to search…',
   onCommit,
+  source = 'master',
 }: {
+  /** master entity key, or a document key when source is 'document' */
   entity: string;
+  source?: 'master' | 'document';
   value: string | null;
   label?: string | null;
   onChange: (id: string | null, label: string | null) => void;
@@ -40,12 +43,13 @@ export function RefSelect({
   const [hi, setHi] = useState(0);
   const [label, setLabel] = useState<string | null>(initialLabel ?? null);
   const listId = useId();
+  const base = source === 'document' ? `/documents/${entity}/lookup` : `/masters/${entity}/lookup`;
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Resolve a label for an existing value (e.g. defaults applied by id).
   const resolve = useQuery({
-    queryKey: ['lookup', entity, 'ids', value],
-    queryFn: () => api.get<Option[]>(`/masters/${entity}/lookup${qs({ ids: value })}`),
+    queryKey: ['lookup', source, entity, 'ids', value],
+    queryFn: () => api.get<Option[]>(`${base}${qs({ ids: value })}`),
     enabled: !!value && !label,
   });
   useEffect(() => {
@@ -59,8 +63,8 @@ export function RefSelect({
   }, [initialLabel]);
 
   const search = useQuery({
-    queryKey: ['lookup', entity, text],
-    queryFn: () => api.get<Option[]>(`/masters/${entity}/lookup${qs({ q: text, limit: 30 })}`),
+    queryKey: ['lookup', source, entity, text],
+    queryFn: () => api.get<Option[]>(`${base}${qs({ q: text, limit: 30 })}`),
     enabled: open,
     staleTime: 30_000,
   });

@@ -7,10 +7,13 @@ import { NumberingPage } from './pages/admin/NumberingPage';
 import { RolesPage } from './pages/admin/RolesPage';
 import { SharingPage } from './pages/admin/SharingPage';
 import { UserFormPage, UsersPage } from './pages/admin/UsersPage';
+import { DocumentFormPage } from './pages/DocumentFormPage';
+import { DocumentListPage } from './pages/DocumentListPage';
 import { HomePage } from './pages/HomePage';
 import { ChangePasswordPage, LoginPage } from './pages/LoginPage';
 import { MasterFormPage } from './pages/MasterFormPage';
 import { MasterListPage } from './pages/MasterListPage';
+import { ProformaReportsPage } from './pages/ProformaReportsPage';
 
 const NotFound = () => <div className="p-6 text-slate-500">Page not found. Press Ctrl+K to find a screen.</div>;
 
@@ -19,6 +22,9 @@ const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { path: '/', element: <HomePage /> },
+      { path: '/d/:doc', element: <DocumentListPage /> },
+      { path: '/d/:doc/:id', element: <DocumentFormPage /> },
+      { path: '/reports/proforma', element: <ProformaReportsPage /> },
       { path: '/m/:entity', element: <MasterListPage /> },
       { path: '/m/:entity/:id', element: <MasterFormPage /> },
       { path: '/admin/users', element: <UsersPage /> },

@@ -1,6 +1,7 @@
 import type { EntityDef, FieldDef } from '@rmm/shared';
 import type { KeyboardEvent, ReactNode } from 'react';
 import { FileField } from './FileField';
+import { imageKindOf } from './ImageEditor';
 import { RefSelect } from './RefSelect';
 
 export type Values = Record<string, unknown>;
@@ -86,9 +87,11 @@ function FieldInput({
         </select>
       );
     case 'ref':
+    case 'doc':
       return (
         <RefSelect
           id={id}
+          source={f.type === 'doc' ? 'document' : 'master'}
           entity={f.ref!}
           value={(value as string) ?? null}
           label={label}
@@ -99,7 +102,7 @@ function FieldInput({
         />
       );
     case 'file':
-      return <FileField id={id} value={(value as string) ?? null} onChange={(v) => onChange(v)} disabled={readOnly} />;
+      return <FileField id={id} value={(value as string) ?? null} onChange={(v) => onChange(v)} disabled={readOnly} kind={imageKindOf(f.name)} />;
     default:
       return (
         <input

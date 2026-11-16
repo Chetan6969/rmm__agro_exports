@@ -43,6 +43,12 @@ beforeAll(async () => {
     // Another test file may already have created it; either way it must exist.
     expect([200, 201, 409]).toContain(res.status);
   }
+  // Other test files add currencies without a public rate (e.g. ISO test code XTS); keep only ours active.
+  const ours = new Set(['INR', 'USD', 'EUR', 'GBP', 'AED', 'SAR']);
+  const all = (await root.get('/masters/currencies?pageSize=500')).body.rows as { id: string; code: string; version: number; isActive: boolean }[];
+  for (const c of all.filter((x) => !ours.has(x.code) && x.isActive)) {
+    expect((await root.put(`/masters/currencies/${c.id}`, { isActive: false, version: c.version })).status).toBe(200);
+  }
 });
 
 afterEach(() => {

@@ -1,4 +1,4 @@
-import { ENTITY_LIST, MENU_ORDER, type EntityDef } from '@rmm/shared';
+import { DOC_LIST, ENTITY_LIST, MENU_ORDER, type EntityDef } from '@rmm/shared';
 import type { Action } from '@rmm/shared';
 
 export interface NavItem {
@@ -15,6 +15,15 @@ const entities = ENTITY_LIST as readonly EntityDef[];
 /** Every screen in one list: drives the sidebar and the command palette. */
 export const NAV: NavItem[] = [
   { id: 'home', label: 'Home', path: '/', group: 'General' },
+  ...DOC_LIST.map((d) => ({
+    id: `d-${d.key}`,
+    label: d.plural,
+    path: `/d/${d.key}`,
+    group: 'Sales',
+    perm: [d.module, 'view'] as [string, Action],
+    keywords: `${d.label} ${d.short} sales document`,
+  })),
+  { id: 'pi-reports', label: 'PI reports', path: '/reports/proforma', group: 'Sales', perm: ['sales.proformaInvoices', 'view'], keywords: 'proforma analysis field usage terms' },
   ...MENU_ORDER.flatMap((menu) =>
     entities
       .filter((e) => e.menu === menu)

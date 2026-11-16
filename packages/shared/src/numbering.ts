@@ -89,6 +89,7 @@ export const DOC_TYPES = [
   { key: 'enquiry', label: 'Enquiry', defaultPattern: 'ENQ/{CO}/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'sales_contract', label: 'Sales Contract', defaultPattern: '{CO}/SC/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'proforma_invoice', label: 'Proforma Invoice', defaultPattern: 'PI-{CO}/{FY}/{SEQ:3}', resetYearly: true },
+  { key: 'production_order', label: 'Production Order', defaultPattern: '{CO}/PRO/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'export_order', label: 'Export Order', defaultPattern: '{CO}/ORD/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'purchase_order', label: 'Purchase Order', defaultPattern: '{CO}/PO/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'commercial_invoice', label: 'Commercial Invoice', defaultPattern: '{CO}/EX/{FY}/{SEQ:3}', resetYearly: true },

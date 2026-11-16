@@ -11,11 +11,12 @@
  * This SQL is idempotent and re-applied on every `db:migrate`.
  */
 import { ENTITY_LIST, type EntityDef } from '@rmm/shared';
+import { DOCUMENT_TABLE_NAMES } from './schema/documents.js';
 
 const companyMasters = (ENTITY_LIST as readonly EntityDef[]).filter((e) => e.scope === 'company');
 
 /** Extra company-scoped tables that are never shared. Transaction modules add theirs here. */
-export const PRIVATE_COMPANY_TABLES = ['entity_defaults', 'number_series', 'number_counters'];
+export const PRIVATE_COMPANY_TABLES = ['entity_defaults', 'number_series', 'number_counters', ...DOCUMENT_TABLE_NAMES];
 
 const functions = /* sql */ `
 create or replace function app_company_id() returns uuid

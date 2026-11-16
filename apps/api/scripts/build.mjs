@@ -1,4 +1,5 @@
 // Bundles the API (and the shared package) into dist/ for `node dist/main.js`.
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 const common = {
@@ -19,7 +20,7 @@ await build({
     {
       name: 'bundle-shared',
       setup(b) {
-        b.onResolve({ filter: /^@rmm\/shared$/ }, () => ({ path: new URL('../../../packages/shared/src/index.ts', import.meta.url).pathname }));
+        b.onResolve({ filter: /^@rmm\/shared$/ }, () => ({ path: fileURLToPath(new URL('../../../packages/shared/src/index.ts', import.meta.url)) }));
       },
     },
   ],

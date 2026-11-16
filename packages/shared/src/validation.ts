@@ -42,6 +42,7 @@ function fieldSchema(f: FieldDef): z.ZodType {
       s = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${f.label}: date must be YYYY-MM-DD`);
       break;
     case 'ref':
+    case 'doc':
     case 'file':
       s = z.uuid(`${f.label}: invalid reference`);
       break;
