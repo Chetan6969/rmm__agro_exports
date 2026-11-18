@@ -153,7 +153,21 @@ export function ImageEditor({
       footer={
         <>
           {source?.file && (
-            <Button onClick={() => upload(source.file!)} disabled={busy} title="Upload the file exactly as chosen, without these changes">
+            <Button
+              onClick={async () => {
+                const f = source.file!;
+                // PDFs can only embed PNG/JPEG. Keep the original look but re-encode WEBP (and
+                // anything else) to PNG so it prints; PNG/JPEG upload exactly as chosen.
+                if (f.type === 'image/png' || f.type === 'image/jpeg' || !img) return upload(f);
+                try {
+                  return await upload(await canvasToPng(baseCanvas(img, 0, null), f.name));
+                } catch {
+                  return upload(f);
+                }
+              }}
+              disabled={busy}
+              title="Upload as chosen, without background removal (converted to PNG so it prints)"
+            >
               Upload original
             </Button>
           )}

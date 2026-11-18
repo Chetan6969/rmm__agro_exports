@@ -154,3 +154,6 @@ apps/api/storage-test/
 
 # Local development PostgreSQL cluster (scripts/dev-db.mjs)
 .dev-db/
+
+# Local LAN auto-start (holds local DB admin password)
+.lan/

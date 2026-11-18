@@ -1,7 +1,12 @@
-import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, X } from 'lucide-react';
+import { getEntity } from '@rmm/shared';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ChevronDown, Plus, X } from 'lucide-react';
 import { useEffect, useId, useRef, useState } from 'react';
-import { api, qs } from '../lib/api';
+import { api, ApiError, qs } from '../lib/api';
+import { showError } from '../lib/notify';
+import { EntityForm, type Values } from './EntityForm';
+import { Modal } from './Modal';
+import { Button } from './ui';
 
 interface Option {
   id: string;
@@ -24,6 +29,8 @@ export function RefSelect({
   placeholder = 'Type to search…',
   onCommit,
   source = 'master',
+  allowCreate = false,
+  sameAs,
 }: {
   /** master entity key, or a document key when source is 'document' */
   entity: string;
@@ -37,13 +44,19 @@ export function RefSelect({
   placeholder?: string;
   /** Called after Enter selects an option (form moves to next field). */
   onCommit?: () => void;
+  /** Allow creating a new master record straight from the picker. */
+  allowCreate?: boolean;
+  /** Offer "— same as <label> —" at the top of the list (copies another field's value). */
+  sameAs?: { label: string; id: string; idLabel: string | null };
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
   const [hi, setHi] = useState(0);
   const [label, setLabel] = useState<string | null>(initialLabel ?? null);
+  const [creating, setCreating] = useState<string | null>(null);
   const listId = useId();
   const base = source === 'document' ? `/documents/${entity}/lookup` : `/masters/${entity}/lookup`;
+  const canCreate = allowCreate && source === 'master' && !disabled && !!getEntity(entity);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Resolve a label for an existing value (e.g. defaults applied by id).
@@ -165,8 +178,20 @@ export function RefSelect({
       </div>
       {open && (
         <ul id={listId} role="listbox" className="absolute z-30 mt-1 max-h-64 w-full min-w-56 overflow-auto rounded border border-slate-200 bg-white py-1 shadow-lg">
+          {sameAs && sameAs.id !== value && (
+            <li
+              role="option"
+              aria-selected={false}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => choose({ id: sameAs.id, label: sameAs.idLabel ?? sameAs.label }, true)}
+              className="cursor-pointer px-3 py-1.5 font-medium text-brand-700 italic hover:bg-brand-50"
+            >
+              — same as {sameAs.label.toLowerCase()} —
+            </li>
+          )}
           {search.isLoading && <li className="px-3 py-1.5 text-slate-400">Searching…</li>}
-          {!search.isLoading && options.length === 0 && <li className="px-3 py-1.5 text-slate-400">No matches</li>}
+          {!search.isLoading && options.length === 0 && !canCreate && <li className="px-3 py-1.5 text-slate-400">No matches</li>}
+          {!search.isLoading && options.length === 0 && canCreate && <li className="px-3 py-1.5 text-slate-400">No matches — add a new one below</li>}
           {options.map((o, i) => (
             <li
               key={o.id}
@@ -182,8 +207,98 @@ export function RefSelect({
               {o.sub && <span className="shrink-0 font-mono text-[11.5px] text-slate-400">{o.sub}</span>}
             </li>
           ))}
+          {canCreate && (
+            <li className="sticky bottom-0 border-t border-slate-100 bg-white">
+              <button
+                type="button"
+                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-brand-700 hover:bg-brand-50"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  setCreating(text.trim());
+                  setOpen(false);
+                }}
+              >
+                <Plus className="size-3.5" /> Add {text.trim() ? `"${text.trim()}"` : 'a new one'}
+              </button>
+            </li>
+          )}
         </ul>
       )}
+      {creating !== null && (
+        <CreateMaster
+          entity={entity}
+          initialName={creating}
+          onClose={() => setCreating(null)}
+          onCreated={(o) => {
+            choose(o, true);
+            setCreating(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/** Quick-create a master record (buyer, product, packing…) without leaving the document. */
+function CreateMaster({ entity, initialName, onClose, onCreated }: { entity: string; initialName: string; onClose: () => void; onCreated: (o: Option) => void }) {
+  const def = getEntity(entity)!;
+  const qc = useQueryClient();
+  const nameField = def.fields.find((f) => f.name === 'name') ? 'name' : def.displayField;
+  const [values, setValues] = useState<Values>(() => {
+    const v: Values = {};
+    for (const f of def.fields) if (f.default !== undefined) v[f.name] = f.default;
+    if (initialName) v[nameField] = initialName;
+    return v;
+  });
+  const [labelMap, setLabelMap] = useState<Record<string, string | null | undefined>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  // Keep the quick-add short: only required fields, a name/display field, plus any already filled.
+  const fields = def.fields.filter((f) => f.name !== 'isActive' && (f.required || f.name === nameField || f.name === 'code' || values[f.name] != null));
+
+  const save = async () => {
+    setSaving(true);
+    setErrors({});
+    try {
+      const created = await api.post<Values>(`/masters/${entity}`, values);
+      qc.invalidateQueries({ queryKey: ['lookup', 'master', entity] });
+      qc.invalidateQueries({ queryKey: ['masters', entity] });
+      onCreated({ id: String(created.id), label: String(created[def.displayField] ?? values[nameField] ?? '') });
+    } catch (e) {
+      if (e instanceof ApiError && Object.keys(e.fields).length) setErrors(Object.fromEntries(Object.entries(e.fields).map(([k, m]) => [k.replace(/^.*\./, ''), m])));
+      else showError(e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      title={`New ${def.label.toLowerCase()}`}
+      onClose={onClose}
+      width="max-w-2xl"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" loading={saving} onClick={save} data-nav-end>
+            Add & select
+          </Button>
+        </>
+      }
+    >
+      <div data-form-root className="max-h-[60vh] overflow-y-auto pr-1">
+        <EntityForm
+          def={{ ...def, fields }}
+          values={values}
+          labels={labelMap}
+          errors={errors}
+          onChange={(n, v, l) => {
+            setValues((s) => ({ ...s, [n]: v }));
+            if (l !== undefined) setLabelMap((s) => ({ ...s, [n]: l }));
+          }}
+        />
+      </div>
+    </Modal>
   );
 }

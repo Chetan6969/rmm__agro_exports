@@ -22,6 +22,27 @@
       "when": 1794810246224,
       "tag": "0002_sales_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1794910840707,
+      "tag": "0003_useful_mikhail_rasputin",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795001846787,
+      "tag": "0004_majestic_the_call",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795002883608,
+      "tag": "0005_smiling_songbird",
+      "breakpoints": true
     }
   ]
 }

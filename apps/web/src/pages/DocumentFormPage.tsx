@@ -17,11 +17,12 @@ import {
   type LiveRatesResponse,
 } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Package, Pencil, Plus, Printer, Save, Trash2 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Lock, Package, Pencil, Plus, Printer, Save, Trash2, Unlock } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EntityForm, type Values } from '../components/EntityForm';
+import { RefSelect } from '../components/RefSelect';
 import { ConfirmDialog, Modal } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api, ApiError } from '../lib/api';
@@ -90,7 +91,7 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [editing, setEditing] = useState<{ index: number | null; line: Line } | null>(null);
+  const [editing, setEditing] = useState<{ group: number | null } | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rateNote, setRateNote] = useState<string | null>(null);
@@ -108,16 +109,30 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
     for (const f of def.header) h[f.name] = record[f.name] ?? (f.type === 'boolean' ? false : null);
     setHeader(h);
     setLabels(labelsOf(def.header, record));
-    setLines(record.lines.map((l) => ({ ...l, _key: key(), _labels: labelsOf(def.lines, l) })));
+    setLines(withGroups(def, record.lines));
     setTerms(record.terms.map((t) => ({ _key: key(), tcTemplateId: (t.tcTemplateId as string) ?? null, content: String(t.content) })));
     setContainers(record.containers.map((c) => ({ ...c, _key: key() })));
     setLoaded(true);
     setTimeout(() => root.current?.querySelector<HTMLElement>('[data-nav]')?.focus(), 0);
   }, [record, loaded, def]);
 
-  const readOnly = isNew ? !can(def.module, 'create') : !can(def.module, 'edit');
+  const locked = !isNew && Boolean(record?.locked);
+  const readOnly = isNew ? !can(def.module, 'create') : !can(def.module, 'edit') || locked;
+  const canLock = !isNew && can(def.module, 'delete');
   const back = () => navigate(`/d/${def.key}`);
   const touch = () => setDirty(true);
+
+  const toggleLock = async () => {
+    try {
+      await api.post(`/documents/${def.key}/${id}/lock`, { locked: !locked });
+      toast.success(locked ? `${def.label} unlocked` : `${def.label} locked`);
+      qc.invalidateQueries({ queryKey: ['documents'] });
+      setLoaded(false);
+      await source.refetch();
+    } catch (e) {
+      showError(e);
+    }
+  };
 
   // ---------------------------------------------------------------- auto-fill from masters
   const liveRates = useQuery({ queryKey: ['exchange-rates'], queryFn: () => api.get<LiveRatesResponse>('/exchange-rates'), staleTime: 60_000, enabled: can('master.currencies', 'view') });
@@ -280,7 +295,7 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
   useHotkeys(
     {
       'mod+s, mod+enter': () => save(),
-      'alt+a': () => !readOnly && setEditing({ index: null, line: blankLine(def) }),
+      'alt+a': () => !readOnly && setEditing({ group: null }),
       'mod+p': () => !isNew && can(def.module, 'print') && openPdf('pdf'),
       esc: () => (editing ? setEditing(null) : dirty ? setConfirmLeave(true) : back()),
     },
@@ -311,7 +326,12 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
             </button>
             {title}
             {!isNew && <Badge tone={STATUS_TONE[String(header.status)] ?? 'slate'}>{statusLabel(String(header.status ?? ''))}</Badge>}
-            {readOnly && <Badge>Read only</Badge>}
+            {locked && (
+              <Badge tone="amber">
+                <Lock className="mr-1 inline size-3" /> Locked
+              </Badge>
+            )}
+            {readOnly && !locked && <Badge>Read only</Badge>}
           </span>
         }
         subtitle={def.plural}
@@ -334,7 +354,12 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
                 )}
               </>
             )}
-            {!isNew && can(def.module, 'delete') && (
+            {canLock && (
+              <Button variant="ghost" icon={locked ? <Unlock className="size-3.5" /> : <Lock className="size-3.5" />} onClick={toggleLock}>
+                {locked ? 'Unlock' : 'Lock'}
+              </Button>
+            )}
+            {!isNew && can(def.module, 'delete') && !locked && (
               <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmDelete(true)}>
                 Delete
               </Button>
@@ -355,11 +380,11 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
           {rateNote && <div className="-mt-2 text-[12px] text-slate-500">{rateNote}</div>}
 
           <Section
-            title={`Products (${lines.length})`}
+            title={`Products (${groupIds(lines).length})`}
             action={
               !readOnly && (
-                <Button icon={<Plus className="size-3.5" />} onClick={() => setEditing({ index: null, line: blankLine(def) })} shortcut="alt+a">
-                  Add line
+                <Button icon={<Plus className="size-3.5" />} onClick={() => setEditing({ group: null })} shortcut="alt+a">
+                  Add product
                 </Button>
               )
             }
@@ -370,19 +395,13 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
               currency={currency}
               errors={lineErrors}
               readOnly={readOnly}
-              onEdit={(i) => setEditing({ index: i, line: { ...lines[i], _labels: { ...lines[i]._labels } } })}
-              onRemove={(i) => {
-                setLines((s) => s.filter((_, j) => j !== i));
+              onEdit={(g) => setEditing({ group: g })}
+              onRemove={(g) => {
+                setLines((s) => s.filter((l) => Number(l.packGroup) !== g));
                 touch();
               }}
-              onMove={(i, d) => {
-                setLines((s) => {
-                  const n = [...s];
-                  const j = i + d;
-                  if (j < 0 || j >= n.length) return s;
-                  [n[i], n[j]] = [n[j], n[i]];
-                  return n;
-                });
+              onMove={(g, d) => {
+                setLines((s) => moveGroup(s, g, d));
                 touch();
               }}
             />
@@ -409,15 +428,15 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
       </div>
 
       {editing && (
-        <LineEditor
+        <GroupEditor
           def={def}
-          initial={editing.line}
-          isNew={editing.index === null}
+          isNew={editing.group === null}
+          rows={editing.group === null ? [] : lines.filter((l) => Number(l.packGroup) === editing.group)}
           onClose={() => setEditing(null)}
-          onSave={(line, again) => {
-            setLines((s) => (editing.index === null ? [...s, line] : s.map((x, i) => (i === editing.index ? line : x))));
+          onSave={(rows, again) => {
+            setLines((s) => applyGroup(s, editing.group, rows));
             touch();
-            if (again) setEditing({ index: null, line: blankLine(def) });
+            if (again) setEditing({ group: null });
             else setEditing(null);
           }}
         />
@@ -451,6 +470,61 @@ function blankLine(def: DocDef): Line {
   return l;
 }
 
+// ---------------------------------------------------------------- packing groups
+// Packing rows that belong to the same product card share a `packGroup` number.
+// Fields that describe the product (not the packing) are the same across the group.
+const SHARED_LINE_FIELDS = ['productId', 'brand', 'cropYear', 'specifications'];
+
+/** Give loaded lines stable client group numbers (existing single lines stay separate). */
+function withGroups(def: DocDef, rows: Values[]): Line[] {
+  let next = 1;
+  const map = new Map<number, number>();
+  return rows.map((l) => {
+    const raw = Number(l.packGroup) || 0;
+    let g: number;
+    if (raw > 0) {
+      if (!map.has(raw)) map.set(raw, next++);
+      g = map.get(raw)!;
+    } else g = next++;
+    return { ...l, packGroup: g, _key: key(), _labels: labelsOf(def.lines, l) };
+  });
+}
+
+/** Group numbers in first-appearance order. */
+const groupIds = (ls: Line[]): number[] => [...new Set(ls.map((l) => Number(l.packGroup) || 0))];
+const nextGroup = (ls: Line[]): number => (ls.length ? Math.max(...ls.map((l) => Number(l.packGroup) || 0)) + 1 : 1);
+
+/** Replace (or add) all the rows of one product group, keeping the group's place. */
+function applyGroup(ls: Line[], group: number | null, rows: Line[]): Line[] {
+  if (group === null) {
+    const g = nextGroup(ls);
+    return [...ls, ...rows.map((r) => ({ ...r, packGroup: g }))];
+  }
+  const out: Line[] = [];
+  let done = false;
+  for (const l of ls) {
+    if (Number(l.packGroup) === group) {
+      if (!done) {
+        out.push(...rows.map((r) => ({ ...r, packGroup: group })));
+        done = true;
+      }
+    } else out.push(l);
+  }
+  if (!done) out.push(...rows.map((r) => ({ ...r, packGroup: group })));
+  return out;
+}
+
+/** Move a whole product group up or down past its neighbour. */
+function moveGroup(ls: Line[], group: number, dir: 1 | -1): Line[] {
+  const ids = groupIds(ls);
+  const i = ids.indexOf(group);
+  const j = i + dir;
+  if (j < 0 || j >= ids.length) return ls;
+  const order = [...ids];
+  [order[i], order[j]] = [order[j], order[i]];
+  return order.flatMap((g) => ls.filter((l) => Number(l.packGroup) === g));
+}
+
 function Section({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="rounded-md border border-slate-200 bg-white shadow-xs">
@@ -463,7 +537,7 @@ function Section({ title, action, children }: { title: string; action?: ReactNod
   );
 }
 
-// ---------------------------------------------------------------- lines
+// ---------------------------------------------------------------- lines (grouped by product)
 function LinesTable({
   def,
   lines,
@@ -479,20 +553,23 @@ function LinesTable({
   currency: string;
   errors: Record<number, string>;
   readOnly: boolean;
-  onEdit: (i: number) => void;
-  onRemove: (i: number) => void;
-  onMove: (i: number, d: 1 | -1) => void;
+  onEdit: (g: number) => void;
+  onRemove: (g: number) => void;
+  onMove: (g: number, d: 1 | -1) => void;
 }) {
-  if (!lines.length) return <div className="py-6 text-center text-[13px] text-slate-500">No products yet. Press Alt+A or “Add line”.</div>;
+  if (!lines.length) return <div className="py-6 text-center text-[13px] text-slate-500">No products yet. Press Alt+A or “Add product”.</div>;
   const showRate = def.lines.some((f) => f.name === 'ratePerMt');
+  const ids = groupIds(lines);
+  const flat = new Map(lines.map((l, i) => [l._key, i]));
+  const num = (v: unknown) => (isDecimal(String(v ?? '0')) ? String(v) : '0');
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[640px] text-[13px]">
+      <table className="w-full min-w-[680px] text-[13px]">
         <thead>
           <tr className="border-b border-slate-200 text-left text-[11.5px] text-slate-500 uppercase">
             <th className="w-8 py-1.5 pr-2">#</th>
-            <th className="py-1.5 pr-2">Product</th>
-            <th className="py-1.5 pr-2">Packing</th>
+            <th className="py-1.5 pr-2">Description of goods</th>
+            <th className="py-1.5 pr-2">HS code</th>
             <th className="py-1.5 pr-2 text-right">Bags</th>
             <th className="py-1.5 pr-2 text-right">Net (MT)</th>
             {showRate && <th className="py-1.5 pr-2 text-right">Rate {currency}</th>}
@@ -501,31 +578,60 @@ function LinesTable({
           </tr>
         </thead>
         <tbody>
-          {lines.map((l, i) => (
-            <tr key={l._key} className={`border-b border-slate-100 align-top ${errors[i] ? 'bg-red-50' : ''}`} onDoubleClick={() => !readOnly && onEdit(i)}>
-              <td className="py-1.5 pr-2 text-slate-400 tabular-nums">{i + 1}</td>
-              <td className="py-1.5 pr-2">
-                <div className="font-medium text-slate-900">{l._labels.productId ?? '—'}</div>
-                {Boolean(l.packingText || l.hsCode) && <div className="text-[12px] whitespace-pre-line text-slate-500">{[l.packingText, l.hsCode ? `HS ${l.hsCode}` : ''].filter(Boolean).join(' · ')}</div>}
-                {errors[i] && <div className="text-[12px] text-red-600">{errors[i]}</div>}
-              </td>
-              <td className="py-1.5 pr-2 text-slate-600">{l._labels.packingTypeId ?? ''}</td>
-              <td className="py-1.5 pr-2 text-right tabular-nums">{String(l.noOfBags ?? 0)}</td>
-              <td className="py-1.5 pr-2 text-right tabular-nums">{safe(() => formatAmount(String(l.quantityMt ?? 0), 3))}</td>
-              {showRate && <td className="py-1.5 pr-2 text-right tabular-nums">{safe(() => formatAmount(String(l.ratePerMt ?? 0)))}</td>}
-              {showRate && <td className="py-1.5 pr-2 text-right font-medium tabular-nums">{safe(() => formatAmount(lineAmount(l)))}</td>}
-              <td className="py-1 text-right whitespace-nowrap">
-                {!readOnly && (
-                  <>
-                    <IconBtn label="Move up" onClick={() => onMove(i, -1)} icon={<ArrowUp className="size-3.5" />} />
-                    <IconBtn label="Move down" onClick={() => onMove(i, 1)} icon={<ArrowDown className="size-3.5" />} />
-                    <IconBtn label="Edit line" onClick={() => onEdit(i)} icon={<Pencil className="size-3.5" />} />
-                    <IconBtn label="Remove line" onClick={() => onRemove(i)} icon={<Trash2 className="size-3.5" />} danger />
-                  </>
-                )}
-              </td>
-            </tr>
-          ))}
+          {ids.map((g, gi) => {
+            const rows = lines.filter((l) => Number(l.packGroup) === g);
+            const multi = rows.length > 1;
+            const err = rows.some((r) => errors[flat.get(r._key)!]);
+            const gNet = safe(() => formatAmount(add(rows.map((r) => num(r.quantityMt)), 3), 3));
+            const gBags = rows.reduce((a, r) => a + (Number(r.noOfBags) || 0), 0);
+            const gAmt = safe(() => formatAmount(add(rows.map((r) => safe(() => lineAmount(r))), 2)));
+            return (
+              <Fragment key={g}>
+                <tr className={`border-b border-slate-100 align-top ${err ? 'bg-red-50' : ''}`} onDoubleClick={() => !readOnly && onEdit(g)}>
+                  <td className="py-1.5 pr-2 text-slate-400 tabular-nums">{gi + 1}</td>
+                  <td className="py-1.5 pr-2">
+                    <div className="font-medium text-slate-900">{rows[0]._labels.productId ?? '—'}</div>
+                    {multi && <div className="text-[12px] text-slate-500">{rows.length} packings</div>}
+                    {!multi && Boolean(rows[0].packingText || rows[0]._labels.packingTypeId) && (
+                      <div className="text-[12px] whitespace-pre-line text-slate-500">{String(rows[0].packingText || rows[0]._labels.packingTypeId)}</div>
+                    )}
+                    {err && <div className="text-[12px] text-red-600">Check the highlighted packing rows.</div>}
+                  </td>
+                  <td className="py-1.5 pr-2 text-slate-600">{multi ? '' : safe(() => String(rows[0].hsCode ?? '—'))}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{multi ? gBags : String(rows[0].noOfBags ?? 0)}</td>
+                  <td className="py-1.5 pr-2 text-right tabular-nums">{multi ? gNet : safe(() => formatAmount(num(rows[0].quantityMt), 3))}</td>
+                  {showRate && <td className="py-1.5 pr-2 text-right tabular-nums">{multi ? '' : safe(() => formatAmount(num(rows[0].ratePerMt)))}</td>}
+                  {showRate && <td className="py-1.5 pr-2 text-right font-medium tabular-nums">{gAmt}</td>}
+                  <td className="py-1 text-right whitespace-nowrap">
+                    {!readOnly && (
+                      <>
+                        <IconBtn label="Move up" onClick={() => onMove(g, -1)} icon={<ArrowUp className="size-3.5" />} />
+                        <IconBtn label="Move down" onClick={() => onMove(g, 1)} icon={<ArrowDown className="size-3.5" />} />
+                        <IconBtn label="Edit product" onClick={() => onEdit(g)} icon={<Pencil className="size-3.5" />} />
+                        <IconBtn label="Remove product" onClick={() => onRemove(g)} icon={<Trash2 className="size-3.5" />} danger />
+                      </>
+                    )}
+                  </td>
+                </tr>
+                {multi &&
+                  rows.map((r) => (
+                    <tr key={r._key} className={`border-b border-slate-50 align-top text-[12.5px] ${errors[flat.get(r._key)!] ? 'bg-red-50' : ''}`}>
+                      <td />
+                      <td className="py-1 pr-2 pl-3 text-slate-600">
+                        <span className="text-slate-400">↳ </span>
+                        {String(r.packingText || r._labels.packingTypeId || 'Packing')}
+                      </td>
+                      <td className="py-1 pr-2 text-slate-600">{safe(() => String(r.hsCode ?? '—'))}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{String(r.noOfBags ?? 0)}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{safe(() => formatAmount(num(r.quantityMt), 3))}</td>
+                      {showRate && <td className="py-1 pr-2 text-right tabular-nums">{safe(() => formatAmount(num(r.ratePerMt)))}</td>}
+                      {showRate && <td className="py-1 pr-2 text-right tabular-nums">{safe(() => formatAmount(lineAmount(r)))}</td>}
+                      <td />
+                    </tr>
+                  ))}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
@@ -548,77 +654,128 @@ function IconBtn({ label, icon, onClick, danger }: { label: string; icon: ReactN
   );
 }
 
-/** Add / edit one product line; product and packing masters fill HS code, packing text, bags and gross weight. */
-function LineEditor({ def, initial, isNew, onClose, onSave }: { def: DocDef; initial: Line; isNew: boolean; onClose: () => void; onSave: (l: Line, again: boolean) => void }) {
-  const [line, setLine] = useState<Line>(initial);
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [packing, setPacking] = useState<Values | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+/**
+ * Add / edit one product and its packing rows. One product can ship in several packings
+ * (e.g. 1000 MT in 30 kg bags + 500 MT in 20 kg bags); each packing keeps its own HS code,
+ * quantity, rate and amount, and is stored as its own row so reports can total by packing.
+ */
+function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows: Line[]; isNew: boolean; onClose: () => void; onSave: (rows: Line[], again: boolean) => void }) {
+  const showRate = def.lines.some((f) => f.name === 'ratePerMt');
+  const rateRequired = def.lines.find((f) => f.name === 'ratePerMt')?.required ?? false;
+  const base = rows[0] ?? blankLine(def);
+  const [shared, setShared] = useState<Values>(() => ({ productId: base.productId ?? null, brand: base.brand ?? null, cropYear: base.cropYear ?? null, specifications: base.specifications ?? null }));
+  const [productLabel, setProductLabel] = useState<string | null>(base._labels?.productId ?? null);
+  const [packs, setPacks] = useState<Line[]>(() => (rows.length ? rows.map((r) => ({ ...r, _labels: { ...r._labels } })) : [blankLine(def)]));
+  const [error, setError] = useState<string | null>(null);
 
+  const setPack = (i: number, patch: Partial<Line>, labels?: Record<string, string | null>) =>
+    setPacks((s) => s.map((p, j) => (j === i ? { ...p, ...patch, _labels: labels ? { ...p._labels, ...labels } : p._labels } : p)));
+
+  /** From the packing master (net wt per bag + empty-bag weight): bags = net ÷ bag net, gross = net + bags × tare. */
+  const bagCalc = (net: unknown, pkg: Values | undefined): Partial<Line> | null => {
+    const q = String(net ?? '');
+    if (!pkg || !isPositive(String(pkg.netWeightKg ?? '')) || !isDecimal(q) || !isPositive(q)) return null;
+    const bags = Math.round((Number(q) * 1000) / Number(pkg.netWeightKg));
+    const tareMt = mul(mul(String(bags), String(pkg.tareWeightKg ?? '0'), 6), '0.001', 3);
+    return { noOfBags: bags, grossWtMt: add([q, tareMt], 3) };
+  };
+
+  // Preload the packing master for rows that already have a packing, so auto-calc works on edit.
   useEffect(() => {
-    if (typeof initial.packingTypeId === 'string') api.get<Values>(`/masters/packingTypes/${initial.packingTypeId}`).then(setPacking, () => setPacking(null));
-  }, [initial.packingTypeId]);
+    packs.forEach((p, i) => {
+      if (p.packingTypeId && !(p as Values)._packing) {
+        api.get<Values>(`/masters/packingTypes/${p.packingTypeId}`).then(
+          (m) => setPacks((s) => s.map((r, j) => (j === i && !(r as Values)._packing ? { ...r, _packing: m } : r))),
+          () => {},
+        );
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const set = (name: string, v: unknown, l?: string | null) =>
-    setLine((s) => ({ ...s, [name]: v, _labels: l !== undefined ? { ...s._labels, [name]: l } : s._labels }));
-
-  const onChange = async (name: string, v: unknown, l?: string | null) => {
-    set(name, v, l);
-    setErrors((s) => ({ ...s, [name]: '' }));
+  const onProduct = async (v: string | null, l: string | null) => {
+    setShared((s) => ({ ...s, productId: v }));
+    setProductLabel(l);
+    if (!v) return;
     try {
-      if (name === 'productId' && v) {
-        const p = await api.get<Values>(`/masters/products/${v}`);
-        setLine((s) => ({ ...s, hsCode: s.hsCode || p.hsnCode || null, cropYear: s.cropYear || p.cropYear || null, brokenPct: s.brokenPct ?? p.brokenPct ?? null }));
-      }
-      if (name === 'packingTypeId' && v) {
-        const p = await api.get<Values>(`/masters/packingTypes/${v}`);
-        setPacking(p);
-        setLine((s) => ({ ...s, packingText: s.packingText || (p.description as string) || (p.name as string) }));
-      }
+      const p = await api.get<Values>(`/masters/products/${v}`);
+      setShared((s) => ({ ...s, cropYear: s.cropYear || p.cropYear || null }));
+      // fill empty HS codes on the packing rows from the product
+      setPacks((s) => s.map((row) => ({ ...row, hsCode: row.hsCode || (p.hsnCode as string) || null })));
     } catch (e) {
       showError(e);
     }
   };
 
-  /** Bags = net weight ÷ bag net weight; gross = net + bags × empty-bag weight. */
-  const calcBags = () => {
-    const net = String(packing?.netWeightKg ?? '');
-    const qty = String(line.quantityMt ?? '');
-    if (!isPositive(net) || !isDecimal(qty) || !isPositive(qty)) {
-      setNote('Choose a packing with a net weight and enter the net weight (MT) first.');
-      return;
+  const onPacking = async (i: number, v: string | null, l: string | null) => {
+    setPack(i, { packingTypeId: v }, { packingTypeId: l });
+    if (!v) return;
+    try {
+      const p = await api.get<Values>(`/masters/packingTypes/${v}`);
+      setPacks((s) =>
+        s.map((row, j) => {
+          if (j !== i) return row;
+          const updated = { ...row, packingText: (row.packingText as string) || (p.description as string) || (p.name as string), _packing: p };
+          const calc = bagCalc(row.quantityMt, p);
+          return calc ? { ...updated, ...calc } : updated;
+        }),
+      );
+    } catch (e) {
+      showError(e);
     }
+  };
+
+  /** Bags = net ÷ bag net; gross = net + bags × empty-bag weight (uses the packing master). */
+  const calc = async (i: number) => {
+    const row = packs[i];
+    const qty = String(row.quantityMt ?? '');
+    if (!isDecimal(qty) || !isPositive(qty)) return setError('Enter the net weight (MT) on that packing first.');
+    let p = (row as Values)._packing as Values | undefined;
+    if (!p && typeof row.packingTypeId === 'string') p = await api.get<Values>(`/masters/packingTypes/${row.packingTypeId}`).catch(() => undefined);
+    const net = String(p?.netWeightKg ?? '');
+    if (!isPositive(net)) return setError('Choose a packing that has a net weight per bag first.');
     const bags = Math.round((Number(qty) * 1000) / Number(net));
-    const tareMt = mul(mul(String(bags), String(packing?.tareWeightKg ?? '0'), 6), '0.001', 3);
-    setLine((s) => ({ ...s, noOfBags: bags, grossWtMt: add([qty, tareMt], 3) }));
-    setNote(`${bags} bags of ${net} kg; gross adds ${packing?.tareWeightKg ?? 0} kg per empty bag.`);
+    const tareMt = mul(mul(String(bags), String(p?.tareWeightKg ?? '0'), 6), '0.001', 3);
+    setPack(i, { noOfBags: bags, grossWtMt: add([qty, tareMt], 3) });
+    setError(null);
   };
 
   const submit = (again: boolean) => {
-    const e: Record<string, string> = {};
-    for (const f of def.lines) {
-      const v = line[f.name];
-      if (f.required && (v === null || v === undefined || v === '')) e[f.name] = `${f.label} is required`;
-      if ((f.type === 'decimal' || f.type === 'integer') && v !== null && v !== undefined && v !== '' && !isDecimal(String(v))) e[f.name] = `${f.label}: must be a number`;
-    }
-    if (!e.quantityMt && !isPositive(String(line.quantityMt ?? '0'))) e.quantityMt = 'Must be above 0';
-    setErrors(e);
-    if (Object.keys(e).length) {
-      document.getElementById(`f-${Object.keys(e)[0]}`)?.focus();
+    if (!shared.productId) {
+      setError('Pick a product.');
       return;
     }
-    onSave(line, again);
+    for (const [i, p] of packs.entries()) {
+      if (!isPositive(String(p.quantityMt ?? '0'))) return setError(`Packing ${i + 1}: enter a net weight above 0.`);
+      if (rateRequired && !isPositive(String(p.ratePerMt ?? '0'))) return setError(`Packing ${i + 1}: enter a rate.`);
+    }
+    const out: Line[] = packs.map((p) => {
+      const line = blankLine(def);
+      for (const f of def.lines) {
+        if (SHARED_LINE_FIELDS.includes(f.name)) line[f.name] = shared[f.name] ?? line[f.name];
+        else if (f.name !== 'packGroup' && p[f.name] !== undefined) line[f.name] = p[f.name];
+      }
+      line.sourceLineId = p.sourceLineId ?? null;
+      line._labels = { productId: productLabel, packingTypeId: (p._labels?.packingTypeId as string) ?? null };
+      return line;
+    });
+    onSave(out, again);
   };
+
+  const groupNet = safe(() => formatAmount(add(packs.map((p) => (isDecimal(String(p.quantityMt ?? '0')) ? String(p.quantityMt) : '0')), 3), 3));
+  const groupAmt = safe(() => formatAmount(add(packs.map((p) => safe(() => lineAmount(p))), 2)));
 
   return (
     <Modal
       open
-      title={isNew ? 'Add product line' : 'Edit product line'}
+      title={isNew ? 'Add product' : 'Edit product'}
       onClose={onClose}
-      width="max-w-3xl"
+      width="max-w-4xl"
       footer={
         <>
-          <span className="mr-auto text-[12px] tabular-nums text-slate-500">Amount {safe(() => formatAmount(lineAmount(line)))}</span>
+          <span className="mr-auto text-[12px] tabular-nums text-slate-500">
+            {packs.length} packing{packs.length === 1 ? '' : 's'} · {groupNet} MT{showRate ? ` · Amount ${groupAmt}` : ''}
+          </span>
           <Button onClick={onClose}>Cancel</Button>
           {isNew && <Button onClick={() => submit(true)}>Save & add another</Button>}
           <Button variant="primary" onClick={() => submit(false)} data-nav-end>
@@ -627,17 +784,112 @@ function LineEditor({ def, initial, isNew, onClose, onSave }: { def: DocDef; ini
         </>
       }
     >
-      <div data-form-root className="max-h-[60vh] overflow-y-auto pr-1">
-        <EntityForm def={asEntity(`${def.key}.line`, def.lines)} values={line} labels={line._labels} errors={errors} onChange={(n, v, l) => void onChange(n, v, l)} />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Button onClick={calcBags} title="From the packing master: bags and gross weight for this net weight">
-            Calculate bags & gross weight
-          </Button>
-          {note && <span className="text-[12px] text-slate-500">{note}</span>}
+      <div data-form-root className="max-h-[64vh] space-y-4 overflow-y-auto pr-1">
+        {error && <div className="rounded border border-red-200 bg-red-50 px-3 py-1.5 text-[12.5px] text-red-700">{error}</div>}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <div className="sm:col-span-2">
+            <FieldLabel>Variety *</FieldLabel>
+            <RefSelect entity="products" value={(shared.productId as string) ?? null} label={productLabel} allowCreate onChange={(v, l) => void onProduct(v, l)} />
+          </div>
+          <div>
+            <FieldLabel>Brand</FieldLabel>
+            <input className="field-input" value={(shared.brand as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, brand: e.target.value }))} placeholder="e.g. AL WALIMAH" />
+          </div>
+          <div>
+            <FieldLabel>Crop year</FieldLabel>
+            <input className="field-input" value={(shared.cropYear as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, cropYear: e.target.value }))} />
+          </div>
+          <div className="sm:col-span-4">
+            <FieldLabel>Description / specification</FieldLabel>
+            <textarea className="field-input resize-y" rows={2} value={(shared.specifications as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, specifications: e.target.value }))} />
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-[12px] font-semibold tracking-wide text-slate-500 uppercase">Packing rows</h3>
+            <Button icon={<Plus className="size-3.5" />} onClick={() => setPacks((s) => [...s, blankLine(def)])}>
+              Add packing
+            </Button>
+          </div>
+          {packs.map((p, i) => (
+            <div key={p._key} className="rounded-md border border-slate-200 bg-slate-50/50 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-[11.5px] font-medium text-slate-500">Packing {i + 1}</span>
+                {packs.length > 1 && <IconBtn label="Remove packing" onClick={() => setPacks((s) => s.filter((_, j) => j !== i))} icon={<Trash2 className="size-3.5" />} danger />}
+              </div>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="col-span-2">
+                  <FieldLabel>Packing type</FieldLabel>
+                  <RefSelect entity="packingTypes" value={(p.packingTypeId as string) ?? null} label={(p._labels?.packingTypeId as string) ?? null} allowCreate onChange={(v, l) => void onPacking(i, v, l)} />
+                  {(p as Values)._packing ? (
+                    <p className="mt-0.5 text-[11px] text-slate-400">
+                      Bag: {String((p._packing as Values).netWeightKg)} kg net · {Math.round(Number((p._packing as Values).tareWeightKg ?? 0) * 1000)} g empty · bags &amp; gross auto
+                    </p>
+                  ) : null}
+                </div>
+                <div className="col-span-2">
+                  <FieldLabel>Packing details (printed)</FieldLabel>
+                  <input className="field-input" value={(p.packingText as string) ?? ''} onChange={(e) => setPack(i, { packingText: e.target.value })} placeholder="e.g. 30 KG BOPP bags" />
+                </div>
+                <div className="col-span-2 sm:col-span-4">
+                  <FieldLabel>Extra printed note (optional)</FieldLabel>
+                  <input className="field-input" value={(p.packingNote as string) ?? ''} onChange={(e) => setPack(i, { packingNote: e.target.value })} placeholder="extra line printed under this packing" />
+                </div>
+                <div>
+                  <FieldLabel>HS code</FieldLabel>
+                  <input className="field-input" value={(p.hsCode as string) ?? ''} onChange={(e) => setPack(i, { hsCode: e.target.value })} />
+                </div>
+                <div>
+                  <FieldLabel>Bags</FieldLabel>
+                  <input className="field-input text-right tabular-nums" inputMode="numeric" value={String(p.noOfBags ?? '')} onChange={(e) => setPack(i, { noOfBags: e.target.value === '' ? 0 : Number(e.target.value) })} />
+                </div>
+                <div>
+                  <FieldLabel>Net weight (MT) *</FieldLabel>
+                  <input
+                    className="field-input text-right tabular-nums"
+                    inputMode="decimal"
+                    value={String(p.quantityMt ?? '')}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPacks((s) =>
+                        s.map((row, j) => {
+                          if (j !== i) return row;
+                          const updated = { ...row, quantityMt: val };
+                          const auto = bagCalc(val, (row as Values)._packing as Values | undefined);
+                          return auto ? { ...updated, ...auto } : updated;
+                        }),
+                      );
+                    }}
+                  />
+                </div>
+                <div>
+                  <FieldLabel>Gross weight (MT)</FieldLabel>
+                  <input className="field-input text-right tabular-nums" inputMode="decimal" value={String(p.grossWtMt ?? '')} onChange={(e) => setPack(i, { grossWtMt: e.target.value })} />
+                </div>
+                {showRate && (
+                  <div>
+                    <FieldLabel>Rate per MT{rateRequired ? ' *' : ''}</FieldLabel>
+                    <input className="field-input text-right tabular-nums" inputMode="decimal" value={String(p.ratePerMt ?? '')} onChange={(e) => setPack(i, { ratePerMt: e.target.value })} />
+                  </div>
+                )}
+                <div className="flex items-end justify-between gap-2 sm:col-span-3">
+                  <Button onClick={() => void calc(i)} title="Bags & gross weight from the packing master for this net weight">
+                    Calculate bags & gross
+                  </Button>
+                  {showRate && <span className="text-[12px] tabular-nums text-slate-500">Amount {safe(() => formatAmount(lineAmount(p)))}</span>}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     </Modal>
   );
+}
+
+function FieldLabel({ children }: { children: ReactNode }) {
+  return <label className="mb-1 block text-[12.5px] font-medium text-slate-600">{children}</label>;
 }
 
 // ---------------------------------------------------------------- terms
@@ -648,6 +900,21 @@ function TermsEditor({ def, terms, readOnly, update }: { def: DocDef; terms: Ter
     enabled: !readOnly,
   });
   const usable = (templates.data?.rows ?? []).filter((t) => t.docType === def.tcDocType || t.docType === 'General');
+  // distinct standard terms from every usable template, in order
+  const available: { templateId: string; content: string }[] = [];
+  const seen = new Set<string>();
+  for (const tpl of usable) {
+    for (const content of splitTerms(String(tpl.body))) {
+      const k = content.trim().toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        available.push({ templateId: tpl.id as string, content });
+      }
+    }
+  }
+  const has = (content: string) => terms.some((t) => t.content.trim().toLowerCase() === content.trim().toLowerCase());
+  const toggle = (templateId: string, content: string) =>
+    update((ts) => (has(content) ? ts.filter((t) => t.content.trim().toLowerCase() !== content.trim().toLowerCase()) : [...ts, { _key: key(), tcTemplateId: templateId, content }]));
   const edit = (i: number, content: string) => update((ts) => ts.map((t, j) => (j === i ? { ...t, content } : t)));
   const move = (i: number, d: number) =>
     update((ts) => {
@@ -658,43 +925,48 @@ function TermsEditor({ def, terms, readOnly, update }: { def: DocDef; terms: Ter
       return n;
     });
   return (
-    <div className="space-y-2">
-      {!terms.length && <div className="text-[13px] text-slate-500">No terms. Add them from a T&C template or type your own.</div>}
-      {terms.map((t, i) => (
-        <div key={t._key} className="flex items-start gap-2">
-          <span className="w-5 pt-1.5 text-right text-[12px] text-slate-400 tabular-nums">{i + 1}.</span>
-          <textarea className="field-input min-h-[34px] flex-1 resize-y" rows={1} value={t.content} disabled={readOnly} onChange={(e) => edit(i, e.target.value)} aria-label={`Term ${i + 1}`} />
-          {!readOnly && (
-            <span className="flex shrink-0">
-              <IconBtn label="Move up" onClick={() => move(i, -1)} icon={<ArrowUp className="size-3.5" />} />
-              <IconBtn label="Move down" onClick={() => move(i, 1)} icon={<ArrowDown className="size-3.5" />} />
-              <IconBtn label="Remove term" onClick={() => update((ts) => ts.filter((_, j) => j !== i))} icon={<Trash2 className="size-3.5" />} danger />
-            </span>
-          )}
-        </div>
-      ))}
-      {!readOnly && (
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <Button icon={<Plus className="size-3.5" />} onClick={() => update((ts) => [...ts, { _key: key(), tcTemplateId: null, content: '' }])}>
-            Add term
-          </Button>
-          <select
-            className="field-input w-auto"
-            value=""
-            onChange={(e) => {
-              const tpl = usable.find((x) => x.id === e.target.value);
-              if (tpl) update((ts) => [...ts, ...splitTerms(String(tpl.body)).map((content) => ({ _key: key(), tcTemplateId: tpl.id as string, content }))]);
-            }}
-            aria-label="Add terms from a template"
-          >
-            <option value="">{usable.length ? 'Add from T&C template…' : `No T&C templates for ${def.tcDocType} (Masters → T&C templates)`}</option>
-            {usable.map((t) => (
-              <option key={t.id as string} value={t.id as string}>
-                {String(t.name)}
-              </option>
+    <div className="space-y-3">
+      {!readOnly && available.length > 0 && (
+        <div className="rounded-md border border-slate-200 bg-slate-50/60 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11.5px] font-semibold tracking-wide text-slate-500 uppercase">Standard terms — tick to include</span>
+            <button type="button" className="text-[11.5px] text-brand-700 hover:underline" onClick={() => update((ts) => [...ts.filter((t) => !available.some((a) => a.content.trim().toLowerCase() === t.content.trim().toLowerCase())), ...available.map((a) => ({ _key: key(), tcTemplateId: a.templateId, content: a.content }))])}>
+              Select all
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {available.map((a) => (
+              <label key={a.content} className="flex cursor-pointer items-start gap-2 text-[13px]">
+                <input type="checkbox" className="mt-[3px] size-4 shrink-0 accent-brand-700" checked={has(a.content)} onChange={() => toggle(a.templateId, a.content)} />
+                <span className={has(a.content) ? 'text-slate-900' : 'text-slate-600'}>{a.content}</span>
+              </label>
             ))}
-          </select>
+          </div>
         </div>
+      )}
+      {terms.length > 0 && (
+        <div className="space-y-2">
+          <span className="text-[11.5px] font-semibold tracking-wide text-slate-500 uppercase">Included on this document ({terms.length}) — drag order, edit or remove</span>
+          {terms.map((t, i) => (
+            <div key={t._key} className="flex items-start gap-2">
+              <span className="w-5 pt-1.5 text-right text-[12px] text-slate-400 tabular-nums">{i + 1}.</span>
+              <textarea className="field-input min-h-[34px] flex-1 resize-y" rows={1} value={t.content} disabled={readOnly} onChange={(e) => edit(i, e.target.value)} aria-label={`Term ${i + 1}`} />
+              {!readOnly && (
+                <span className="flex shrink-0">
+                  <IconBtn label="Move up" onClick={() => move(i, -1)} icon={<ArrowUp className="size-3.5" />} />
+                  <IconBtn label="Move down" onClick={() => move(i, 1)} icon={<ArrowDown className="size-3.5" />} />
+                  <IconBtn label="Remove term" onClick={() => update((ts) => ts.filter((_, j) => j !== i))} icon={<Trash2 className="size-3.5" />} danger />
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {!terms.length && !available.length && <div className="text-[13px] text-slate-500">No terms yet. Add your own below, or create templates in Masters → T&C templates.</div>}
+      {!readOnly && (
+        <Button icon={<Plus className="size-3.5" />} onClick={() => update((ts) => [...ts, { _key: key(), tcTemplateId: null, content: '' }])}>
+          Add custom term
+        </Button>
       )}
     </div>
   );
