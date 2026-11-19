@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { EntityForm, type Values } from '../components/EntityForm';
+import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
 import { ConfirmDialog } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api, ApiError } from '../lib/api';
+import { useFormCache } from '../lib/formCache';
 import { showError, showProblem } from '../lib/notify';
 import { useHotkeys } from '../lib/hotkeys';
 import { useSession } from '../lib/session';
@@ -68,6 +70,20 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
   const readOnly = isNew ? !can(mod, 'create') : !can(mod, 'edit');
   const back = () => navigate(`/m/${def.key}`);
 
+  const cache = useFormCache({
+    storageKey: readOnly ? null : `master:${def.key}:${id}`,
+    snapshot: { values, labels },
+    apply: (s) => {
+      setValues(s.values);
+      setLabels(s.labels);
+      setDirty(true);
+    },
+    ready: loaded,
+    dirty,
+    enabled: !readOnly,
+    serverStamp: record.data?.updatedAt ? Date.parse(String(record.data.updatedAt)) : null,
+  });
+
   const save = async (then: 'list' | 'new' = 'list') => {
     if (readOnly || saving) return;
     setSaving(true);
@@ -84,6 +100,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
       if (def.key === 'companies') qc.invalidateQueries({ queryKey: ['session'] });
       toast.success(`${def.label} ${String(saved[def.displayField] ?? '')} saved`);
       setDirty(false);
+      cache.clear();
       if (then === 'new') {
         setLoaded(false); // effect re-applies defaults and focuses the first field
       } else back();
@@ -155,6 +172,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
                 Save as defaults
               </Button>
             )}
+            {!readOnly && <UndoRedo cache={cache} />}
             <Button onClick={() => (dirty ? setConfirmLeave(true) : back())} shortcut="esc">
               Cancel
             </Button>
@@ -169,6 +187,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
       <div className="flex-1 overflow-y-auto p-3 sm:p-5">
         <div className="mx-auto max-w-5xl space-y-3">
           {formError != null && <ErrorBox error={formError} />}
+          <DraftBanner cache={cache} />
           <EntityForm
             def={def}
             values={values}
@@ -189,7 +208,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
           />
           {!readOnly && (
             <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
-              <span className="max-sm:hidden">Enter = next field · Shift+Enter = previous · Ctrl+S = save{isNew ? ' · Ctrl+Shift+S = save & new' : ''}</span>
+              <span className="max-sm:hidden">Enter = next field · Ctrl+Z = undo · Ctrl+S = save{isNew ? ' · Ctrl+Shift+S = save & new' : ''}</span>
               {rec && <span>Last changed {new Date(rec.updatedAt as string).toLocaleString()} · v{rec.version}</span>}
             </div>
           )}

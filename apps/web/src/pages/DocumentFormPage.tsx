@@ -2,6 +2,7 @@ import {
   add,
   childDocs,
   computeTotals,
+  containerCount,
   CONTAINER_FIELDS,
   DOCS,
   formatAmount,
@@ -22,10 +23,12 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from '
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EntityForm, type Values } from '../components/EntityForm';
+import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
 import { RefSelect } from '../components/RefSelect';
 import { ConfirmDialog, Modal } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api, ApiError } from '../lib/api';
+import { useFormCache } from '../lib/formCache';
 import { useHotkeys } from '../lib/hotkeys';
 import { showError } from '../lib/notify';
 import { useSession } from '../lib/session';
@@ -79,6 +82,7 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
   const navigate = useNavigate();
   const qc = useQueryClient();
   const root = useRef<HTMLDivElement>(null);
+  const containersTouched = useRef(false); // true once the user types their own container count
 
   const [header, setHeader] = useState<Values>({});
   const [labels, setLabels] = useState<Labels>({});
@@ -110,6 +114,8 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
     setHeader(h);
     setLabels(labelsOf(def.header, record));
     setLines(withGroups(def, record.lines));
+    // A saved count that differs from the auto value was a manual override — keep it, don't recompute.
+    containersTouched.current = record.noOfContainers != null && String(record.noOfContainers) !== String(containerCount(record.lines));
     setTerms(record.terms.map((t) => ({ _key: key(), tcTemplateId: (t.tcTemplateId as string) ?? null, content: String(t.content) })));
     setContainers(record.containers.map((c) => ({ ...c, _key: key() })));
     setLoaded(true);
@@ -121,6 +127,23 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
   const canLock = !isNew && can(def.module, 'delete');
   const back = () => navigate(`/d/${def.key}`);
   const touch = () => setDirty(true);
+
+  const cache = useFormCache({
+    storageKey: readOnly ? null : `doc:${def.key}:${id}:${from}`,
+    snapshot: { header, labels, lines, terms, containers },
+    apply: (s) => {
+      setHeader(s.header);
+      setLabels(s.labels);
+      setLines(s.lines);
+      setTerms(s.terms);
+      setContainers(s.containers);
+      setDirty(true);
+    },
+    ready: loaded,
+    dirty,
+    enabled: !readOnly,
+    serverStamp: record?.updatedAt ? Date.parse(String(record.updatedAt)) : null,
+  });
 
   const toggleLock = async () => {
     try {
@@ -202,6 +225,7 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
 
   const onHeaderChange = (name: string, v: unknown, l?: string | null) => {
     setField(name, v, l);
+    if (name === 'noOfContainers') containersTouched.current = true;
     setErrors((s) => {
       if (!s[name]) return s;
       const n = { ...s };
@@ -227,6 +251,14 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
       return null;
     }
   }, [def, header, lines]);
+
+  // Keep the container count auto-filled from the products until the user types their own.
+  useEffect(() => {
+    if (readOnly || def.key !== 'commercialInvoices' || containersTouched.current) return;
+    const n = containerCount(lines);
+    if (n && String(header.noOfContainers ?? '') !== String(n)) setField('noOfContainers', n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, readOnly]);
 
   // ---------------------------------------------------------------- save
   const payload = () => {
@@ -255,6 +287,7 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
       qc.invalidateQueries({ queryKey: ['lookup', 'document'] });
       toast.success(`${def.label} ${saved.documentNumber} saved`);
       setDirty(false);
+      cache.clear();
       if (isNew) navigate(`/d/${def.key}/${saved.id}`, { replace: true });
       else {
         setLoaded(false);
@@ -359,6 +392,7 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
                 {locked ? 'Unlock' : 'Lock'}
               </Button>
             )}
+            {!readOnly && <UndoRedo cache={cache} />}
             {!isNew && can(def.module, 'delete') && !locked && (
               <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmDelete(true)}>
                 Delete
@@ -375,12 +409,13 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
       <div className="flex-1 overflow-y-auto p-3 sm:p-5">
         <div className="mx-auto max-w-6xl space-y-4">
           {formError != null && <ErrorBox error={formError} />}
+          <DraftBanner cache={cache} />
           {!isNew && record?.children && <ChildrenPanel def={def} id={id} items={record.children} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           <EntityForm def={asEntity(def.key, def.header)} values={header} labels={labels} errors={errors} readOnly={readOnly} onChange={onHeaderChange} />
           {rateNote && <div className="-mt-2 text-[12px] text-slate-500">{rateNote}</div>}
 
           <Section
-            title={`Products (${groupIds(lines).length})`}
+            title={`Products (${groupIds(lines).length})${def.key === 'commercialInvoices' && containerCount(lines) ? ` · ~${containerCount(lines)} container${containerCount(lines) === 1 ? '' : 's'}` : ''}`}
             action={
               !readOnly && (
                 <Button icon={<Plus className="size-3.5" />} onClick={() => setEditing({ group: null })} shortcut="alt+a">
@@ -421,7 +456,7 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
           <TotalsPanel def={def} totals={totals} currency={currency} words={!dirty ? record?.amountInWords : null} />
 
           <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
-            <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+S = save · Ctrl+P = print</span>
+            <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print</span>
             {record?.updatedAt && <span>Last changed {new Date(record.updatedAt).toLocaleString()} · v{record.version}</span>}
           </div>
         </div>
@@ -685,7 +720,14 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
     packs.forEach((p, i) => {
       if (p.packingTypeId && !(p as Values)._packing) {
         api.get<Values>(`/masters/packingTypes/${p.packingTypeId}`).then(
-          (m) => setPacks((s) => s.map((r, j) => (j === i && !(r as Values)._packing ? { ...r, _packing: m } : r))),
+          (m) =>
+            setPacks((s) =>
+              s.map((r, j) =>
+                j === i && !(r as Values)._packing
+                  ? { ...r, _packing: m, containerCapacityMt: (r.containerCapacityMt as string) ?? (m.containerCapacityMt as string) ?? null }
+                  : r,
+              ),
+            ),
           () => {},
         );
       }
@@ -715,7 +757,12 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
       setPacks((s) =>
         s.map((row, j) => {
           if (j !== i) return row;
-          const updated = { ...row, packingText: (row.packingText as string) || (p.description as string) || (p.name as string), _packing: p };
+          const updated = {
+            ...row,
+            packingText: (row.packingText as string) || (p.description as string) || (p.name as string),
+            containerCapacityMt: (p.containerCapacityMt as string) ?? (row.containerCapacityMt as string) ?? null,
+            _packing: p,
+          };
           const calc = bagCalc(row.quantityMt, p);
           return calc ? { ...updated, ...calc } : updated;
         }),

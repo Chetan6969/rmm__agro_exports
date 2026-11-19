@@ -82,7 +82,17 @@ export function RefSelect({
     staleTime: 30_000,
   });
   const options = search.data ?? [];
-  useEffect(() => setHi(0), [text, open]);
+  // "— same as X —" sits at the top of the list and is navigable with the arrows too (index 0).
+  const samePresent = !!(sameAs && sameAs.id !== value);
+  const offset = samePresent ? 1 : 0;
+  const navLen = offset + options.length;
+  useEffect(() => setHi(samePresent && !text ? 0 : offset), [text, open, samePresent, offset]);
+
+  const pick = (idx: number) => {
+    if (samePresent && idx === 0) return choose({ id: sameAs!.id, label: sameAs!.idLabel ?? sameAs!.label }, true);
+    const o = options[idx - offset];
+    if (o) choose(o, true);
+  };
 
   const choose = (o: Option | null, commit = false) => {
     onChange(o?.id ?? null, o?.label ?? null);
@@ -104,7 +114,7 @@ export function RefSelect({
           aria-controls={listId}
           aria-autocomplete="list"
           aria-invalid={invalid || undefined}
-          aria-activedescendant={open && options[hi] ? `${listId}-${hi}` : undefined}
+          aria-activedescendant={open && hi < navLen ? `${listId}-${hi}` : undefined}
           data-combobox-open={open ? '1' : undefined}
           disabled={disabled}
           className="field-input pr-12"
@@ -136,21 +146,22 @@ export function RefSelect({
             }
             if (e.key === 'ArrowDown') {
               e.preventDefault();
-              setHi((h) => Math.min(h + 1, options.length - 1));
+              setHi((h) => Math.min(h + 1, navLen - 1));
             } else if (e.key === 'ArrowUp') {
               e.preventDefault();
               setHi((h) => Math.max(h - 1, 0));
             } else if (e.key === 'Enter') {
               e.preventDefault();
               e.stopPropagation();
-              if (options[hi]) choose(options[hi], true);
+              pick(hi);
             } else if (e.key === 'Escape') {
               e.preventDefault();
               e.stopPropagation();
               setOpen(false);
               setText('');
-            } else if (e.key === 'Tab' && options[hi] && text) {
-              choose(options[hi]);
+            } else if (e.key === 'Tab' && text) {
+              const o = options[hi - offset];
+              if (o) choose(o);
             }
           }}
         />
@@ -178,15 +189,17 @@ export function RefSelect({
       </div>
       {open && (
         <ul id={listId} role="listbox" className="absolute z-30 mt-1 max-h-64 w-full min-w-56 overflow-auto rounded border border-slate-200 bg-white py-1 shadow-lg">
-          {sameAs && sameAs.id !== value && (
+          {samePresent && (
             <li
+              id={`${listId}-0`}
               role="option"
-              aria-selected={false}
+              aria-selected={hi === 0}
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => choose({ id: sameAs.id, label: sameAs.idLabel ?? sameAs.label }, true)}
-              className="cursor-pointer px-3 py-1.5 font-medium text-brand-700 italic hover:bg-brand-50"
+              onMouseEnter={() => setHi(0)}
+              onClick={() => choose({ id: sameAs!.id, label: sameAs!.idLabel ?? sameAs!.label }, true)}
+              className={`cursor-pointer px-3 py-1.5 font-medium text-brand-700 italic ${hi === 0 ? 'bg-brand-50' : 'hover:bg-brand-50'}`}
             >
-              — same as {sameAs.label.toLowerCase()} —
+              — same as {sameAs!.label.toLowerCase()} —
             </li>
           )}
           {search.isLoading && <li className="px-3 py-1.5 text-slate-400">Searching…</li>}
@@ -195,13 +208,13 @@ export function RefSelect({
           {options.map((o, i) => (
             <li
               key={o.id}
-              id={`${listId}-${i}`}
+              id={`${listId}-${i + offset}`}
               role="option"
-              aria-selected={i === hi}
+              aria-selected={i + offset === hi}
               onMouseDown={(e) => e.preventDefault()}
-              onMouseEnter={() => setHi(i)}
+              onMouseEnter={() => setHi(i + offset)}
               onClick={() => choose(o, true)}
-              className={`flex cursor-pointer justify-between gap-3 px-3 py-1.5 ${i === hi ? 'bg-brand-50 text-brand-900' : ''} ${o.id === value ? 'font-medium' : ''}`}
+              className={`flex cursor-pointer justify-between gap-3 px-3 py-1.5 ${i + offset === hi ? 'bg-brand-50 text-brand-900' : ''} ${o.id === value ? 'font-medium' : ''}`}
             >
               <span className="truncate">{o.label}</span>
               {o.sub && <span className="shrink-0 font-mono text-[11.5px] text-slate-400">{o.sub}</span>}

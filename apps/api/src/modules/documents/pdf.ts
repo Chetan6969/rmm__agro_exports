@@ -7,7 +7,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { add, CONTAINER_FIELDS, formatAmount, round, type DocDef } from '@rmm/shared';
+import { add, containerCount, CONTAINER_FIELDS, formatAmount, round, type DocDef } from '@rmm/shared';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import PDFDocument from 'pdfkit';
 import { config } from '../../config.js';
@@ -358,9 +358,13 @@ function saidToContain(doc: Row & { containers?: Row[] }): string {
   const override = str(doc.saidToContain).trim();
   if (override) return override.toUpperCase();
   const containers = (doc.containers as Row[]) ?? [];
-  const count = containers.length;
+  // Use the editable "No. of containers" box if filled; otherwise the count worked out from
+  // each packing's weight and its per-container capacity; otherwise the packing-list count.
+  const manual = Number(doc.noOfContainers);
+  const count = (manual > 0 ? manual : containerCount((doc.lines as Row[]) ?? [])) || containers.length;
   const typeLabel = str(doc.containerTypeIdLabel).trim();
   if (typeLabel) return `${count ? `${count} X ` : ''}${typeLabel} SAID TO CONTAIN`.toUpperCase();
+  if (count && !containers.length) return `${count} X 20' FCL SAID TO CONTAIN`;
   if (!count) return '';
   const counts = new Map<string, number>();
   for (const c of containers) {
@@ -380,16 +384,19 @@ function goodsTable(w: Writer, data: PrintData, descriptions: Map<string, string
   const { pdf } = w;
   const cur = data.currency.code;
   const showBags = opts.showBags !== false;
-  const col = { sno: LEFT, desc: LEFT + 22, hs: 300, bags: 346, qty: 386, rate: 438, amt: 494 };
-  const descW = col.hs - col.desc - 6;
+  // Evenly pitched columns (62 pt apart) with the HS-code column removed; the number columns
+  // are right-aligned and spread across the right half instead of bunched together.
+  const col = { sno: LEFT, desc: LEFT + 22, bags: 311, qty: 373, rate: 435, amt: 497 };
+  const NW = 58; // right-aligned number width
+  const descW = col.bags - col.desc - 8;
+  const packW = col.bags - (col.desc + 8) - 8;
   const head = () => {
     pdf.font('Helvetica-Bold').fontSize(7.8).fillColor(GRAY);
     pdf.text('S.No', col.sno, w.y, { width: 20 });
     pdf.text('Description of goods', col.desc, w.y, { width: descW });
-    pdf.text('HS code', col.hs, w.y, { width: 42 });
-    if (showBags) pdf.text('Bags', col.bags, w.y, { width: 38, align: 'right' });
-    pdf.text(opts.qtyLabel, col.qty, w.y, { width: 48, align: 'right' });
-    pdf.text(`Rate ${cur}/MT`, col.rate, w.y, { width: 52, align: 'right' });
+    if (showBags) pdf.text('Bags', col.bags, w.y, { width: NW, align: 'right' });
+    pdf.text(opts.qtyLabel, col.qty, w.y, { width: NW, align: 'right' });
+    pdf.text(`Rate ${cur}/MT`, col.rate, w.y, { width: NW, align: 'right' });
     pdf.text(`Amount ${cur}`, col.amt, w.y, { width: RIGHT - col.amt, align: 'right' });
     w.y = pdf.y + 3;
     w.rule('#6f7f93', 0.7);
@@ -397,69 +404,57 @@ function goodsTable(w: Writer, data: PrintData, descriptions: Map<string, string
   };
   const figures = (l: Row, amt: unknown, top: number) => {
     pdf.font('Helvetica').fontSize(8.3).fillColor(DARK);
-    pdf.text(dash(l.hsCode), col.hs, top, { width: 42 });
-    if (showBags) pdf.text(Number(l.noOfBags) > 0 ? String(l.noOfBags) : '-', col.bags, top, { width: 38, align: 'right' });
-    pdf.text(round(str(l.quantityMt), 3), col.qty, top, { width: 48, align: 'right' });
-    pdf.text(formatAmount(str(l.ratePerMt)), col.rate, top, { width: 52, align: 'right' });
+    if (showBags) pdf.text(Number(l.noOfBags) > 0 ? String(l.noOfBags) : '-', col.bags, top, { width: NW, align: 'right' });
+    pdf.text(round(str(l.quantityMt), 3), col.qty, top, { width: NW, align: 'right' });
+    pdf.text(formatAmount(str(l.ratePerMt)), col.rate, top, { width: NW, align: 'right' });
     pdf.text(formatAmount(str(amt)), col.amt, top, { width: RIGHT - col.amt, align: 'right' });
   };
   const packLabel = (l: Row) => [l.packingText ? `Packing: ${str(l.packingText)}` : l.packingTypeIdLabel ? `Packing: ${str(l.packingTypeIdLabel)}` : '', str(l.packingNote)].filter(Boolean).join('\n');
+
+  // Product heading: name (bold) → brand (bold) → master description / spec / crop year.
+  // The product itself carries no serial number; each packing under it is numbered instead.
+  // (HS code is printed once, just above the total net weight — not inside the table.)
+  const describe = (main: Row, x: number, width: number): number => {
+    pdf.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(str(main.productIdLabel), x, pdf.y, { width });
+    if (str(main.brand).trim()) pdf.font('Helvetica-Bold').fontSize(7.8).fillColor(DARK).text(`Brand: ${str(main.brand).trim()}`, x, pdf.y, { width });
+    const rest = [descriptions.get(str(main.productId)), str(main.specifications), main.cropYear ? `Crop year: ${main.cropYear}` : ''].filter(Boolean).join('\n');
+    if (rest) pdf.font('Helvetica').fontSize(7.5).fillColor(GRAY).text(rest, x, pdf.y, { width });
+    return pdf.y;
+  };
+  const headingHeight = (main: Row, width: number): number => {
+    let h = pdf.font('Helvetica-Bold').fontSize(8.5).heightOfString(str(main.productIdLabel), { width });
+    if (str(main.brand).trim()) h += pdf.font('Helvetica-Bold').fontSize(7.8).heightOfString(`Brand: ${str(main.brand).trim()}`, { width });
+    const rest = [descriptions.get(str(main.productId)), str(main.specifications), main.cropYear ? `Crop year: ${main.cropYear}` : ''].filter(Boolean).join('\n');
+    if (rest) h += pdf.font('Helvetica').fontSize(7.5).heightOfString(rest, { width });
+    return h;
+  };
+
   w.ensure(60);
   head();
-  for (const [i, group] of groupLines(data.doc.lines).entries()) {
+  for (const group of groupLines(data.doc.lines)) {
     const main = group[0];
-    const multi = group.length > 1;
-    const productExtra = [
-      main.brand ? `Brand: ${str(main.brand)}` : '',
-      descriptions.get(str(main.productId)),
-      str(main.specifications),
-      main.cropYear ? `Crop year: ${main.cropYear}` : '',
-    ]
-      .filter(Boolean)
-      .join('\n');
-
-    if (!multi) {
-      const extra = [productExtra, packLabel(main)].filter(Boolean).join('\n');
-      const h = pdf.font('Helvetica-Bold').fontSize(8.5).heightOfString(str(main.productIdLabel), { width: descW }) + (extra ? pdf.font('Helvetica').fontSize(7.5).heightOfString(extra, { width: descW }) : 0) + 6;
-      if (w.y + h > BOTTOM) {
-        pdf.addPage();
-        w.header(true);
-        head();
-      }
-      const top = w.y;
-      pdf.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(String(i + 1), col.sno, top, { width: 20 });
-      pdf.text(str(main.productIdLabel), col.desc, top, { width: descW });
-      if (extra) pdf.font('Helvetica').fontSize(7.5).fillColor(GRAY).text(extra, col.desc, pdf.y, { width: descW });
-      const bottom = pdf.y;
-      figures(main, main.amount, top);
-      w.y = Math.max(bottom, top + 12) + 5;
-      continue;
-    }
-
-    // product heading, then one line per packing
-    if (w.y + 30 > BOTTOM) {
+    if (w.y + headingHeight(main, descW) + group.length * 14 + 12 > BOTTOM) {
       pdf.addPage();
       w.header(true);
       head();
     }
-    const top = w.y;
-    pdf.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(String(i + 1), col.sno, top, { width: 20 });
-    pdf.text(str(main.productIdLabel), col.desc, top, { width: descW });
-    if (productExtra) pdf.font('Helvetica').fontSize(7.5).fillColor(GRAY).text(productExtra, col.desc, pdf.y, { width: descW });
-    w.y = pdf.y + 2;
-    for (const l of group) {
+    pdf.y = w.y;
+    w.y = describe(main, col.desc, descW) + 3;
+    // one numbered row per packing (bags / net weight / rate / amount)
+    for (const [j, l] of group.entries()) {
       if (w.y + 16 > BOTTOM) {
         pdf.addPage();
         w.header(true);
         head();
       }
       const ry = w.y;
-      pdf.font('Helvetica').fontSize(8).fillColor(DARK).text(`– ${packLabel(l) || 'Packing'}`, col.desc + 8, ry, { width: col.hs - (col.desc + 8) - 6 });
+      pdf.font('Helvetica-Bold').fontSize(8).fillColor(DARK).text(String(j + 1), col.sno, ry, { width: 20 });
+      pdf.font('Helvetica').fontSize(8).fillColor(DARK).text(packLabel(l) || 'Packing', col.desc + 8, ry, { width: packW });
       const bottom = pdf.y;
       figures(l, l.amount, ry);
       w.y = Math.max(bottom, ry + 12) + 3;
     }
-    w.y += 3;
+    w.y += 4;
   }
   w.rule('#6f7f93', 0.7);
   w.y += 6;
@@ -734,10 +729,14 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
       w.y = Math.max(l, r) + 8;
       goodsTable(w, data, descriptions, { qtyLabel: 'Net (MT)', showBags: true });
       const leftTop = w.y;
+      const hsCodes = [...new Set((d.lines as Row[]).map((l) => str(l.hsCode).trim()).filter(Boolean))];
+      if (hsCodes.length) {
+        pdf.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(`HS code: ${hsCodes.join(', ')}`, LEFT, w.y, { width: 280 });
+        w.y = pdf.y + 2;
+      }
       pdf.font('Helvetica-Bold').fontSize(8.5).fillColor(DARK).text(`Total net weight: ${round(str(d.totalQuantityMt), 3)} MT`, LEFT, w.y, { width: 280 });
       if (Number(d.totalGrossWtMt)) pdf.text(`Total gross weight: ${round(str(d.totalGrossWtMt), 3)} MT`, LEFT, pdf.y + 2, { width: 280 });
       pdf.text(`Total bags: ${d.totalBags ?? 0}`, LEFT, pdf.y + 2, { width: 280 });
-      pdf.font('Helvetica').fontSize(8).text('IGST: Nil (export under LUT)', LEFT, pdf.y + 2, { width: 280 });
       const leftBottom = pdf.y;
       w.y = leftTop;
       const incoterm = str(d.incoterm);

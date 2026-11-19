@@ -130,6 +130,9 @@ const productLine = (rateRequired: boolean): FieldDef[] => [
   { name: 'hsCode', label: 'HS code', type: 'text', maxLength: 16 },
   { name: 'cropYear', label: 'Crop year', type: 'text', maxLength: 16 },
   { name: 'noOfBags', label: 'No. of bags', type: 'integer', default: 0, list: true },
+  // MT one 20ft container holds in this packing (copied from the packing master); drives the
+  // auto-calculated "<n> X 20' FCL SAID TO CONTAIN" line. Kept per line so reports stay exact.
+  { name: 'containerCapacityMt', label: 'Container load (MT / 20ft)', type: 'decimal', precision: 12, scale: 3, hidden: true },
   { name: 'quantityMt', label: 'Net weight (MT)', type: 'decimal', precision: 12, scale: 3, required: true, list: true },
   { name: 'grossWtMt', label: 'Gross weight (MT)', type: 'decimal', precision: 12, scale: 3 },
   { name: 'ratePerMt', label: 'Rate per MT', type: 'decimal', precision: 15, scale: 2, required: rateRequired, list: true },
@@ -281,7 +284,8 @@ export const DOC_LIST: DocDef[] = [
       ...shippingRoute.map((f) => (f.name === 'finalDestination' ? { ...f, hidden: true } : f)),
       { name: 'preCarriageBy', label: 'Pre-carriage by', type: 'text', maxLength: 128 },
       { name: 'containerTypeId', label: 'Container type (said to contain)', type: 'ref', ref: 'containerTypes', allowCreate: true, help: 'Printed as "<no. of containers> X <type> SAID TO CONTAIN"' },
-      { name: 'saidToContain', label: 'Said to contain (override)', type: 'text', maxLength: 128, span: 2, help: 'Leave blank to build it from the container type and the container list' },
+      { name: 'noOfContainers', label: 'No. of containers', type: 'integer', help: "Auto-filled from each packing's container load and net weight — change it if the count should differ" },
+      { name: 'saidToContain', label: 'Said to contain (override)', type: 'text', maxLength: 128, span: 2, help: 'Leave blank to build it from the container type and the number of containers' },
       {
         name: 'includeVessel',
         label: 'Include vessel & shipping bill',
@@ -356,6 +360,25 @@ export const CONTAINER_FIELDS: FieldDef[] = [
 ];
 
 export const statusLabel = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ');
+
+/**
+ * Number of 20ft containers for the "SAID TO CONTAIN" line, from each packing's net weight
+ * and its per-container capacity (set on the packing master). Sums fractional containers across
+ * packings and rounds up. Returns 0 when no line has a capacity (then the count is unknown).
+ */
+export function containerCount(lines: Record<string, unknown>[]): number {
+  let sum = 0;
+  let any = false;
+  for (const l of lines) {
+    const cap = Number(l.containerCapacityMt);
+    const qty = Number(l.quantityMt);
+    if (cap > 0 && qty > 0) {
+      sum += qty / cap;
+      any = true;
+    }
+  }
+  return any ? Math.ceil(sum - 1e-6) : 0;
+}
 
 // ------------------------------------------------------------------ totals
 type Values = Record<string, unknown>;
