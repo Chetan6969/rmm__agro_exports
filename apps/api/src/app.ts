@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
 import multipart from '@fastify/multipart';
@@ -91,10 +92,25 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
 
   // Production: serve the built web app from the same port (one process on the LAN server).
   if (existsSync(config.webDist)) {
-    await app.register(fastifyStatic, { root: config.webDist, wildcard: false, maxAge: '1h' });
+    // The content-hashed files under /assets never change for a given name, so they
+    // can be cached hard. index.html is NOT served from here (index: false) — it is
+    // sent below with no-cache so a freshly built app is always picked up at once.
+    await app.register(fastifyStatic, { root: config.webDist, wildcard: false, index: false, maxAge: '365d', immutable: true });
+
+    // Read the shell once; a new build restarts the server, which re-reads it.
+    const indexHtml = readFileSync(join(config.webDist, 'index.html'), 'utf8');
+
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === 'GET' && !req.url.startsWith('/api/')) return reply.header('cache-control', 'no-cache').sendFile('index.html');
-      return reply.status(404).send({ error: 'not_found', message: 'Not found' });
+      const url = req.url.split('?')[0];
+      // A real 404 for API routes, non-GET requests, and — crucially — any missing
+      // FILE (a path that has an extension). Returning the HTML shell for a .css/.js
+      // URL hands the browser text/html, which it refuses to apply as a stylesheet or
+      // module, breaking styling and scripts across the whole app. Only extension-less
+      // navigation routes (e.g. /d/commercialInvoices/new) get the shell.
+      if (req.method !== 'GET' || url.startsWith('/api/') || /\.[a-z0-9]+$/i.test(url)) {
+        return reply.status(404).send({ error: 'not_found', message: 'Not found' });
+      }
+      return reply.header('cache-control', 'no-cache').type('text/html').send(indexHtml);
     });
   }
 

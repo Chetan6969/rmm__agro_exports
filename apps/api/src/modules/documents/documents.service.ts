@@ -37,7 +37,7 @@ import type { Tx } from '../../db/client.js';
 import { docTables, masterTables, type DocTables } from '../../db/schema/index.js';
 import { audit } from '../../core/audit.js';
 import { can, requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
-import { badRequest, conflict, notFound } from '../../core/errors.js';
+import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
 import { allocateNumber } from '../numbering.js';
 
 type Row = Record<string, unknown>;
@@ -53,6 +53,11 @@ const allow = (ctx: RequestContext, def: DocDef, action: Action) => {
   requireCompany(ctx);
   requirePerm(ctx, def.module, action);
 };
+
+/** Locking / unlocking is an administrator action (super admin, or delete rights on the document). */
+const canLock = (ctx: RequestContext, def: DocDef) => ctx.isSuperAdmin || can(ctx, def.module, 'delete');
+const lockedError = (def: DocDef) =>
+  conflict(`This ${def.label.toLowerCase()} is locked`, { hint: 'An administrator must unlock it before it can be edited or deleted.', fields: { locked: 'Locked' } });
 
 const asEntity = (key: string, fields: FieldDef[]) => ({ key, fields }) as unknown as EntityDef;
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
@@ -306,6 +311,7 @@ export async function updateDocument(tx: Tx, ctx: RequestContext, key: string, i
   allow(ctx, def, 'edit');
   const companyId = requireCompany(ctx);
   const before = await loadHeader(tx, def, id, true);
+  if (before.locked) throw lockedError(def);
   const version = (body as Row | null)?.version;
   if (typeof version !== 'number') throw badRequest('The record version is missing', 'Reload the page and make your change again.');
   if (version !== before.version) throw conflict(`This ${def.label.toLowerCase()} was changed by another user while you were editing`);
@@ -331,6 +337,7 @@ export async function deleteDocument(tx: Tx, ctx: RequestContext, key: string, i
     throw badRequest('A reason is required to delete', { hint: 'Type why this document is being deleted; it is kept in the audit log.', fields: { reason: 'Required' } });
   }
   const before = await loadHeader(tx, def, id, true);
+  if (before.locked) throw lockedError(def);
   for (const child of childDocs(def.key)) {
     const h = docTables[child.key].header;
     const kids = await tx
@@ -347,6 +354,24 @@ export async function deleteDocument(tx: Tx, ctx: RequestContext, key: string, i
   await tx.update(t.header).set({ deletedAt: new Date(), deletedBy: ctx.userId, deleteReason: reason.trim() }).where(eq(t.header.id, id));
   await audit(tx, ctx, { entity: def.key, recordId: id, action: 'delete', meta: { reason: reason.trim(), documentNumber: before.documentNumber } });
   return { ok: true };
+}
+
+/** Admin lock / unlock: a locked document rejects every edit and delete until it is unlocked. */
+export async function setDocumentLock(tx: Tx, ctx: RequestContext, key: string, id: string, locked: boolean) {
+  const { def, t } = resolveDoc(key);
+  requireCompany(ctx);
+  requirePerm(ctx, def.module, 'edit');
+  if (!canLock(ctx, def)) {
+    throw forbidden(`Only an administrator can ${locked ? 'lock' : 'unlock'} a ${def.label.toLowerCase()}`, 'This needs delete rights on the document. Ask an administrator.');
+  }
+  const before = await loadHeader(tx, def, id, true);
+  const [row] = (await tx
+    .update(t.header)
+    .set({ locked, lockedAt: locked ? new Date() : null, lockedBy: locked ? ctx.userId : null, updatedAt: new Date(), updatedBy: ctx.userId, version: sql`${t.header.version} + 1` })
+    .where(eq(t.header.id, id))
+    .returning()) as Row[];
+  await audit(tx, ctx, { entity: def.key, recordId: id, action: 'update', before, after: row, meta: { locked } });
+  return getDocument(tx, ctx, key, id, 'view');
 }
 
 async function loadHeader(tx: Tx, def: DocDef, id: string, lock = false): Promise<Row> {

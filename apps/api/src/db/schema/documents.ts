@@ -6,11 +6,13 @@
 import { DOC_LIST, type DocDef, type DocKey } from '@rmm/shared';
 import { sql } from 'drizzle-orm';
 import {
+  boolean,
   index,
   integer,
   numeric,
   pgTable,
   text,
+  timestamp,
   uniqueIndex,
   uuid,
   type AnyPgColumn,
@@ -45,6 +47,10 @@ function headerTable(def: DocDef): AnyTable {
     if (!cols[t.name]) cols[t.name] = numeric(snake(t.name), { precision: 18, scale: t.scale }).notNull().default('0');
   }
   cols.amountInWords = text('amount_in_words');
+  // Admin lock: a locked document cannot be edited or deleted until it is unlocked.
+  cols.locked = boolean('locked').notNull().default(false);
+  cols.lockedAt = timestamp('locked_at', { withTimezone: true });
+  cols.lockedBy = uuid('locked_by');
   Object.assign(cols, recordColumns());
   return pgTable(def.table, cols, (t) => [
     uniqueIndex(`${def.table}_number_uq`).on(t.companyId, t.documentNumber).where(sql`deleted_at is null`),

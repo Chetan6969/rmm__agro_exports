@@ -106,6 +106,8 @@ export const SHORTCUTS: { section: string; items: [string, string][] }[] = [
       ['shift+enter', 'Previous field'],
       ['mod+s', 'Save'],
       ['mod+enter', 'Save (works inside text boxes too)'],
+      ['mod+z', 'Undo the last change (also recovers a deleted line or term)'],
+      ['mod+shift+z / mod+y', 'Redo'],
       ['esc', 'Close / back'],
       ['alt+d', 'Save current values as defaults for new records'],
       ['f2', 'Open the dropdown of the focused lookup field'],
