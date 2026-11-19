@@ -758,7 +758,6 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
           ].filter(Boolean)
         : [];
       pdf.font('Helvetica').fontSize(8).fillColor(DARK).text(refs.join('\n'), LEFT, refTop, { width: 260 });
-      pdf.font('Helvetica').fontSize(7).fillColor(GRAY).text('We declare that this invoice shows the actual price of the goods described and that all particulars are true and correct.', LEFT, pdf.y + 6, { width: 260, lineGap: 1 });
       const leftEnd = pdf.y;
       w.y = d.showSignature ? Math.max(w.signature(MIDX, RW, refTop), leftEnd) + 8 : leftEnd + 8;
       w.terms(d.terms);
