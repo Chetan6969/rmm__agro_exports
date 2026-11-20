@@ -43,6 +43,25 @@ export interface FieldDef {
   search?: boolean;
   /** Form section heading. */
   section?: string;
+  /**
+   * Presentational only (the column still exists in the database): the field is
+   * never shown on the form, in the CSV export or on the PDF. Used to retire a
+   * field without dropping its column (and the data it holds).
+   */
+  hidden?: boolean;
+  /**
+   * A boolean "switch" field: the names of other fields it shows/hides. When the
+   * switch is off those fields are hidden on the form and left off the PDF, and
+   * the whole thing is stored on the document so the choice is remembered.
+   */
+  controls?: string[];
+  /**
+   * On a reference field: offer a "Same as <field>" shortcut that copies another
+   * reference field's value (e.g. consignee / notify party "same as buyer").
+   */
+  sameAs?: string;
+  /** On a reference field: allow creating a new master record from the picker. */
+  allowCreate?: boolean;
   /** Grid columns the input spans in the form (1–3). */
   span?: 1 | 2 | 3;
   /** Default value for new records when the company has not configured one. */
@@ -284,6 +303,15 @@ export const ENTITY_LIST = [
       { name: 'material', label: 'Material', type: 'select', options: ['PP', 'BOPP', 'Jute', 'Non-woven', 'Cotton', 'Laminated', 'Other'], list: true },
       { name: 'netWeightKg', label: 'Net weight (kg)', type: 'decimal', precision: 10, scale: 3, required: true, list: true },
       { name: 'tareWeightKg', label: 'Tare / empty bag (kg)', type: 'decimal', precision: 10, scale: 3, default: 0 },
+      {
+        name: 'containerCapacityMt',
+        label: 'Container load (MT / 20ft)',
+        type: 'decimal',
+        precision: 10,
+        scale: 3,
+        list: true,
+        help: 'How many MT one 20ft container holds in this packing — used to auto-calculate the number of containers on the invoice',
+      },
       { name: 'description', label: 'Description on documents', type: 'textarea', span: 3 },
       active,
     ],
@@ -353,6 +381,22 @@ export const ENTITY_LIST = [
       { name: 'email', label: 'Email', type: 'email' },
       { name: 'website', label: 'Website / tracking URL', type: 'text', span: 2 },
       { name: 'address', label: 'Address', type: 'textarea', span: 3 },
+      active,
+    ],
+  },
+
+  {
+    key: 'containerTypes',
+    table: 'container_types',
+    label: 'Container type',
+    plural: 'Container types',
+    menu: 'Logistics',
+    scope: 'company',
+    shareable: true,
+    displayField: 'name',
+    fields: [
+      { name: 'code', label: 'Code', type: 'text', unique: true, upper: true, list: true, search: true },
+      { name: 'name', label: 'Name', type: 'text', required: true, list: true, search: true, span: 2, help: "e.g. 20' FCL, 40' HC" },
       active,
     ],
   },

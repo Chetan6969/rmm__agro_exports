@@ -110,6 +110,7 @@ export const units = masterTables.units;
 export const countries = masterTables.countries;
 export const ports = masterTables.ports;
 export const shippingLines = masterTables.shippingLines;
+export const containerTypes = masterTables.containerTypes;
 export const currencies = masterTables.currencies;
 export const paymentTerms = masterTables.paymentTerms;
 export const tcTemplates = masterTables.tcTemplates;

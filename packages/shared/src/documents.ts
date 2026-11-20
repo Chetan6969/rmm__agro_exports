@@ -46,16 +46,16 @@ export interface DocDef {
 export const CANCELLED = 'CANCELLED';
 
 // ------------------------------------------------------------------ shared field blocks
-const docNumber: FieldDef = {
+const docNumber = (label: string): FieldDef => ({
   name: 'documentNumber',
-  label: 'Number',
+  label,
   type: 'text',
   maxLength: 64,
   list: true,
   search: true,
   section: 'Document',
   help: 'Leave blank to take the next number from Document numbering',
-};
+});
 const docDate: FieldDef = { name: 'documentDate', label: 'Date', type: 'date', required: true, list: true };
 const status = (options: readonly string[], dflt: string): FieldDef => ({
   name: 'status',
@@ -68,9 +68,9 @@ const status = (options: readonly string[], dflt: string): FieldDef => ({
 });
 
 const parties = (buyerRequired: boolean): FieldDef[] => [
-  { name: 'buyerId', label: 'Buyer', type: 'ref', ref: 'customers', required: buyerRequired, list: true, section: 'Parties', span: 2 },
-  { name: 'consigneeId', label: 'Consignee (if not the buyer)', type: 'ref', ref: 'customers', span: 1 },
-  { name: 'notifyPartyId', label: 'Notify party', type: 'ref', ref: 'customers' },
+  { name: 'buyerId', label: 'Buyer', type: 'ref', ref: 'customers', required: buyerRequired, list: true, section: 'Parties', span: 2, allowCreate: true },
+  { name: 'consigneeId', label: 'Consignee (if not the buyer)', type: 'ref', ref: 'customers', span: 1, allowCreate: true, sameAs: 'buyerId' },
+  { name: 'notifyPartyId', label: 'Notify party', type: 'ref', ref: 'customers', allowCreate: true, sameAs: 'buyerId' },
 ];
 
 const buyerRefs: FieldDef[] = [
@@ -119,12 +119,20 @@ const gst: FieldDef[] = [
 ];
 
 const productLine = (rateRequired: boolean): FieldDef[] => [
-  { name: 'productId', label: 'Product', type: 'ref', ref: 'products', required: true, list: true, span: 2 },
-  { name: 'packingTypeId', label: 'Packing', type: 'ref', ref: 'packingTypes', list: true },
+  // Packing rows that belong to the same product card share a group number (managed
+  // by the line editor); lists and PDFs print them under one product heading.
+  { name: 'packGroup', label: 'Packing group', type: 'integer', default: 0, hidden: true },
+  { name: 'productId', label: 'Product', type: 'ref', ref: 'products', required: true, list: true, span: 2, allowCreate: true },
+  { name: 'brand', label: 'Brand', type: 'text', maxLength: 128 },
+  { name: 'packingTypeId', label: 'Packing', type: 'ref', ref: 'packingTypes', list: true, allowCreate: true },
   { name: 'packingText', label: 'Packing details (printed)', type: 'textarea', span: 3, help: 'e.g. 40 KG non-woven bags, 1000 MT' },
+  { name: 'packingNote', label: 'Extra printed note', type: 'textarea', span: 3, help: 'Extra line(s) printed under this packing on the invoice' },
   { name: 'hsCode', label: 'HS code', type: 'text', maxLength: 16 },
   { name: 'cropYear', label: 'Crop year', type: 'text', maxLength: 16 },
   { name: 'noOfBags', label: 'No. of bags', type: 'integer', default: 0, list: true },
+  // MT one 20ft container holds in this packing (copied from the packing master); drives the
+  // auto-calculated "<n> X 20' FCL SAID TO CONTAIN" line. Kept per line so reports stay exact.
+  { name: 'containerCapacityMt', label: 'Container load (MT / 20ft)', type: 'decimal', precision: 12, scale: 3, hidden: true },
   { name: 'quantityMt', label: 'Net weight (MT)', type: 'decimal', precision: 12, scale: 3, required: true, list: true },
   { name: 'grossWtMt', label: 'Gross weight (MT)', type: 'decimal', precision: 12, scale: 3 },
   { name: 'ratePerMt', label: 'Rate per MT', type: 'decimal', precision: 15, scale: 2, required: rateRequired, list: true },
@@ -157,7 +165,7 @@ export const DOC_LIST: DocDef[] = [
     statuses: ['DRAFT', 'CONFIRMED', 'FULFILLED', CANCELLED],
     defaultStatus: 'CONFIRMED',
     header: [
-      docNumber,
+      docNumber('Proforma invoice no.'),
       docDate,
       status(['DRAFT', 'CONFIRMED', 'FULFILLED', CANCELLED], 'CONFIRMED'),
       ...parties(true),
@@ -205,7 +213,7 @@ export const DOC_LIST: DocDef[] = [
     defaultStatus: 'OPEN',
     parent: { doc: 'proformaInvoices', field: 'proformaInvoiceId' },
     header: [
-      docNumber,
+      docNumber('Production order no.'),
       docDate,
       status(['OPEN', 'IN_PRODUCTION', 'COMPLETED', CANCELLED], 'OPEN'),
       { name: 'proformaInvoiceId', label: 'Generated against PI', type: 'doc', ref: 'proformaInvoices', list: true },
@@ -256,21 +264,39 @@ export const DOC_LIST: DocDef[] = [
     parent: { doc: 'productionOrders', field: 'productionOrderId' },
     containers: true,
     header: [
-      docNumber,
+      docNumber('Commercial invoice no.'),
       docDate,
+      { name: 'invoiceStage', label: 'Invoice stage', type: 'select', options: ['DRAFT', 'FINAL'], default: 'DRAFT', list: true, help: 'Draft prints a "DRAFT" mark; set to Final when the invoice is final' },
       status(['ISSUED', 'NEGOTIATED', 'PAID', CANCELLED], 'ISSUED'),
       { name: 'invoiceType', label: 'Invoice type', type: 'select', options: ['WHITE', 'CUSTOM'], default: 'WHITE', list: true },
-      { name: 'productionOrderId', label: 'Generated against production order', type: 'doc', ref: 'productionOrders', list: true },
-      { name: 'proformaInvoiceId', label: 'Proforma invoice', type: 'doc', ref: 'proformaInvoices' },
+      { name: 'productionOrderId', label: 'Generated against production order', type: 'doc', ref: 'productionOrders', list: true, help: 'Leave blank to continue without an order' },
+      { name: 'orderRefText', label: 'Custom order reference', type: 'text', maxLength: 128, help: 'Use when the order is not in the system; printed in place of the linked order' },
+      { name: 'proformaInvoiceId', label: 'Proforma invoice', type: 'doc', ref: 'proformaInvoices', help: 'Leave blank to continue without a PI' },
+      { name: 'piRefText', label: 'Custom PI reference', type: 'text', maxLength: 128, help: 'Use when the PI is not in the system; printed in place of the linked PI' },
       ...parties(true),
-      ...buyerRefs,
+      { name: 'buyerPoRef', label: "Buyer's PO / reference", type: 'text', maxLength: 128, search: true, section: 'References' },
+      { name: 'poDate', label: 'PO date', type: 'date' },
+      { name: 'includeLc', label: 'Include LC details', type: 'boolean', default: true, controls: ['lcNumber', 'lcDate'] },
+      { name: 'lcNumber', label: 'LC no.', type: 'text', upper: true, maxLength: 64, search: true },
+      { name: 'lcDate', label: 'LC date', type: 'date' },
       ...commercial,
-      { name: 'lutNumber', label: 'LUT / bond no.', type: 'text', upper: true, maxLength: 64, help: 'Filled from the company profile' },
-      ...shippingRoute,
-      { name: 'shippingLineId', label: 'Shipping line', type: 'ref', ref: 'shippingLines', section: 'Vessel & shipping bill' },
+      { name: 'lutNumber', label: 'LUT / bond no.', type: 'text', upper: true, maxLength: 64, hidden: true },
+      ...shippingRoute.map((f) => (f.name === 'finalDestination' ? { ...f, hidden: true } : f)),
+      { name: 'preCarriageBy', label: 'Pre-carriage by', type: 'text', maxLength: 128 },
+      { name: 'containerTypeId', label: 'Container type (said to contain)', type: 'ref', ref: 'containerTypes', allowCreate: true, help: 'Printed as "<no. of containers> X <type> SAID TO CONTAIN"' },
+      { name: 'noOfContainers', label: 'No. of containers', type: 'integer', help: "Auto-filled from each packing's container load and net weight — change it if the count should differ" },
+      { name: 'saidToContain', label: 'Said to contain (override)', type: 'text', maxLength: 128, span: 2, help: 'Leave blank to build it from the container type and the number of containers' },
+      {
+        name: 'includeVessel',
+        label: 'Include vessel & shipping bill',
+        type: 'boolean',
+        default: true,
+        section: 'Vessel & shipping bill',
+        controls: ['shippingLineId', 'vesselFlightName', 'voyageNumber', 'placeOfReceipt', 'termsOf', 'blNumber', 'blDate', 'shippingBillNumber', 'shippingBillDate', 'fcl'],
+      },
+      { name: 'shippingLineId', label: 'Shipping line', type: 'ref', ref: 'shippingLines' },
       { name: 'vesselFlightName', label: 'Vessel / flight', type: 'text', maxLength: 128 },
       { name: 'voyageNumber', label: 'Voyage no.', type: 'text', upper: true, maxLength: 64 },
-      { name: 'preCarriageBy', label: 'Pre-carriage by', type: 'text', maxLength: 128 },
       { name: 'placeOfReceipt', label: 'Place of receipt', type: 'text', maxLength: 128 },
       { name: 'termsOf', label: 'Terms of delivery', type: 'text', maxLength: 128 },
       { name: 'blNumber', label: 'Bill of lading no.', type: 'text', upper: true, maxLength: 64, search: true },
@@ -278,10 +304,18 @@ export const DOC_LIST: DocDef[] = [
       { name: 'shippingBillNumber', label: 'Shipping bill no.', type: 'text', upper: true, maxLength: 64, search: true },
       { name: 'shippingBillDate', label: 'Shipping bill date', type: 'date' },
       { name: 'fcl', label: 'Containers (FCL)', type: 'text', maxLength: 32, help: 'e.g. 5 × 20FT' },
-      { name: 'brand', label: 'Brand', type: 'text', maxLength: 128, section: 'Goods' },
-      { name: 'marksNumbers', label: 'Marks & numbers', type: 'textarea' },
-      { name: 'goodsDescription', label: 'Goods description (printed above the lines)', type: 'textarea', span: 2 },
-      { name: 'thcCharge', label: 'THC', type: 'decimal', precision: 12, scale: 2, default: 0, section: 'Shipping charges (by incoterm)' },
+      { name: 'brand', label: 'Brand', type: 'text', maxLength: 128, section: 'Goods', hidden: true },
+      { name: 'marksNumbers', label: 'Marks & numbers', type: 'textarea', hidden: true },
+      { name: 'goodsDescription', label: 'Goods description (printed above the lines)', type: 'textarea', span: 2, hidden: true },
+      {
+        name: 'includeShippingCharges',
+        label: 'Include shipping charges',
+        type: 'boolean',
+        default: true,
+        section: 'Shipping charges (by incoterm)',
+        controls: ['thcCharge', 'blCharge', 'sealCharge', 'mucCharge', 'riskCharge', 'repositionCharge', 'oceanFreightCharge', 'insuranceCharge'],
+      },
+      { name: 'thcCharge', label: 'THC', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'blCharge', label: 'BL charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'sealCharge', label: 'Seal charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'mucCharge', label: 'MUC', type: 'decimal', precision: 12, scale: 2, default: 0 },
@@ -327,6 +361,25 @@ export const CONTAINER_FIELDS: FieldDef[] = [
 
 export const statusLabel = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ');
 
+/**
+ * Number of 20ft containers for the "SAID TO CONTAIN" line, from each packing's net weight
+ * and its per-container capacity (set on the packing master). Sums fractional containers across
+ * packings and rounds up. Returns 0 when no line has a capacity (then the count is unknown).
+ */
+export function containerCount(lines: Record<string, unknown>[]): number {
+  let sum = 0;
+  let any = false;
+  for (const l of lines) {
+    const cap = Number(l.containerCapacityMt);
+    const qty = Number(l.quantityMt);
+    if (cap > 0 && qty > 0) {
+      sum += qty / cap;
+      any = true;
+    }
+  }
+  return any ? Math.ceil(sum - 1e-6) : 0;
+}
+
 // ------------------------------------------------------------------ totals
 type Values = Record<string, unknown>;
 const v = (x: unknown): DecimalInput => (x === null || x === undefined || x === '' ? '0' : (x as string));
@@ -353,7 +406,9 @@ export function computeTotals(def: DocDef, header: Values, lines: Values[]): Rec
   if (def.key === 'productionOrders') {
     return { totalQuantityMt, totalBags, totalGrossWtMt, goodsAmount: goods, gstAmount };
   }
-  const charges = computeShippingCharges(String(header.incoterm ?? 'FOB'), header as Record<string, DecimalInput>);
+  // When the shipping-charges section is switched off, no charge counts.
+  const chargeInput = header.includeShippingCharges === false ? {} : (header as Record<string, DecimalInput>);
+  const charges = computeShippingCharges(String(header.incoterm ?? 'FOB'), chargeInput);
   return {
     ...charges,
     totalQuantityMt,

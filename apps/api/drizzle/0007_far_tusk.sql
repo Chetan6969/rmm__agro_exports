@@ -1,0 +1,1 @@
+ALTER TABLE "commercial_invoices" ADD COLUMN "no_of_containers" integer;

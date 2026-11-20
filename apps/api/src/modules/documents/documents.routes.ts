@@ -11,6 +11,7 @@ import {
   lookupDocuments,
   proformaFieldUsage,
   proformaTermsUsage,
+  setDocumentLock,
   updateDocument,
   type DocListQuery,
 } from './documents.service.js';
@@ -88,5 +89,10 @@ export async function documentRoutes(app: FastifyInstance) {
   app.delete<{ Params: P; Body: { reason?: string } }>('/documents/:doc/:id', async (req) => {
     const ctx = requireCtx(req);
     return inTenantTx(ctx, (tx) => deleteDocument(tx, ctx, req.params.doc, req.params.id, req.body?.reason ?? ''));
+  });
+
+  app.post<{ Params: P; Body: { locked?: boolean } }>('/documents/:doc/:id/lock', async (req) => {
+    const ctx = requireCtx(req);
+    return inTenantTx(ctx, (tx) => setDocumentLock(tx, ctx, req.params.doc, req.params.id, req.body?.locked !== false));
   });
 }

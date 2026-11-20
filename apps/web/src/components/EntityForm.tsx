@@ -45,6 +45,7 @@ function FieldInput({
   error,
   readOnly,
   onCommit,
+  sameAs,
 }: {
   f: FieldDef;
   value: unknown;
@@ -53,6 +54,7 @@ function FieldInput({
   error?: string;
   readOnly?: boolean;
   onCommit: () => void;
+  sameAs?: { label: string; id: string; idLabel: string | null };
 }) {
   const id = `f-${f.name}`;
   const common = { id, 'data-nav': '1', disabled: readOnly, 'aria-invalid': error ? true : undefined } as const;
@@ -97,6 +99,8 @@ function FieldInput({
           label={label}
           disabled={readOnly}
           invalid={!!error}
+          allowCreate={f.type === 'ref' && f.allowCreate}
+          sameAs={sameAs}
           onChange={(v, l) => onChange(v, l)}
           onCommit={onCommit}
         />
@@ -143,41 +147,57 @@ export function EntityForm({
     sections[sections.length - 1].fields.push(f);
   }
 
+  // Fields switched off by a `controls` boolean are hidden (and left off the PDF).
+  const off = new Set<string>();
+  for (const f of def.fields) {
+    if (f.type === 'boolean' && f.controls && values[f.name] === false) for (const n of f.controls) off.add(n);
+  }
+  const shown = (f: FieldDef) => !f.hidden && !off.has(f.name);
+  const labelFor = (name: string) => def.fields.find((x) => x.name === name)?.label ?? name;
+
   return (
     <div onKeyDown={enterNavigation} className="space-y-4">
-      {sections.map((s) => (
-        <fieldset key={s.title} className="rounded-md border border-slate-200 bg-white px-4 pt-2 pb-4 shadow-xs">
-          <legend className="px-1 text-[12px] font-semibold tracking-wide text-slate-500 uppercase">{s.title}</legend>
-          <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-            {s.fields.map((f) => (
-              <div key={f.name} className={spanClass[f.span ?? (f.type === 'textarea' ? 3 : 1)]}>
-                <label htmlFor={`f-${f.name}`} className="mb-1 block text-[12.5px] font-medium text-slate-600">
-                  {f.label}
-                  {f.required && <span className="text-red-500"> *</span>}
-                </label>
-                <FieldInput
-                  f={f}
-                  value={values[f.name]}
-                  label={labels[f.name]}
-                  error={errors[f.name]}
-                  readOnly={readOnly}
-                  onChange={(v, l) => onChange(f.name, v, l)}
-                  onCommit={() => {
-                    const el = document.getElementById(`f-${f.name}`);
-                    const root = el?.closest('[data-form-root]') as HTMLElement | null;
-                    if (el && root) focusSibling(root, el, 1);
-                  }}
-                />
-                {errors[f.name] ? (
-                  <div className="mt-0.5 text-[12px] text-red-600">{errors[f.name]}</div>
-                ) : f.help ? (
-                  <div className="mt-0.5 text-[11.5px] text-slate-400">{f.help}</div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </fieldset>
-      ))}
+      {sections
+        .map((s) => ({ ...s, fields: s.fields.filter(shown) }))
+        .filter((s) => s.fields.length)
+        .map((s) => (
+          <fieldset key={s.title} className="rounded-md border border-slate-200 bg-white px-4 pt-2 pb-4 shadow-xs">
+            <legend className="px-1 text-[12px] font-semibold tracking-wide text-slate-500 uppercase">{s.title}</legend>
+            <div className="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+              {s.fields.map((f) => {
+                const sameAs =
+                  f.sameAs && values[f.sameAs] ? { label: labelFor(f.sameAs), id: values[f.sameAs] as string, idLabel: (labels[f.sameAs] as string) ?? null } : undefined;
+                return (
+                  <div key={f.name} className={spanClass[f.span ?? (f.type === 'textarea' ? 3 : 1)]}>
+                    <label htmlFor={`f-${f.name}`} className="mb-1 block text-[12.5px] font-medium text-slate-600">
+                      {f.label}
+                      {f.required && <span className="text-red-500"> *</span>}
+                    </label>
+                    <FieldInput
+                      f={f}
+                      value={values[f.name]}
+                      label={labels[f.name]}
+                      error={errors[f.name]}
+                      readOnly={readOnly}
+                      sameAs={sameAs}
+                      onChange={(v, l) => onChange(f.name, v, l)}
+                      onCommit={() => {
+                        const el = document.getElementById(`f-${f.name}`);
+                        const root = el?.closest('[data-form-root]') as HTMLElement | null;
+                        if (el && root) focusSibling(root, el, 1);
+                      }}
+                    />
+                    {errors[f.name] ? (
+                      <div className="mt-0.5 text-[12px] text-red-600">{errors[f.name]}</div>
+                    ) : f.help ? (
+                      <div className="mt-0.5 text-[11.5px] text-slate-400">{f.help}</div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </fieldset>
+        ))}
       {footer}
     </div>
   );
