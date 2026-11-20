@@ -456,6 +456,32 @@ export const ENTITY_LIST = [
       active,
     ],
   },
+  {
+    key: 'certificateTemplates',
+    table: 'certificate_templates',
+    label: 'Certificate template',
+    plural: 'Certificate templates',
+    menu: 'General',
+    scope: 'company',
+    shareable: true,
+    displayField: 'title',
+    fields: [
+      { name: 'code', label: 'Code', type: 'text', unique: true, upper: true, list: true, search: true },
+      { name: 'title', label: 'Title', type: 'text', required: true, list: true, search: true, span: 2 },
+      { name: 'category', label: 'Category', type: 'select', required: true, options: ['Certificate', 'Declaration', 'Shipment advice', 'Email transmission', 'Label', 'Other'], default: 'Certificate', list: true },
+      { name: 'buyerId', label: 'For buyer (blank = all buyers)', type: 'ref', ref: 'customers', list: true },
+      { name: 'showShipmentTable', label: 'Print shipment-details table', type: 'boolean', default: true },
+      {
+        name: 'body',
+        label: 'Body — use {{placeholders}}',
+        type: 'textarea',
+        required: true,
+        span: 3,
+        help: 'Placeholders get filled from the invoice + OBL: {{invoice_no}} {{invoice_date}} {{bl_no}} {{bl_date}} {{vessel}} {{port_loading}} {{port_discharge}} {{place_delivery}} {{net_weight}} {{gross_weight}} {{total_bags}} {{no_of_containers}} {{lc_no}} {{po_no}} {{consignee}} {{applicant}} {{destination_agent}} {{shipping_line}} {{brand}} {{description}} {{packing}} {{crop_year}} {{year_of_production}} {{invoice_value}}',
+      },
+      active,
+    ],
+  },
 ] as const satisfies readonly EntityDef[];
 
 export type EntityKey = (typeof ENTITY_LIST)[number]['key'];

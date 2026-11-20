@@ -24,8 +24,8 @@ import { column, masterTables, snake, type AnyTable } from './masters.js';
 
 export interface DocTables {
   header: AnyTable;
-  lines: AnyTable;
-  terms: AnyTable;
+  lines: AnyTable | null;
+  terms: AnyTable | null;
   containers: AnyTable | null;
 }
 
@@ -77,26 +77,38 @@ function childTable(name: string, parent: AnyTable, extra: Record<string, PgColu
 
 for (const def of DOC_LIST) {
   const header = headerTable(def);
-  const lineCols: Record<string, PgColumnBuilderBase> = {};
-  for (const f of def.lines) lineCols[f.name] = column(f);
-  lineCols.amount = numeric('amount', { precision: 15, scale: 2 }).notNull().default('0');
-  /** The parent document's line this one was generated from (balance tracking). */
-  lineCols.sourceLineId = uuid('source_line_id');
-  const containerCols: Record<string, PgColumnBuilderBase> = {};
-  for (const f of CONTAINER_FIELDS) containerCols[f.name] = column(f);
-  docTables[def.key] = {
-    header,
-    lines: childTable(def.linesTable, header, lineCols),
-    terms: childTable(def.termsTable, header, {
-      tcTemplateId: uuid('tc_template_id').references((): AnyPgColumn => masterTables.tcTemplates.id, { onDelete: 'set null' }),
-      content: text('content').notNull(),
-    }),
-    containers: def.containers ? childTable(`${def.table.replace(/s$/, '')}_containers`, header, containerCols) : null,
-  };
+  // Header-only documents (OBL, certificates) have no line / terms child tables.
+  let lines: AnyTable | null = null;
+  if (def.linesTable && def.lines.length) {
+    const lineCols: Record<string, PgColumnBuilderBase> = {};
+    for (const f of def.lines) lineCols[f.name] = column(f);
+    lineCols.amount = numeric('amount', { precision: 15, scale: 2 }).notNull().default('0');
+    /** The parent document's line this one was generated from (balance tracking). */
+    lineCols.sourceLineId = uuid('source_line_id');
+    lines = childTable(def.linesTable, header, lineCols);
+  }
+  const terms = def.termsTable
+    ? childTable(def.termsTable, header, {
+        tcTemplateId: uuid('tc_template_id').references((): AnyPgColumn => masterTables.tcTemplates.id, { onDelete: 'set null' }),
+        content: text('content').notNull(),
+      })
+    : null;
+  let containers: AnyTable | null = null;
+  if (def.containers) {
+    const containerCols: Record<string, PgColumnBuilderBase> = {};
+    for (const f of CONTAINER_FIELDS) containerCols[f.name] = column(f);
+    containers = childTable(`${def.table.replace(/s$/, '')}_containers`, header, containerCols);
+  }
+  docTables[def.key] = { header, lines, terms, containers };
 }
 
 /** Every company-scoped document table (RLS policies are applied to each). */
-export const DOCUMENT_TABLE_NAMES = DOC_LIST.flatMap((d) => [d.table, d.linesTable, d.termsTable, ...(d.containers ? [`${d.table.replace(/s$/, '')}_containers`] : [])]);
+export const DOCUMENT_TABLE_NAMES = DOC_LIST.flatMap((d) => [
+  d.table,
+  ...(d.linesTable && d.lines.length ? [d.linesTable] : []),
+  ...(d.termsTable ? [d.termsTable] : []),
+  ...(d.containers ? [`${d.table.replace(/s$/, '')}_containers`] : []),
+]);
 
 // Named exports so drizzle-kit discovers the tables.
 export const proformaInvoices = docTables.proformaInvoices.header;
@@ -109,3 +121,5 @@ export const commercialInvoices = docTables.commercialInvoices.header;
 export const commercialInvoiceLines = docTables.commercialInvoices.lines;
 export const commercialInvoiceTerms = docTables.commercialInvoices.terms;
 export const commercialInvoiceContainers = docTables.commercialInvoices.containers!;
+export const oceanBills = docTables.oceanBills.header;
+export const certificates = docTables.certificates.header;

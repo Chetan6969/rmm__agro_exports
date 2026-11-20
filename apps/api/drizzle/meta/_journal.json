@@ -57,6 +57,13 @@
       "when": 1795088947233,
       "tag": "0007_far_tusk",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795163719431,
+      "tag": "0008_exotic_wrecker",
+      "breakpoints": true
     }
   ]
 }

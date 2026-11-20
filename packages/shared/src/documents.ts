@@ -8,7 +8,7 @@
 import type { FieldDef } from './entities.js';
 import { add, computeShippingCharges, INCOTERMS, mul, round, sub, type DecimalInput } from './money.js';
 
-export type DocKey = 'proformaInvoices' | 'productionOrders' | 'commercialInvoices';
+export type DocKey = 'proformaInvoices' | 'productionOrders' | 'commercialInvoices' | 'oceanBills' | 'certificates';
 
 export interface TotalDef {
   name: string;
@@ -23,23 +23,27 @@ export interface DocDef {
   /** Short name used in menus and PDF file names. */
   short: string;
   table: string;
-  linesTable: string;
-  termsTable: string;
+  /** Line / terms child tables — omitted for header-only documents (OBL, certificates). */
+  linesTable?: string;
+  termsTable?: string;
   /** Permission module ("module:action"). */
   module: string;
   /** Numbering series (DOC_TYPES key). */
   numbering: string;
-  /** T&C templates of this document type are offered on the form. */
-  tcDocType: string;
+  /** T&C templates of this document type are offered on the form (invoice-style docs only). */
+  tcDocType?: string;
   statuses: readonly string[];
   defaultStatus: string;
   /** Header field linking to the document this one is generated against, if any. */
   parent?: { doc: DocKey; field: string };
   header: FieldDef[];
+  /** Empty for header-only documents (letter/certificate style). */
   lines: FieldDef[];
   totals: TotalDef[];
   /** Commercial invoices carry the container list for the packing list. */
   containers?: boolean;
+  /** A header-only letter document rendered from a certificate template (no lines/totals/terms). */
+  letter?: boolean;
 }
 
 /** A document that no longer counts (balances, reports). */
@@ -339,6 +343,85 @@ export const DOC_LIST: DocDef[] = [
       { name: 'invoiceTotal', label: 'Invoice total', scale: 2 },
     ],
   },
+  // -------------------------------------------------------------- Ocean bill of lading (shipment details)
+  // Header-only record created against a commercial invoice; the single source of vessel / BL / agent
+  // data that every certificate reads from.
+  {
+    key: 'oceanBills',
+    label: 'Ocean bill of lading',
+    plural: 'Ocean bills of lading',
+    short: 'OBL',
+    table: 'ocean_bills',
+    module: 'sales.oceanBills',
+    numbering: 'ocean_bill',
+    statuses: ['DRAFT', 'ISSUED', CANCELLED],
+    defaultStatus: 'DRAFT',
+    parent: { doc: 'commercialInvoices', field: 'commercialInvoiceId' },
+    letter: true,
+    header: [
+      docNumber('OBL reference'),
+      docDate,
+      status(['DRAFT', 'ISSUED', CANCELLED], 'DRAFT'),
+      { name: 'commercialInvoiceId', label: 'Against commercial invoice', type: 'doc', ref: 'commercialInvoices', required: true, list: true, help: 'Buyer, LC, ports and cargo are copied from this invoice' },
+      ...parties(true),
+      { name: 'blNumber', label: 'Bill of lading no.', type: 'text', upper: true, maxLength: 64, list: true, search: true, section: 'Bill of lading' },
+      { name: 'blDate', label: 'B/L date', type: 'date', list: true },
+      { name: 'shippingBillNumber', label: 'Shipping bill no.', type: 'text', upper: true, maxLength: 64, search: true },
+      { name: 'shippingBillDate', label: 'Shipping bill date', type: 'date' },
+      { name: 'vesselName', label: 'Vessel / flight', type: 'text', maxLength: 128, section: 'Vessel & route' },
+      { name: 'voyageNo', label: 'Voyage no.', type: 'text', upper: true, maxLength: 64 },
+      { name: 'shippingLineId', label: 'Shipping line', type: 'ref', ref: 'shippingLines', allowCreate: true },
+      { name: 'portOfLoadingId', label: 'Port of loading', type: 'ref', ref: 'ports' },
+      { name: 'portOfDischargeId', label: 'Port of discharge', type: 'ref', ref: 'ports' },
+      { name: 'placeOfReceipt', label: 'Place of receipt', type: 'text', maxLength: 128 },
+      { name: 'placeOfDelivery', label: 'Place of delivery', type: 'text', maxLength: 128 },
+      { name: 'finalDestination', label: 'Final destination', type: 'text', maxLength: 128 },
+      { name: 'destinationAgentId', label: 'Agent at destination', type: 'ref', ref: 'serviceProviders', allowCreate: true, section: 'Agent & applicant' },
+      { name: 'destinationAgentAddress', label: "Agent's address", type: 'textarea', span: 2 },
+      { name: 'lcNumber', label: 'LC no.', type: 'text', upper: true, maxLength: 64 },
+      { name: 'lcDate', label: 'LC date', type: 'date' },
+      { name: 'lcApplicantEmails', label: 'LC applicant email(s)', type: 'textarea', span: 2, help: 'Buyer email(s) the certificates must be sent to' },
+      { name: 'shippingMarks', label: 'Shipping marks', type: 'textarea', span: 2, section: 'Cargo summary' },
+      { name: 'goodsDescription', label: 'Description of goods', type: 'textarea', span: 2 },
+      { name: 'packing', label: 'Packing', type: 'textarea', span: 2 },
+      { name: 'brand', label: 'Brand', type: 'text', maxLength: 128 },
+      { name: 'cropYear', label: 'Crop year', type: 'text', maxLength: 16 },
+      { name: 'yearOfProduction', label: 'Year of production', type: 'text', maxLength: 16 },
+      { name: 'netWeightMt', label: 'Net weight (MT)', type: 'decimal', precision: 12, scale: 3 },
+      { name: 'grossWeightMt', label: 'Gross weight (MT)', type: 'decimal', precision: 12, scale: 3 },
+      { name: 'totalBags', label: 'Total bags', type: 'integer' },
+      { name: 'noOfContainers', label: 'No. of containers', type: 'integer' },
+      { name: 'invoiceValue', label: 'Invoice value (printed)', type: 'text', maxLength: 64, help: 'e.g. USD 4,97,398.00' },
+    ],
+    lines: [],
+    totals: [],
+  },
+  // -------------------------------------------------------------- Certificates (template-driven letters)
+  {
+    key: 'certificates',
+    label: 'Certificate',
+    plural: 'Certificates',
+    short: 'Certificate',
+    table: 'certificates',
+    module: 'sales.certificates',
+    numbering: 'certificate',
+    statuses: ['ISSUED', CANCELLED],
+    defaultStatus: 'ISSUED',
+    parent: { doc: 'commercialInvoices', field: 'commercialInvoiceId' },
+    letter: true,
+    header: [
+      docNumber('Certificate no.'),
+      docDate,
+      status(['ISSUED', CANCELLED], 'ISSUED'),
+      { name: 'commercialInvoiceId', label: 'Against commercial invoice', type: 'doc', ref: 'commercialInvoices', required: true, list: true },
+      { name: 'oceanBillId', label: 'Ocean bill of lading', type: 'doc', ref: 'oceanBills', list: true, help: 'Vessel / BL / agent details are read from this OBL' },
+      { name: 'certificateTemplateId', label: 'Certificate template', type: 'ref', ref: 'certificateTemplates', required: true, allowCreate: true, list: true, span: 2 },
+      ...parties(true),
+      { name: 'remark', label: 'Remark (printed under the body)', type: 'textarea', span: 2 },
+    ],
+    lines: [],
+    totals: [],
+  },
 ];
 
 export const DOCS: Record<DocKey, DocDef> = Object.fromEntries(DOC_LIST.map((d) => [d.key, d])) as Record<DocKey, DocDef>;
@@ -360,6 +443,29 @@ export const CONTAINER_FIELDS: FieldDef[] = [
 ];
 
 export const statusLabel = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace(/_/g, ' ');
+
+/**
+ * Fill a certificate template's body by replacing {{placeholder}} tokens with values from `ctx`.
+ * Plain string substitution only — template text is never evaluated as code. Unknown or empty
+ * values print as "____" so a missing figure is obvious on the certificate.
+ */
+export function fillTemplate(body: string, ctx: Record<string, unknown>): string {
+  return String(body ?? '').replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, key: string) => {
+    const v = ctx[key.toLowerCase()];
+    return v === null || v === undefined || v === '' ? '____' : String(v);
+  });
+}
+
+/** Placeholders a certificate template may use, shown as help on the template editor. */
+export const CERTIFICATE_PLACEHOLDERS = [
+  'exporter', 'consignee', 'applicant', 'buyer', 'notify',
+  'invoice_no', 'invoice_date', 'bl_no', 'bl_date', 'shipping_bill_no', 'shipping_bill_date',
+  'vessel', 'voyage', 'shipping_line', 'port_loading', 'port_discharge', 'place_receipt', 'place_delivery', 'final_destination',
+  'destination_agent', 'destination_agent_address',
+  'net_weight', 'gross_weight', 'total_bags', 'no_of_containers',
+  'lc_no', 'lc_date', 'lc_applicant_emails', 'po_no', 'po_date',
+  'brand', 'description', 'packing', 'shipping_marks', 'crop_year', 'year_of_production', 'invoice_value',
+] as const;
 
 /**
  * Number of 20ft containers for the "SAID TO CONTAIN" line, from each packing's net weight
@@ -392,6 +498,7 @@ export const lineAmount = (line: Values) => mul(v(line.quantityMt), v(line.rateP
  * Commercial invoices also return the incoterm-adjusted charge fields.
  */
 export function computeTotals(def: DocDef, header: Values, lines: Values[]): Record<string, string> {
+  if (!def.totals.length) return {}; // header-only letter documents (OBL, certificates)
   const amounts = lines.map(lineAmount);
   const totalQuantityMt = add(lines.map((l) => v(l.quantityMt)), 3);
   const totalBags = add(lines.map((l) => v(l.noOfBags)), 0);
