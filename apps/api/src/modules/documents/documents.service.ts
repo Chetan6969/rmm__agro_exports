@@ -560,6 +560,18 @@ export async function draftDocument(tx: Tx, ctx: RequestContext, key: string, fr
       .limit(1);
     header.bankAccountId = bank?.id ?? null;
   }
+  // default letterhead / signature for certificates (the one marked Default, else any active)
+  const defaultMasterId = async (table: typeof masterTables.companies) => {
+    const [row] = await tx
+      .select({ id: table.id })
+      .from(table)
+      .where(and(eq(table.companyId, companyId), isNull(table.deletedAt), eq(table.isActive, true)))
+      .orderBy(desc(table.isDefault))
+      .limit(1);
+    return (row?.id as string) ?? null;
+  };
+  if (def.header.some((f) => f.name === 'letterheadId')) header.letterheadId = await defaultMasterId(masterTables.letterheads);
+  if (def.header.some((f) => f.name === 'signatureId')) header.signatureId = await defaultMasterId(masterTables.signatures);
 
   let lines: Row[] = [];
   if (from && def.parent) {

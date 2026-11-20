@@ -186,13 +186,23 @@ class Writer {
     const { letterhead, logo } = data.images;
     let y = 30;
     if (letterhead) {
-      pdf.image(letterhead, LEFT, y, { fit: [RIGHT - LEFT, 90], align: 'center' });
-      y += 96;
+      // Span the full content column (same left/right margin as the body), proportional height.
+      const w = RIGHT - LEFT;
+      let h = 96;
+      try {
+        const img = pdf.openImage(letterhead);
+        h = Math.min((img.height / img.width) * w, 150);
+      } catch {
+        /* keep the default height */
+      }
+      pdf.image(letterhead, LEFT, y, { fit: [w, h], align: 'center' });
+      y += h + 16; // clear space under the letterhead, above the title
     } else if (logo) {
       pdf.image(logo, RIGHT - 120, y, { fit: [120, 54], align: 'right' });
     }
     pdf.font('Helvetica-Bold').fontSize(15).fillColor(DARK).text(this.title + (continued ? ' (continued)' : ''), LEFT, letterhead ? y : 40, { width: RIGHT - LEFT, align: 'center' });
-    this.y = Math.max(pdf.y + 6, letterhead ? y : 90);
+    // more breathing room under the title on letterhead documents (certificates)
+    this.y = Math.max(pdf.y + (letterhead ? 18 : 6), letterhead ? y : 90);
     if (continued) {
       pdf.font('Helvetica').fontSize(8).fillColor(GRAY).text(`${data.def.label} ${data.doc.documentNumber}`, LEFT, this.y, { width: RIGHT - LEFT, align: 'center' });
       this.y = pdf.y + 8;
@@ -863,6 +873,14 @@ export async function documentPdf(tx: Tx, ctx: RequestContext, key: string, id: 
     const [tpl] = (await tx.select().from(masterTables.certificateTemplates).where(eq(masterTables.certificateTemplates.id, d.certificateTemplateId as string))) as Row[];
     const obl = typeof d.oceanBillId === 'string' ? await getDocument(tx, ctx, 'oceanBills', d.oceanBillId, 'print').catch(() => null) : null;
     const ci = typeof d.commercialInvoiceId === 'string' ? await getDocument(tx, ctx, 'commercialInvoices', d.commercialInvoiceId, 'print').catch(() => null) : null;
+    // Certificates print the chosen letterhead (not the company logo) and the chosen signature.
+    const [lhRow] = (typeof d.letterheadId === 'string' ? await tx.select().from(masterTables.letterheads).where(eq(masterTables.letterheads.id, d.letterheadId)) : []) as Row[];
+    const [sgRow] = (typeof d.signatureId === 'string' ? await tx.select().from(masterTables.signatures).where(eq(masterTables.signatures.id, d.signatureId)) : []) as Row[];
+    const [lhImg, sgImg] = await Promise.all([image(tx, lhRow?.letterheadFileId), image(tx, sgRow?.signatureFileId)]);
+    data.images = { ...data.images, logo: null, letterhead: lhImg ?? data.images.letterhead, signature: sgImg ?? data.images.signature };
+    if (sgRow?.signatoryName) {
+      data.company = { ...data.company, signatoryName: sgRow.signatoryName, signatoryDesignation: sgRow.signatoryDesignation ?? data.company.signatoryDesignation };
+    }
     const title = str(tpl?.title) || str(d.certificateTemplateIdLabel) || 'CERTIFICATE';
     return { filename: `${title.replace(/[^A-Za-z0-9-]+/g, '_')}_${safe}.pdf`, body: await certificate(data, tpl ?? null, certContext(data, obl as Row | null, ci as Row | null)) };
   }
