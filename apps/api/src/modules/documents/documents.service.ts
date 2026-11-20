@@ -75,7 +75,8 @@ function payloadSchema(def: DocDef) {
   const container = buildEntitySchema(asEntity(`${def.key}.containers`, CONTAINER_FIELDS), 'create');
   return z.object({
     header,
-    lines: z.array(line).min(1, 'Add at least one product line').max(200),
+    // Header-only documents (OBL, certificates) carry no lines.
+    lines: (def.lines.length ? z.array(line).min(1, 'Add at least one product line') : z.array(line)).max(200),
     terms: z.array(term).max(100).default([]),
     containers: z.array(container).max(200).default([]),
     version: z.number().int().optional(),
@@ -237,13 +238,17 @@ async function assertNumberFree(tx: Tx, def: DocDef, companyId: string, number: 
 
 async function writeChildren(tx: Tx, def: DocDef, companyId: string, documentId: string, p: ReturnType<typeof parsePayload>) {
   const t = docTables[def.key];
-  await tx.delete(t.lines).where(eq(t.lines.documentId, documentId));
-  await tx.delete(t.terms).where(eq(t.terms.documentId, documentId));
-  if (t.containers) await tx.delete(t.containers).where(eq(t.containers.documentId, documentId));
-  await tx.insert(t.lines).values(p.lines.map((l, i) => ({ ...l, companyId, documentId, position: i + 1, amount: lineAmount(l) })));
-  if (p.terms.length) {
-    await tx.insert(t.terms).values(p.terms.map((x, i) => ({ companyId, documentId, position: i + 1, tcTemplateId: x.tcTemplateId ?? null, content: x.content })));
+  if (t.lines) {
+    await tx.delete(t.lines).where(eq(t.lines.documentId, documentId));
+    if (p.lines.length) await tx.insert(t.lines).values(p.lines.map((l, i) => ({ ...l, companyId, documentId, position: i + 1, amount: lineAmount(l) })));
   }
+  if (t.terms) {
+    await tx.delete(t.terms).where(eq(t.terms.documentId, documentId));
+    if (p.terms.length) {
+      await tx.insert(t.terms).values(p.terms.map((x, i) => ({ companyId, documentId, position: i + 1, tcTemplateId: x.tcTemplateId ?? null, content: x.content })));
+    }
+  }
+  if (t.containers) await tx.delete(t.containers).where(eq(t.containers.documentId, documentId));
   if (t.containers && p.containers.length) {
     await tx.insert(t.containers).values(p.containers.map((c, i) => ({ ...c, companyId, documentId, position: i + 1 })));
   }
@@ -282,6 +287,8 @@ async function prepare(tx: Tx, def: DocDef, body: unknown, selfId?: string) {
     const [hit] = await tx.select({ id: h.id }).from(h).where(and(eq(h.id, id), isNull(h.deletedAt)));
     if (!hit) throw badRequest(`${f.label}: not found`, { hint: 'Pick it again from the list.', fields: { [f.name]: 'Not found' } });
   }
+  // Header-only letter documents (OBL, certificates): no totals, no quantity balance, no amount-in-words.
+  if (def.letter) return { p, totals: {} as Record<string, string>, words: null as string | null };
   const totals = computeTotals(def, p.header, p.lines);
   await checkParentBalance(tx, def, p.header, totals.totalQuantityMt, selfId);
   const words = await currencyWords(tx, p.header.currencyId, documentValue(def, totals));
@@ -318,7 +325,7 @@ export async function updateDocument(tx: Tx, ctx: RequestContext, key: string, i
   const { p, totals, words } = await prepare(tx, def, body, id);
   const typed = (p.header.documentNumber as string | null)?.trim() || (before.documentNumber as string);
   if (typed !== before.documentNumber) await assertNumberFree(tx, def, companyId, typed, id);
-  await checkChildrenFit(tx, def, id, totals.totalQuantityMt, p.header.status);
+  if (!def.letter) await checkChildrenFit(tx, def, id, totals.totalQuantityMt, p.header.status);
   const [row] = (await tx
     .update(t.header)
     .set({ ...p.header, ...totals, documentNumber: typed, amountInWords: words, version: sql`${t.header.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
@@ -385,8 +392,8 @@ async function loadHeader(tx: Tx, def: DocDef, id: string, lock = false): Promis
 
 async function loadChildren(tx: Tx, def: DocDef, id: string) {
   const t = docTables[def.key];
-  const lines = (await tx.select().from(t.lines).where(eq(t.lines.documentId, id)).orderBy(asc(t.lines.position))) as Row[];
-  const terms = (await tx.select().from(t.terms).where(eq(t.terms.documentId, id)).orderBy(asc(t.terms.position))) as Row[];
+  const lines = t.lines ? ((await tx.select().from(t.lines).where(eq(t.lines.documentId, id)).orderBy(asc(t.lines.position))) as Row[]) : [];
+  const terms = t.terms ? ((await tx.select().from(t.terms).where(eq(t.terms.documentId, id)).orderBy(asc(t.terms.position))) as Row[]) : [];
   const containers = t.containers ? ((await tx.select().from(t.containers).where(eq(t.containers.documentId, id)).orderBy(asc(t.containers.position))) as Row[]) : [];
   await refLabels(tx, def.lines, lines);
   return { lines, terms, containers };
@@ -399,7 +406,7 @@ export async function getDocument(tx: Tx, ctx: RequestContext, key: string, id: 
   const header = await loadHeader(tx, def, id);
   await refLabels(tx, def.header, [header]);
   const children = [];
-  for (const child of childDocs(def.key)) {
+  for (const child of childDocs(def.key).filter((c) => !c.letter)) {
     const h = docTables[child.key].header;
     const rows = await tx
       .select({ id: h.id, documentNumber: h.documentNumber, documentDate: h.documentDate, status: h.status, totalQuantityMt: h.totalQuantityMt })
@@ -409,7 +416,18 @@ export async function getDocument(tx: Tx, ctx: RequestContext, key: string, id: 
     const used = await allocatedQty(tx, child, id);
     children.push({ doc: child.key, rows, usedMt: used, remainingMt: sub(header.totalQuantityMt as string, used, 3) });
   }
-  return { ...header, ...(await loadChildren(tx, def, id)), children };
+  // Letter documents (OBL, certificates) generated against this one — no quantity balance.
+  const letterChildren = [];
+  for (const child of childDocs(def.key).filter((c) => c.letter)) {
+    const h = docTables[child.key].header;
+    const rows = await tx
+      .select({ id: h.id, documentNumber: h.documentNumber, documentDate: h.documentDate, status: h.status })
+      .from(h)
+      .where(and(eq(h[child.parent!.field], id), isNull(h.deletedAt)))
+      .orderBy(asc(h.documentDate), asc(h.documentNumber));
+    letterChildren.push({ doc: child.key, label: child.label, plural: child.plural, module: child.module, rows });
+  }
+  return { ...header, ...(await loadChildren(tx, def, id)), children, letterChildren };
 }
 
 // ------------------------------------------------------------------ list, lookup, export
@@ -450,7 +468,7 @@ export async function listDocuments(tx: Tx, ctx: RequestContext, key: string, q:
     .offset((page - 1) * pageSize)) as Row[];
   await refLabels(tx, def.header, rows);
   // remaining balance for documents that feed another (PI → orders, order → invoices)
-  for (const child of childDocs(def.key)) {
+  for (const child of childDocs(def.key).filter((c) => !c.letter)) {
     const ch = docTables[child.key].header;
     const ids = rows.map((r) => r.id as string);
     if (!ids.length) break;
@@ -542,6 +560,18 @@ export async function draftDocument(tx: Tx, ctx: RequestContext, key: string, fr
       .limit(1);
     header.bankAccountId = bank?.id ?? null;
   }
+  // default letterhead / signature for certificates (the one marked Default, else any active)
+  const defaultMasterId = async (table: typeof masterTables.companies) => {
+    const [row] = await tx
+      .select({ id: table.id })
+      .from(table)
+      .where(and(eq(table.companyId, companyId), isNull(table.deletedAt), eq(table.isActive, true)))
+      .orderBy(desc(table.isDefault))
+      .limit(1);
+    return (row?.id as string) ?? null;
+  };
+  if (def.header.some((f) => f.name === 'letterheadId')) header.letterheadId = await defaultMasterId(masterTables.letterheads);
+  if (def.header.some((f) => f.name === 'signatureId')) header.signatureId = await defaultMasterId(masterTables.signatures);
 
   let lines: Row[] = [];
   if (from && def.parent) {
@@ -551,41 +581,71 @@ export async function draftDocument(tx: Tx, ctx: RequestContext, key: string, fr
     for (const name of inheritedFields(def)) header[name] = parent[name] ?? header[name] ?? null;
     header[def.parent.field] = parent.id;
     if (def.key === 'commercialInvoices') header.proformaInvoiceId = parent.proformaInvoiceId ?? null;
-    const used = await allocatedByLine(tx, def, from);
-    const { lines: plines } = await loadChildren(tx, pdef, from);
-    const names = new Set(def.lines.map((f) => f.name));
-    for (const pl of plines) {
-      const remaining = sub(pl.quantityMt as string, used.get(pl.id as string) ?? '0', 3);
-      if (!isPositive(remaining)) continue;
-      const line: Row = { sourceLineId: pl.id };
-      for (const f of def.lines) if (names.has(f.name) && pl[f.name] !== undefined) line[f.name] = pl[f.name];
-      for (const f of def.lines) if (line[f.name] === undefined && f.default !== undefined) line[f.name] = f.default;
-      if (cmp(remaining, pl.quantityMt as string) !== 0) {
-        // part balance: scale bags and gross weight to the remaining net weight
-        const share = (x: unknown, scale: number) =>
-          x === null || x === undefined || !isPositive(String(x)) ? x : round(divideExact(mul(String(x), remaining, 9), pl.quantityMt as string), scale);
-        line.noOfBags = Number(share(pl.noOfBags, 0) ?? 0);
-        line.grossWtMt = share(pl.grossWtMt, 3) ?? null;
+    if (def.letter) {
+      // OBL / certificate: copy the invoice's cargo summary into the header (differently-named fields).
+      const copy: Record<string, string> = {
+        netWeightMt: 'totalQuantityMt',
+        grossWeightMt: 'totalGrossWtMt',
+        totalBags: 'totalBags',
+        noOfContainers: 'noOfContainers',
+        vesselName: 'vesselFlightName',
+        voyageNo: 'voyageNumber',
+      };
+      const hnames = new Set(def.header.map((f) => f.name));
+      for (const [dst, src] of Object.entries(copy)) {
+        if (hnames.has(dst) && parent[src] != null && (header[dst] === undefined || header[dst] === null)) header[dst] = parent[src];
       }
-      line.quantityMt = remaining;
-      lines.push(line);
-    }
-    await refLabels(tx, def.lines, lines);
-    if (!lines.length) {
-      throw badRequest(`Nothing is left to generate against ${parent.documentNumber}`, {
-        hint: `All ${round(parent.totalQuantityMt as string, 3)} MT is already on other ${def.plural.toLowerCase()}. Open the existing ones, or increase the ${pdef.label.toLowerCase()} first.`,
-      });
+      // a certificate defaults to the invoice's ocean bill of lading, if one exists
+      if (def.key === 'certificates') {
+        const obl = docTables.oceanBills.header;
+        const [o] = (await tx
+          .select({ id: obl.id })
+          .from(obl)
+          .where(and(eq(obl.commercialInvoiceId, from), isNull(obl.deletedAt)))
+          .orderBy(desc(obl.createdAt))
+          .limit(1)) as Row[];
+        if (o) header.oceanBillId = o.id;
+      }
+    } else {
+      const used = await allocatedByLine(tx, def, from);
+      const { lines: plines } = await loadChildren(tx, pdef, from);
+      const names = new Set(def.lines.map((f) => f.name));
+      for (const pl of plines) {
+        const remaining = sub(pl.quantityMt as string, used.get(pl.id as string) ?? '0', 3);
+        if (!isPositive(remaining)) continue;
+        const line: Row = { sourceLineId: pl.id };
+        for (const f of def.lines) if (names.has(f.name) && pl[f.name] !== undefined) line[f.name] = pl[f.name];
+        for (const f of def.lines) if (line[f.name] === undefined && f.default !== undefined) line[f.name] = f.default;
+        if (cmp(remaining, pl.quantityMt as string) !== 0) {
+          // part balance: scale bags and gross weight to the remaining net weight
+          const share = (x: unknown, scale: number) =>
+            x === null || x === undefined || !isPositive(String(x)) ? x : round(divideExact(mul(String(x), remaining, 9), pl.quantityMt as string), scale);
+          line.noOfBags = Number(share(pl.noOfBags, 0) ?? 0);
+          line.grossWtMt = share(pl.grossWtMt, 3) ?? null;
+        }
+        line.quantityMt = remaining;
+        lines.push(line);
+      }
+      await refLabels(tx, def.lines, lines);
+      if (!lines.length) {
+        throw badRequest(`Nothing is left to generate against ${parent.documentNumber}`, {
+          hint: `All ${round(parent.totalQuantityMt as string, 3)} MT is already on other ${def.plural.toLowerCase()}. Open the existing ones, or increase the ${pdef.label.toLowerCase()} first.`,
+        });
+      }
     }
   }
 
   // default terms for this document type, one row per line of each default template
-  const tc = masterTables.tcTemplates;
-  const templates = await tx
-    .select({ id: tc.id, body: tc.body })
-    .from(tc)
-    .where(and(eq(tc.docType, def.tcDocType), eq(tc.isDefault, true), eq(tc.isActive, true), isNull(tc.deletedAt)))
-    .orderBy(asc(tc.name));
-  const terms = templates.flatMap((tpl) => splitTerms(tpl.body as string).map((content) => ({ tcTemplateId: tpl.id, content })));
+  let terms: { tcTemplateId: unknown; content: string }[] = [];
+  if (def.termsTable && def.tcDocType) {
+    const tc = masterTables.tcTemplates;
+    const templates = await tx
+      .select({ id: tc.id, body: tc.body })
+      .from(tc)
+      .where(and(eq(tc.docType, def.tcDocType), eq(tc.isDefault, true), eq(tc.isActive, true), isNull(tc.deletedAt)))
+      .orderBy(asc(tc.name));
+    terms = templates.flatMap((tpl) => splitTerms(tpl.body as string).map((content) => ({ tcTemplateId: tpl.id, content })));
+  }
   await refLabels(tx, def.header, [header]);
   lines = lines.map((l) => ({ ...l, amount: lineAmount(l) }));
   return { ...header, lines, terms, containers: [] };

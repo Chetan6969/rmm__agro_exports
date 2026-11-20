@@ -7,7 +7,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { add, containerCount, CONTAINER_FIELDS, formatAmount, round, type DocDef } from '@rmm/shared';
+import { add, containerCount, CONTAINER_FIELDS, fillTemplate, formatAmount, round, type DocDef } from '@rmm/shared';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import PDFDocument from 'pdfkit';
 import { config } from '../../config.js';
@@ -186,13 +186,23 @@ class Writer {
     const { letterhead, logo } = data.images;
     let y = 30;
     if (letterhead) {
-      pdf.image(letterhead, LEFT, y, { fit: [RIGHT - LEFT, 90], align: 'center' });
-      y += 96;
+      // Span the full content column (same left/right margin as the body), proportional height.
+      const w = RIGHT - LEFT;
+      let h = 96;
+      try {
+        const img = pdf.openImage(letterhead);
+        h = Math.min((img.height / img.width) * w, 150);
+      } catch {
+        /* keep the default height */
+      }
+      pdf.image(letterhead, LEFT, y, { fit: [w, h], align: 'center' });
+      y += h + 16; // clear space under the letterhead, above the title
     } else if (logo) {
       pdf.image(logo, RIGHT - 120, y, { fit: [120, 54], align: 'right' });
     }
     pdf.font('Helvetica-Bold').fontSize(15).fillColor(DARK).text(this.title + (continued ? ' (continued)' : ''), LEFT, letterhead ? y : 40, { width: RIGHT - LEFT, align: 'center' });
-    this.y = Math.max(pdf.y + 6, letterhead ? y : 90);
+    // more breathing room under the title on letterhead documents (certificates)
+    this.y = Math.max(pdf.y + (letterhead ? 18 : 6), letterhead ? y : 90);
     if (continued) {
       pdf.font('Helvetica').fontSize(8).fillColor(GRAY).text(`${data.def.label} ${data.doc.documentNumber}`, LEFT, this.y, { width: RIGHT - LEFT, align: 'center' });
       this.y = pdf.y + 8;
@@ -855,6 +865,220 @@ export async function documentPdf(tx: Tx, ctx: RequestContext, key: string, id: 
   if (kind === 'packing-list') {
     return { filename: `Packing_List_${safe}.pdf`, body: await packingList(data) };
   }
+  if (data.def.key === 'oceanBills') {
+    return { filename: `OBL_${safe}.pdf`, body: await oceanBill(data) };
+  }
+  if (data.def.key === 'certificates') {
+    const d = data.doc;
+    const [tpl] = (await tx.select().from(masterTables.certificateTemplates).where(eq(masterTables.certificateTemplates.id, d.certificateTemplateId as string))) as Row[];
+    const obl = typeof d.oceanBillId === 'string' ? await getDocument(tx, ctx, 'oceanBills', d.oceanBillId, 'print').catch(() => null) : null;
+    const ci = typeof d.commercialInvoiceId === 'string' ? await getDocument(tx, ctx, 'commercialInvoices', d.commercialInvoiceId, 'print').catch(() => null) : null;
+    // Certificates print the chosen letterhead (not the company logo) and the chosen signature.
+    const [lhRow] = (typeof d.letterheadId === 'string' ? await tx.select().from(masterTables.letterheads).where(eq(masterTables.letterheads.id, d.letterheadId)) : []) as Row[];
+    const [sgRow] = (typeof d.signatureId === 'string' ? await tx.select().from(masterTables.signatures).where(eq(masterTables.signatures.id, d.signatureId)) : []) as Row[];
+    const [lhImg, sgImg] = await Promise.all([image(tx, lhRow?.letterheadFileId), image(tx, sgRow?.signatureFileId)]);
+    data.images = { ...data.images, logo: null, letterhead: lhImg ?? data.images.letterhead, signature: sgImg ?? data.images.signature };
+    if (sgRow?.signatoryName) {
+      data.company = { ...data.company, signatoryName: sgRow.signatoryName, signatoryDesignation: sgRow.signatoryDesignation ?? data.company.signatoryDesignation };
+    }
+    const title = str(tpl?.title) || str(d.certificateTemplateIdLabel) || 'CERTIFICATE';
+    return { filename: `${title.replace(/[^A-Za-z0-9-]+/g, '_')}_${safe}.pdf`, body: await certificate(data, tpl ?? null, certContext(data, obl as Row | null, ci as Row | null)) };
+  }
   const body = data.def.key === 'proformaInvoices' ? await proforma(data, descriptions) : data.def.key === 'productionOrders' ? await productionOrder(data, descriptions) : await commercialInvoice(data, descriptions);
   return { filename: `${data.def.short.replace(/\s+/g, '_')}_${safe}.pdf`, body };
+}
+
+// ------------------------------------------------------------------ ocean bill of lading (shipment details sheet)
+function oceanBill(data: PrintData): Promise<Buffer> {
+  const d = data.doc;
+  const RW = RIGHT - MIDX;
+  return render(
+    (w) => {
+      const ey = w.exporter(LEFT, MIDX - LEFT - 12, w.y);
+      const ry = w.kv(
+        [
+          ['OBL reference', d.documentNumber],
+          ['Date', formatDate(d.documentDate)],
+          ['B/L no.', d.blNumber],
+          ['B/L date', formatDate(d.blDate)],
+          ['Shipping bill', [d.shippingBillNumber, formatDate(d.shippingBillDate)].filter(Boolean).join(' / ')],
+        ],
+        MIDX,
+        RW,
+        w.heading('BILL OF LADING', MIDX, RW),
+        92,
+      );
+      w.y = Math.max(ey, ry) + 8;
+      const cY = w.party('CONSIGNEE', data.parties.consignee ?? data.parties.buyer, LEFT, MIDX - LEFT - 12, w.y);
+      const nY = w.party('NOTIFY PARTY', data.parties.notify ?? data.parties.buyer, MIDX, RW, w.y);
+      w.y = Math.max(cY, nY) + 8;
+      const sh = w.heading('VESSEL & ROUTE', LEFT, RIGHT - LEFT);
+      const l = w.kv(
+        [
+          ['Vessel / flight', d.vesselName],
+          ['Voyage no.', d.voyageNo],
+          ['Shipping line', d.shippingLineIdLabel],
+          ['Port of loading', d.portOfLoadingIdLabel],
+          ['Port of discharge', d.portOfDischargeIdLabel],
+        ],
+        LEFT,
+        MIDX - LEFT - 12,
+        sh,
+        110,
+      );
+      const r = w.kv(
+        [
+          ['Place of receipt', d.placeOfReceipt],
+          ['Place of delivery', d.placeOfDelivery],
+          ['Final destination', d.finalDestination],
+          ['Agent at destination', d.destinationAgentIdLabel],
+          ['LC no. & date', [d.lcNumber, formatDate(d.lcDate)].filter(Boolean).join(' / ')],
+        ],
+        MIDX,
+        RW,
+        sh,
+        110,
+      );
+      w.y = Math.max(l, r) + 10;
+      const mt = (v: unknown) => (v === null || v === undefined || v === '' ? '' : `${round(str(v), 3)} MT`);
+      const sh2 = w.heading('CARGO', LEFT, RIGHT - LEFT);
+      w.y =
+        w.kv(
+          [
+            ['Description', d.goodsDescription],
+            ['Packing', d.packing],
+            ['Brand', d.brand],
+            ['Net weight', mt(d.netWeightMt)],
+            ['Gross weight', mt(d.grossWeightMt)],
+            ['Total bags', d.totalBags],
+            ['No. of containers', d.noOfContainers],
+            ['Shipping marks', d.shippingMarks],
+          ],
+          LEFT,
+          RIGHT - LEFT,
+          sh2,
+          110,
+        ) + 12;
+      w.y = w.signature(RIGHT - 210, 210, Math.max(w.y, BOTTOM - 110) + 6);
+    },
+    data,
+    'OCEAN BILL OF LADING',
+  );
+}
+
+// ------------------------------------------------------------------ certificates (template-driven letters)
+/** Placeholder values for a certificate, from the invoice + OBL (labels already resolved by getDocument). */
+function certContext(data: PrintData, obl: Row | null, ci: Row | null): Record<string, string> {
+  const num = (v: unknown) => (v === null || v === undefined || v === '' ? '' : round(String(v), 3));
+  return {
+    exporter: str(data.company.legalName) || str(data.company.name),
+    consignee: data.parties.consignee?.name ?? data.parties.buyer?.name ?? '',
+    applicant: data.parties.buyer?.name ?? data.parties.consignee?.name ?? '',
+    buyer: data.parties.buyer?.name ?? '',
+    notify: data.parties.notify?.name ?? '',
+    invoice_no: str(ci?.documentNumber),
+    invoice_date: formatDate(ci?.documentDate),
+    bl_no: str(obl?.blNumber),
+    bl_date: formatDate(obl?.blDate),
+    shipping_bill_no: str(obl?.shippingBillNumber),
+    shipping_bill_date: formatDate(obl?.shippingBillDate),
+    vessel: str(obl?.vesselName),
+    voyage: str(obl?.voyageNo),
+    shipping_line: str(obl?.shippingLineIdLabel),
+    port_loading: str(obl?.portOfLoadingIdLabel ?? ci?.portOfLoadingIdLabel),
+    port_discharge: str(obl?.portOfDischargeIdLabel ?? ci?.portOfDischargeIdLabel),
+    place_receipt: str(obl?.placeOfReceipt),
+    place_delivery: str(obl?.placeOfDelivery),
+    final_destination: str(obl?.finalDestination),
+    destination_agent: str(obl?.destinationAgentIdLabel),
+    destination_agent_address: str(obl?.destinationAgentAddress),
+    net_weight: num(obl?.netWeightMt ?? ci?.totalQuantityMt),
+    gross_weight: num(obl?.grossWeightMt ?? ci?.totalGrossWtMt),
+    total_bags: str(obl?.totalBags ?? ci?.totalBags),
+    no_of_containers: str(obl?.noOfContainers ?? ci?.noOfContainers),
+    lc_no: str(obl?.lcNumber ?? ci?.lcNumber),
+    lc_date: formatDate(obl?.lcDate ?? ci?.lcDate),
+    lc_applicant_emails: str(obl?.lcApplicantEmails),
+    po_no: str(ci?.buyerPoRef),
+    po_date: formatDate(ci?.poDate),
+    brand: str(obl?.brand ?? ci?.brand),
+    description: str(obl?.goodsDescription),
+    packing: str(obl?.packing),
+    shipping_marks: str(obl?.shippingMarks),
+    crop_year: str(obl?.cropYear),
+    year_of_production: str(obl?.yearOfProduction),
+    invoice_value: str(obl?.invoiceValue),
+  };
+}
+
+function certificate(data: PrintData, tpl: Row | null, ctx: Record<string, string>): Promise<Buffer> {
+  const d = data.doc;
+  const title = str(tpl?.title) || str(d.certificateTemplateIdLabel) || 'CERTIFICATE';
+  const body = fillTemplate(str(tpl?.body), ctx);
+  const showTable = tpl ? tpl.showShipmentTable !== false : true;
+  const RW = RIGHT - MIDX;
+  return render(
+    (w) => {
+      const { pdf } = w;
+      const ey = w.exporter(LEFT, MIDX - LEFT - 12, w.y, 'EXPORTER / BENEFICIARY');
+      const ry = w.kv(
+        [
+          ['Certificate no.', d.documentNumber],
+          ['Date', formatDate(d.documentDate)],
+          ['Invoice no.', ctx.invoice_no],
+          ['LC no.', ctx.lc_no],
+          ['B/L no.', ctx.bl_no],
+        ],
+        MIDX,
+        RW,
+        w.heading('REFERENCE', MIDX, RW),
+        90,
+      );
+      w.y = Math.max(ey, ry) + 8;
+      w.y = w.party('TO — CONSIGNEE / APPLICANT', data.parties.consignee ?? data.parties.buyer, LEFT, RIGHT - LEFT, w.y) + 10;
+      if (showTable) {
+        const mt = (v: string) => (v ? `${v} MT` : '');
+        const sh = w.heading('SHIPMENT DETAILS', LEFT, RIGHT - LEFT);
+        const l = w.kv(
+          [
+            ['Vessel', ctx.vessel],
+            ['Port of loading', ctx.port_loading],
+            ['Port of discharge', ctx.port_discharge],
+            ['Place of delivery', ctx.place_delivery],
+            ['Shipping line', ctx.shipping_line],
+            ['Agent at destination', ctx.destination_agent],
+          ],
+          LEFT,
+          MIDX - LEFT - 12,
+          sh,
+          110,
+        );
+        const r = w.kv(
+          [
+            ['Description', ctx.description || ctx.brand],
+            ['Packing', ctx.packing],
+            ['Net weight', mt(ctx.net_weight)],
+            ['Gross weight', mt(ctx.gross_weight)],
+            ['Total bags', ctx.total_bags],
+            ['PO no.', ctx.po_no],
+          ],
+          MIDX,
+          RW,
+          sh,
+          90,
+        );
+        w.y = Math.max(l, r) + 12;
+      }
+      w.ensure(80);
+      pdf.font('Helvetica').fontSize(10).fillColor(DARK).text(body, LEFT, w.y, { width: RIGHT - LEFT, lineGap: 3, align: 'left' });
+      w.y = pdf.y + 10;
+      if (str(d.remark).trim()) {
+        pdf.font('Helvetica').fontSize(9).fillColor(GRAY).text(str(d.remark), LEFT, w.y, { width: RIGHT - LEFT });
+        w.y = pdf.y + 10;
+      }
+      w.y = w.signature(RIGHT - 210, 210, Math.max(w.y, BOTTOM - 110) + 10);
+    },
+    data,
+    title.toUpperCase(),
+  );
 }

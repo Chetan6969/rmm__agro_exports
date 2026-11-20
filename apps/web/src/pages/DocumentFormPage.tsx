@@ -53,7 +53,14 @@ interface Child {
   usedMt: string;
   remainingMt: string;
 }
-type Loaded = Values & { id?: string; version?: number; lines: Values[]; terms: Values[]; containers: Values[]; children?: Child[]; updatedAt?: string; amountInWords?: string };
+interface LetterChild {
+  doc: keyof typeof DOCS;
+  label: string;
+  plural: string;
+  module: string;
+  rows: { id: string; documentNumber: string; documentDate: string; status: string }[];
+}
+type Loaded = Values & { id?: string; version?: number; lines: Values[]; terms: Values[]; containers: Values[]; children?: Child[]; letterChildren?: LetterChild[]; updatedAt?: string; amountInWords?: string };
 
 let seq = 0;
 const key = () => `k${++seq}`;
@@ -411,37 +418,40 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
           {formError != null && <ErrorBox error={formError} />}
           <DraftBanner cache={cache} />
           {!isNew && record?.children && <ChildrenPanel def={def} id={id} items={record.children} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
+          {!isNew && !!record?.letterChildren?.length && <LetterChildrenPanel id={id} items={record.letterChildren} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           <EntityForm def={asEntity(def.key, def.header)} values={header} labels={labels} errors={errors} readOnly={readOnly} onChange={onHeaderChange} />
           {rateNote && <div className="-mt-2 text-[12px] text-slate-500">{rateNote}</div>}
 
-          <Section
-            title={`Products (${groupIds(lines).length})${def.key === 'commercialInvoices' && containerCount(lines) ? ` · ~${containerCount(lines)} container${containerCount(lines) === 1 ? '' : 's'}` : ''}`}
-            action={
-              !readOnly && (
-                <Button icon={<Plus className="size-3.5" />} onClick={() => setEditing({ group: null })} shortcut="alt+a">
-                  Add product
-                </Button>
-              )
-            }
-          >
-            <LinesTable
-              def={def}
-              lines={lines}
-              currency={currency}
-              errors={lineErrors}
-              readOnly={readOnly}
-              onEdit={(g) => setEditing({ group: g })}
-              onRemove={(g) => {
-                setLines((s) => s.filter((l) => Number(l.packGroup) !== g));
-                touch();
-              }}
-              onMove={(g, d) => {
-                setLines((s) => moveGroup(s, g, d));
-                touch();
-              }}
-            />
-            {errors.lines && <div className="mt-1 text-[12px] text-red-600">{errors.lines}</div>}
-          </Section>
+          {!!def.lines.length && (
+            <Section
+              title={`Products (${groupIds(lines).length})${def.key === 'commercialInvoices' && containerCount(lines) ? ` · ~${containerCount(lines)} container${containerCount(lines) === 1 ? '' : 's'}` : ''}`}
+              action={
+                !readOnly && (
+                  <Button icon={<Plus className="size-3.5" />} onClick={() => setEditing({ group: null })} shortcut="alt+a">
+                    Add product
+                  </Button>
+                )
+              }
+            >
+              <LinesTable
+                def={def}
+                lines={lines}
+                currency={currency}
+                errors={lineErrors}
+                readOnly={readOnly}
+                onEdit={(g) => setEditing({ group: g })}
+                onRemove={(g) => {
+                  setLines((s) => s.filter((l) => Number(l.packGroup) !== g));
+                  touch();
+                }}
+                onMove={(g, d) => {
+                  setLines((s) => moveGroup(s, g, d));
+                  touch();
+                }}
+              />
+              {errors.lines && <div className="mt-1 text-[12px] text-red-600">{errors.lines}</div>}
+            </Section>
+          )}
 
           {def.containers && (
             <Section title={`Containers (${containers.length}) · for the packing list`}>
@@ -449,11 +459,13 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
             </Section>
           )}
 
-          <Section title={`Terms & conditions (${terms.length})`}>
-            <TermsEditor def={def} terms={terms} readOnly={readOnly} update={(fn) => (setTerms(fn), touch())} />
-          </Section>
+          {def.termsTable && (
+            <Section title={`Terms & conditions (${terms.length})`}>
+              <TermsEditor def={def} terms={terms} readOnly={readOnly} update={(fn) => (setTerms(fn), touch())} />
+            </Section>
+          )}
 
-          <TotalsPanel def={def} totals={totals} currency={currency} words={!dirty ? record?.amountInWords : null} />
+          {!!def.lines.length && <TotalsPanel def={def} totals={totals} currency={currency} words={!dirty ? record?.amountInWords : null} />}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
             <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print</span>
@@ -1153,6 +1165,42 @@ function ChildrenPanel({ def, id, items, canCreate, dirty }: { def: DocDef; id: 
           </section>
         );
       })}
+    </>
+  );
+}
+
+/** OBL + certificates generated against this invoice (no quantity balance — just links + create). */
+function LetterChildrenPanel({ id, items, canCreate, dirty }: { id: string; items: LetterChild[]; canCreate: (module: string) => boolean; dirty: boolean }) {
+  const navigate = useNavigate();
+  return (
+    <>
+      {items.map((c) => (
+        <section key={c.doc} className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-violet-200 bg-violet-50/60 px-4 py-2.5 text-[13px]">
+          <FileText className="size-4 text-violet-700" />
+          <span className="font-medium">{c.plural}</span>
+          <span className="flex flex-wrap gap-1.5">
+            {c.rows.map((r) => (
+              <Link key={r.id} to={`/d/${c.doc}/${r.id}`} className="rounded border border-violet-200 bg-white px-1.5 py-0.5 font-mono text-[12px] text-violet-800 hover:bg-violet-100">
+                {r.documentNumber}
+                {r.status === 'CANCELLED' ? ' (cancelled)' : ''}
+              </Link>
+            ))}
+            {!c.rows.length && <span className="text-slate-400">none yet</span>}
+          </span>
+          {canCreate(c.module) && (
+            <Button
+              className="ml-auto"
+              variant="primary"
+              icon={<Plus className="size-3.5" />}
+              disabled={dirty}
+              title={dirty ? 'Save your changes first' : `Create a ${c.label.toLowerCase()} against this invoice`}
+              onClick={() => navigate(`/d/${c.doc}/new?from=${id}`)}
+            >
+              Create {c.label.toLowerCase()}
+            </Button>
+          )}
+        </section>
+      ))}
     </>
   );
 }
