@@ -14,7 +14,9 @@ import { HomePage } from './pages/HomePage';
 import { ChangePasswordPage, LoginPage } from './pages/LoginPage';
 import { MasterFormPage } from './pages/MasterFormPage';
 import { MasterListPage } from './pages/MasterListPage';
+import { OrderPlanningPage } from './pages/OrderPlanningPage';
 import { ProformaReportsPage } from './pages/ProformaReportsPage';
+import { ShipmentsPage } from './pages/ShipmentsPage';
 
 const NotFound = () => <div className="p-6 text-slate-500">Page not found. Press Ctrl+K to find a screen.</div>;
 
@@ -24,6 +26,8 @@ const router = createBrowserRouter([
     children: [
       { path: '/', element: <HomePage /> },
       { path: '/mis', element: <DashboardPage /> },
+      { path: '/shipments', element: <ShipmentsPage /> },
+      { path: '/plan/:piId', element: <OrderPlanningPage /> },
       { path: '/d/:doc', element: <DocumentListPage /> },
       { path: '/d/:doc/:id', element: <DocumentFormPage /> },
       { path: '/reports/proforma', element: <ProformaReportsPage /> },

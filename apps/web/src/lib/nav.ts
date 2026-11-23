@@ -49,6 +49,7 @@ export const NAV: NavItem[] = [
     keywords: `${d.label} ${d.short} sales document`,
     icon: DOC_ICONS[d.key] ?? FileText,
   })),
+  { id: 'shipments', label: 'Shipments', path: '/shipments', group: 'Sales', perm: ['sales.shipments', 'view'], keywords: 'lots order planning shipment charges gulf eu', icon: Ship },
   { id: 'pi-reports', label: 'PI reports', path: '/reports/proforma', group: 'Sales', perm: ['sales.proformaInvoices', 'view'], keywords: 'proforma analysis field usage terms', icon: BarChart3 },
   ...MENU_ORDER.flatMap((menu) =>
     entities

@@ -18,7 +18,7 @@ import {
   type LiveRatesResponse,
 } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Lock, Package, Pencil, Plus, Printer, Save, Trash2, Unlock } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Lock, Package, Pencil, Plus, Printer, Save, Ship, Trash2, Unlock } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
@@ -382,6 +382,11 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
               <Link to={`/admin/audit?entity=${def.key}&recordId=${id}`} className="inline-flex items-center gap-1 px-2 text-[12.5px] text-slate-500 hover:text-slate-800">
                 <History className="size-3.5" /> History
               </Link>
+            )}
+            {!isNew && def.key === 'proformaInvoices' && can('sales.shipments', 'view') && (
+              <Button icon={<Ship className="size-3.5" />} onClick={() => navigate(`/plan/${id}`)}>
+                Plan shipments
+              </Button>
             )}
             {!isNew && can(def.module, 'print') && (
               <>

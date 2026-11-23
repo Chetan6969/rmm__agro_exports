@@ -457,6 +457,23 @@ export const ENTITY_LIST = [
     ],
   },
   {
+    key: 'chargeHeads',
+    table: 'charge_heads',
+    label: 'Charge head',
+    plural: 'Charge heads',
+    menu: 'Finance',
+    scope: 'company',
+    shareable: true,
+    displayField: 'name',
+    fields: [
+      { name: 'code', label: 'Code', type: 'text', unique: true, upper: true, list: true, search: true },
+      { name: 'name', label: 'Name', type: 'text', required: true, list: true, search: true, span: 2, help: 'e.g. Ocean freight, CHA charges, Transport, Inspection' },
+      { name: 'unit', label: 'Basis', type: 'select', required: true, options: ['Per 20ft container', 'Per MT', 'Per shipment', 'Lumpsum'], default: 'Per 20ft container', list: true },
+      { name: 'defaultAmount', label: 'Default rate', type: 'decimal', precision: 15, scale: 2, default: 0, list: true },
+      active,
+    ],
+  },
+  {
     key: 'letterheads',
     table: 'letterheads',
     label: 'Letterhead',
