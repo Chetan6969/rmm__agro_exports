@@ -31,7 +31,7 @@ import {
   type EntityDef,
   type FieldDef,
 } from '@rmm/shared';
-import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Tx } from '../../db/client.js';
 import { docTables, masterTables, type DocTables } from '../../db/schema/index.js';
@@ -197,7 +197,8 @@ async function checkParentBalance(tx: Tx, def: DocDef, header: Row, totalQty: st
 
 /** A parent may not shrink below (or be cancelled under) what its children already use. */
 async function checkChildrenFit(tx: Tx, def: DocDef, id: string, totalQty: string, status: unknown) {
-  for (const child of childDocs(def.key)) {
+  // Letter children (OBL, certificates) carry no quantity, so they never consume a balance.
+  for (const child of childDocs(def.key).filter((c) => !c.letter)) {
     const used = await allocatedQty(tx, child, id);
     if (!isPositive(used)) continue;
     if (status === CANCELLED) {
@@ -306,7 +307,7 @@ export async function createDocument(tx: Tx, ctx: RequestContext, key: string, b
   const documentNumber = typed || (await allocateNumber(tx, ctx, def.numbering, p.header.documentDate as string));
   const [row] = (await tx
     .insert(t.header)
-    .values({ ...p.header, ...totals, documentNumber, amountInWords: words, companyId, createdBy: ctx.userId, updatedBy: ctx.userId })
+    .values({ ...p.header, ...totals, documentNumber, amountInWords: words, companyId, sortOrder: Date.now(), createdBy: ctx.userId, updatedBy: ctx.userId })
     .returning()) as Row[];
   await writeChildren(tx, def, companyId, row.id as string, p);
   await audit(tx, ctx, { entity: def.key, recordId: row.id as string, action: 'create', after: row, meta: { lines: p.lines.length } });
@@ -379,6 +380,28 @@ export async function setDocumentLock(tx: Tx, ctx: RequestContext, key: string, 
     .returning()) as Row[];
   await audit(tx, ctx, { entity: def.key, recordId: id, action: 'update', before, after: row, meta: { locked } });
   return getDocument(tx, ctx, key, id, 'view');
+}
+
+/** Move a document up/down in the list by swapping its manual sort order with its neighbour. */
+export async function reorderDocument(tx: Tx, ctx: RequestContext, key: string, id: string, direction: 'up' | 'down') {
+  const { def, t } = resolveDoc(key);
+  allow(ctx, def, 'edit');
+  const companyId = requireCompany(ctx);
+  const h = t.header;
+  const [me] = (await tx.select({ id: h.id, sortOrder: h.sortOrder }).from(h).where(and(eq(h.id, id), isNull(h.deletedAt)))) as Row[];
+  if (!me) throw notFound();
+  let mine = me.sortOrder as number | null;
+  if (mine == null) {
+    mine = Date.now();
+    await tx.update(h).set({ sortOrder: mine }).where(eq(h.id, id));
+  }
+  // 'up' = toward the top = the next-larger sort order; 'down' = the next-smaller.
+  const cond = and(eq(h.companyId, companyId), isNull(h.deletedAt), direction === 'up' ? gt(h.sortOrder, mine) : lt(h.sortOrder, mine));
+  const [nb] = (await tx.select({ id: h.id, sortOrder: h.sortOrder }).from(h).where(cond).orderBy(direction === 'up' ? asc(h.sortOrder) : desc(h.sortOrder)).limit(1)) as Row[];
+  if (!nb) return { ok: true, moved: false };
+  await tx.update(h).set({ sortOrder: nb.sortOrder }).where(eq(h.id, id));
+  await tx.update(h).set({ sortOrder: mine }).where(eq(h.id, nb.id));
+  return { ok: true, moved: true };
 }
 
 async function loadHeader(tx: Tx, def: DocDef, id: string, lock = false): Promise<Row> {
@@ -463,7 +486,8 @@ export async function listDocuments(tx: Tx, ctx: RequestContext, key: string, q:
     .select()
     .from(h)
     .where(where)
-    .orderBy(desc(h.documentDate), desc(h.createdAt))
+    // Manual order (move up/down); defaults to creation time so the newest is on top.
+    .orderBy(sql`${h.sortOrder} desc nulls last`, desc(h.createdAt))
     .limit(pageSize)
     .offset((page - 1) * pageSize)) as Row[];
   await refLabels(tx, def.header, rows);

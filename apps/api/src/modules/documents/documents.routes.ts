@@ -11,6 +11,7 @@ import {
   lookupDocuments,
   proformaFieldUsage,
   proformaTermsUsage,
+  reorderDocument,
   setDocumentLock,
   updateDocument,
   type DocListQuery,
@@ -94,5 +95,10 @@ export async function documentRoutes(app: FastifyInstance) {
   app.post<{ Params: P; Body: { locked?: boolean } }>('/documents/:doc/:id/lock', async (req) => {
     const ctx = requireCtx(req);
     return inTenantTx(ctx, (tx) => setDocumentLock(tx, ctx, req.params.doc, req.params.id, req.body?.locked !== false));
+  });
+
+  app.post<{ Params: P; Body: { direction?: 'up' | 'down' } }>('/documents/:doc/:id/reorder', async (req) => {
+    const ctx = requireCtx(req);
+    return inTenantTx(ctx, (tx) => reorderDocument(tx, ctx, req.params.doc, req.params.id, req.body?.direction === 'down' ? 'down' : 'up'));
   });
 }

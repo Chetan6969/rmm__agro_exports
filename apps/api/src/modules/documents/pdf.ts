@@ -673,10 +673,6 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
   return render(
     (w) => {
       const { pdf } = w;
-      pdf.font('Helvetica').fontSize(7).fillColor(GRAY).text('SUPPLY MEANT FOR EXPORT WITHOUT PAYMENT OF IGST', LEFT, w.y - 4, { width: RIGHT - LEFT, align: 'center' });
-      w.y = pdf.y + 2;
-      pdf.font('Helvetica-Bold').fontSize(8).fillColor(stage === 'FINAL' ? ACCENT : '#c23a3a').text(stage === 'FINAL' ? 'FINAL INVOICE' : 'DRAFT — NOT A FINAL INVOICE', LEFT, w.y, { width: RIGHT - LEFT, align: 'center' });
-      w.y = pdf.y + 6;
       const RW = RIGHT - MIDX;
       const ey = w.exporter(LEFT, MIDX - LEFT - 12, w.y, 'SHIPPER / EXPORTER / MANUFACTURER');
       const ry = w.kv(
@@ -754,6 +750,7 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
         [`FOB value (${cur})`, formatAmount(str(d.fobAmount))],
         ...(charges && (incoterm === 'CFR' || incoterm === 'CIF') ? ([['Ocean freight', formatAmount(str(d.oceanFreightAmount))]] as [string, string][]) : []),
         ...(charges && incoterm === 'CIF' ? ([['Insurance', formatAmount(str(d.insuranceAmount))]] as [string, string][]) : []),
+        ...(Number(d.discountAmount) ? ([['Discount', `- ${formatAmount(str(d.discountAmount))}`]] as [string, string][]) : []),
         [`Total ${incoterm} value (${cur})`, formatAmount(str(d.invoiceTotal)), true],
       ]);
       w.y = Math.max(w.y, leftBottom) + 4;
