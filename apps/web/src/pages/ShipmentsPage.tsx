@@ -16,6 +16,7 @@ interface Shipment {
   piId: string;
   piNumber: string | null;
   buyer: string | null;
+  pipeline: { percent: number; done: number; total: number; next: string | null };
 }
 
 const STATUS: Record<string, string> = {
@@ -43,7 +44,7 @@ export function ShipmentsPage() {
         {rows.length === 0 ? (
           <div className="p-8 text-center text-slate-500">No shipments planned yet. Open a proforma invoice and use “Plan shipments”.</div>
         ) : (
-          <table className="w-full min-w-[720px] text-[13px]">
+          <table className="w-full min-w-[920px] text-[13px]">
             <thead>
               <tr className="border-b border-slate-200 text-left text-[11.5px] tracking-wide text-slate-500 uppercase">
                 <th className="py-2 pr-2">Order</th>
@@ -54,6 +55,7 @@ export function ShipmentsPage() {
                 <th className="py-2 pr-2 text-right">Containers</th>
                 <th className="py-2 pr-2">Target date</th>
                 <th className="py-2 pr-2">Status</th>
+                <th className="py-2 pr-2 w-52">Pipeline</th>
               </tr>
             </thead>
             <tbody>
@@ -67,6 +69,13 @@ export function ShipmentsPage() {
                   <td className="py-1.5 pr-2 text-right tabular-nums">{r.containerCount || '—'}</td>
                   <td className="py-1.5 pr-2 text-slate-600">{r.targetShipDate ?? '—'}</td>
                   <td className="py-1.5 pr-2"><span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS[r.status] ?? 'bg-slate-100 text-slate-600'}`}>{label(r.status)}</span></td>
+                  <td className="py-1.5 pr-2">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${r.pipeline?.percent ?? 0}%` }} /></div>
+                      <span className="text-[11px] tabular-nums text-slate-500">{r.pipeline?.done ?? 0}/{r.pipeline?.total ?? 0}</span>
+                      <span className="max-w-24 truncate text-[11px] text-slate-400">{r.pipeline?.next ?? 'done'}</span>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -1,9 +1,10 @@
 import { add, formatAmount, mul, round, sub } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Package, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, FileText, Package, Plus, Save, Trash2 } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { RefSelect } from '../components/RefSelect';
 import { Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api } from '../lib/api';
 import { showError } from '../lib/notify';
@@ -11,6 +12,8 @@ import { useSession } from '../lib/session';
 
 interface ChargeHead { id: string; code: string; name: string; unit: string; defaultAmount: string }
 interface Charge { chargeHeadId: string | null; label: string; qty: string; rate: string }
+interface Step { key: string; label: string; doc: string | null; done: boolean; date: string | null }
+interface Pipeline { steps: Step[]; total: number; done: number; percent: number; next: string | null }
 interface Lot {
   id?: string;
   lotNo: number;
@@ -21,6 +24,10 @@ interface Lot {
   status: string;
   notes: string | null;
   charges: Charge[];
+  productionOrderId?: string | null;
+  commercialInvoiceId?: string | null;
+  oceanBillId?: string | null;
+  pipeline?: Pipeline;
 }
 interface Plan {
   pi: { id: string; number: string; date: string; totalMt: string; buyer: string | null; incoterm: string; currency: string | null };
@@ -128,7 +135,7 @@ function LotCard({ lot, heads, currency, piId, readOnly, isDraft, onDone, onCanc
   const save = async () => {
     setBusy(true);
     try {
-      const body = { proformaInvoiceId: piId, lotNo: s.lotNo, market: s.market, quantityMt: s.quantityMt || '0', containerCount: Number(s.containerCount) || 0, targetShipDate: s.targetShipDate || null, status: s.status, notes: s.notes || null, charges: s.charges };
+      const body = { proformaInvoiceId: piId, lotNo: s.lotNo, market: s.market, quantityMt: s.quantityMt || '0', containerCount: Number(s.containerCount) || 0, targetShipDate: s.targetShipDate || null, status: s.status, notes: s.notes || null, productionOrderId: s.productionOrderId || null, commercialInvoiceId: s.commercialInvoiceId || null, oceanBillId: s.oceanBillId || null, charges: s.charges };
       if (s.id) await api.put(`/shipments/${s.id}`, body);
       else await api.post('/shipments', body);
       toast.success(`Lot ${s.lotNo} saved`);
@@ -201,12 +208,73 @@ function LotCard({ lot, heads, currency, piId, readOnly, isDraft, onDone, onCanc
         )}
       </div>
 
+      {/* linked documents (setting one auto-completes its pipeline step) */}
+      <div className="mt-3">
+        <span className="text-[11.5px] font-semibold tracking-wide text-slate-500 uppercase">Linked documents</span>
+        <div className="mt-1 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <RefSelect source="document" entity="productionOrders" value={s.productionOrderId ?? null} disabled={readOnly} placeholder="Production order…" onChange={(v) => setS((x) => ({ ...x, productionOrderId: v }))} />
+          <RefSelect source="document" entity="oceanBills" value={s.oceanBillId ?? null} disabled={readOnly} placeholder="Bill of lading…" onChange={(v) => setS((x) => ({ ...x, oceanBillId: v }))} />
+          <RefSelect source="document" entity="commercialInvoices" value={s.commercialInvoiceId ?? null} disabled={readOnly} placeholder="Commercial invoice…" onChange={(v) => setS((x) => ({ ...x, commercialInvoiceId: v }))} />
+        </div>
+      </div>
+
+      {/* pipeline (saved lots only) */}
+      {lot.id && lot.pipeline && <PipelineStepper shipmentId={lot.id} pipeline={lot.pipeline} readOnly={readOnly} onChanged={onDone} />}
+
       {!readOnly && (
         <div className="mt-3 flex items-center justify-end gap-2">
           <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={del}>{isDraft ? 'Cancel' : 'Delete lot'}</Button>
           <Button variant="primary" icon={<Save className="size-3.5" />} loading={busy} onClick={save}>Save lot</Button>
         </div>
       )}
+    </div>
+  );
+}
+
+function PipelineStepper({ shipmentId, pipeline, readOnly, onChanged }: { shipmentId: string; pipeline: Pipeline; readOnly: boolean; onChanged: () => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const currentIdx = pipeline.steps.findIndex((s) => !s.done);
+  const toggle = async (step: Step) => {
+    if (readOnly || step.doc) return;
+    setBusy(step.key);
+    try {
+      await api.post(`/shipments/${shipmentId}/stage`, { stageKey: step.key, done: !step.done });
+      onChanged();
+    } catch (e) {
+      showError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[11.5px] font-semibold tracking-wide text-slate-500 uppercase">Pipeline · {pipeline.done}/{pipeline.total}</span>
+        <span className="text-[12px] text-slate-400">{pipeline.next ? `Next: ${pipeline.next}` : 'Complete 🎉'}</span>
+      </div>
+      <div className="mb-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
+        <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600 transition-all" style={{ width: `${pipeline.percent}%` }} />
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {pipeline.steps.map((st, i) => {
+          const current = i === currentIdx;
+          const cls = st.done ? 'border-emerald-500 bg-emerald-500 text-white' : current ? 'border-indigo-400 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-400';
+          return (
+            <button
+              key={st.key}
+              type="button"
+              disabled={readOnly || !!st.doc || busy === st.key}
+              onClick={() => toggle(st)}
+              title={st.doc ? `Auto — completes when the ${st.doc} is linked` : st.done ? `Done ${st.date ?? ''} · click to undo` : 'Click to mark done'}
+              className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${cls} ${st.doc ? 'cursor-default' : readOnly ? '' : 'hover:brightness-95'}`}
+            >
+              {st.done && <Check className="size-3" />}
+              {st.doc && !st.done && <FileText className="size-3 opacity-60" />}
+              {st.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

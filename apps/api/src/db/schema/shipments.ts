@@ -4,7 +4,7 @@
  * the production order / commercial invoice / OBL made for it (pipeline, phase 3). Company-scoped
  * and RLS-isolated (both tables are in PRIVATE_COMPANY_TABLES in rls.ts).
  */
-import { date, index, integer, numeric, pgTable, text, timestamp, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core';
+import { boolean, date, index, integer, numeric, pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { id, recordColumns } from './columns.js';
 import { proformaInvoices } from './documents.js';
 import { companies } from './masters.js';
@@ -54,4 +54,24 @@ export const shipmentCharges = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('shipment_charges_shipment_idx').on(t.shipmentId)],
+);
+
+/** Manual pipeline steps per shipment (document-backed steps are derived from the shipment's links). */
+export const shipmentStages = pgTable(
+  'shipment_stages',
+  {
+    id: id(),
+    companyId: uuid('company_id')
+      .notNull()
+      .references((): AnyPgColumn => companies.id, { onDelete: 'restrict' }),
+    shipmentId: uuid('shipment_id')
+      .notNull()
+      .references((): AnyPgColumn => shipments.id, { onDelete: 'cascade' }),
+    stageKey: text('stage_key').notNull(),
+    done: boolean('done').notNull().default(false),
+    doneDate: date('done_date'),
+    note: text('note'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('shipment_stages_uq').on(t.shipmentId, t.stageKey)],
 );
