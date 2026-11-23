@@ -1,10 +1,13 @@
 import { formatAmount } from '@rmm/shared';
 import { useQuery } from '@tanstack/react-query';
+import { Boxes, Check, Container, PackageCheck, Search, Ship } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
 
+interface Step { key: string; label: string; doc: string | null; done: boolean }
 interface Shipment {
   id: string;
   lotNo: number;
@@ -16,7 +19,9 @@ interface Shipment {
   piId: string;
   piNumber: string | null;
   buyer: string | null;
-  pipeline: { percent: number; done: number; total: number; next: string | null };
+  currency: string | null;
+  chargeTotal: string;
+  pipeline: { percent: number; done: number; total: number; next: string | null; steps: Step[] };
 }
 
 const STATUS: Record<string, string> = {
@@ -25,62 +30,153 @@ const STATUS: Record<string, string> = {
   SHIPPED: 'bg-emerald-100 text-emerald-700',
   CANCELLED: 'bg-red-100 text-red-700',
 };
-const label = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace('_', ' ');
+const statusLabel = (s: string) => s.charAt(0) + s.slice(1).toLowerCase().replace('_', ' ');
+const num = (v: unknown) => Number(v ?? 0);
 
 export function ShipmentsPage() {
   const { session } = useSession();
   const navigate = useNavigate();
   const q = useQuery({ queryKey: ['shipments', 'list'], queryFn: () => api.get<Shipment[]>('/shipments'), enabled: !!session?.activeCompany });
+  const [search, setSearch] = useState('');
+  const [market, setMarket] = useState('');
+  const [status, setStatus] = useState('');
+
+  const all = q.data ?? [];
+  const rows = useMemo(() => {
+    const t = search.trim().toLowerCase();
+    return all.filter(
+      (r) =>
+        (!market || r.market === market) &&
+        (!status || r.status === status) &&
+        (!t || `${r.piNumber ?? ''} ${r.buyer ?? ''}`.toLowerCase().includes(t)),
+    );
+  }, [all, search, market, status]);
+
+  const stats = useMemo(() => {
+    const active = rows.filter((r) => r.status !== 'CANCELLED');
+    return {
+      lots: rows.length,
+      mt: active.reduce((a, r) => a + num(r.quantityMt), 0),
+      shipped: rows.filter((r) => r.status === 'SHIPPED').length,
+      inProgress: rows.filter((r) => r.status === 'IN_PROGRESS').length,
+      avg: active.length ? Math.round(active.reduce((a, r) => a + (r.pipeline?.percent ?? 0), 0) / active.length) : 0,
+    };
+  }, [rows]);
+
+  // group by order (PI)
+  const groups = useMemo(() => {
+    const m = new Map<string, { piId: string; piNumber: string | null; buyer: string | null; lots: Shipment[] }>();
+    for (const r of rows) {
+      const g = m.get(r.piId) ?? { piId: r.piId, piNumber: r.piNumber, buyer: r.buyer, lots: [] };
+      g.lots.push(r);
+      m.set(r.piId, g);
+    }
+    return [...m.values()].map((g) => ({ ...g, lots: g.lots.sort((a, b) => a.lotNo - b.lotNo) }));
+  }, [rows]);
 
   if (!session?.activeCompany) return <div className="p-6"><ErrorBox error={new Error('Select a company first (Alt+C).')} /></div>;
   if (q.isLoading) return <Spinner />;
   if (q.error) return <div className="p-6"><ErrorBox error={q.error} /></div>;
-  const rows = q.data ?? [];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader title="Shipments" subtitle={`${session.activeCompany.name} · lots planned against orders`} />
-      <div className="flex-1 overflow-auto p-3 sm:p-5">
-        {rows.length === 0 ? (
-          <div className="p-8 text-center text-slate-500">No shipments planned yet. Open a proforma invoice and use “Plan shipments”.</div>
+    <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
+      <PageHeader title="Shipments" subtitle={`${session.activeCompany.name} · lots & live pipeline status`} />
+      <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
+        {/* stats */}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <Stat label="Lots" value={String(stats.lots)} icon={<Boxes className="size-4" />} tone="indigo" />
+          <Stat label="Planned MT" value={formatAmount(String(stats.mt), 3)} icon={<Container className="size-4" />} tone="sky" />
+          <Stat label="In progress" value={String(stats.inProgress)} icon={<Ship className="size-4" />} tone="amber" />
+          <Stat label="Shipped" value={String(stats.shipped)} icon={<PackageCheck className="size-4" />} tone="emerald" />
+          <Stat label="Avg pipeline" value={`${stats.avg}%`} icon={<Check className="size-4" />} tone="violet" />
+        </div>
+
+        {/* filters */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-slate-400" />
+            <input className="field-input pl-8" placeholder="Search order or buyer…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+          <select className="field-input w-auto" value={market} onChange={(e) => setMarket(e.target.value)}>
+            <option value="">All markets</option>
+            <option value="GULF">Gulf</option>
+            <option value="EU">EU</option>
+          </select>
+          <select className="field-input w-auto" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">All statuses</option>
+            {['PLANNED', 'IN_PROGRESS', 'SHIPPED', 'CANCELLED'].map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
+          </select>
+          {(search || market || status) && (
+            <button type="button" className="text-[12.5px] text-slate-500 hover:text-slate-800" onClick={() => { setSearch(''); setMarket(''); setStatus(''); }}>Clear</button>
+          )}
+        </div>
+
+        {groups.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white p-10 text-center text-slate-500">
+            No shipments. Open a proforma invoice and use “Plan shipments”.
+          </div>
         ) : (
-          <table className="w-full min-w-[920px] text-[13px]">
-            <thead>
-              <tr className="border-b border-slate-200 text-left text-[11.5px] tracking-wide text-slate-500 uppercase">
-                <th className="py-2 pr-2">Order</th>
-                <th className="py-2 pr-2">Buyer</th>
-                <th className="py-2 pr-2">Lot</th>
-                <th className="py-2 pr-2">Market</th>
-                <th className="py-2 pr-2 text-right">Qty (MT)</th>
-                <th className="py-2 pr-2 text-right">Containers</th>
-                <th className="py-2 pr-2">Target date</th>
-                <th className="py-2 pr-2">Status</th>
-                <th className="py-2 pr-2 w-52">Pipeline</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.id} className="cursor-pointer border-b border-slate-100 hover:bg-slate-50" onClick={() => navigate(`/plan/${r.piId}`)}>
-                  <td className="py-1.5 pr-2 font-mono text-[12px] font-medium text-brand-700">{r.piNumber ?? '—'}</td>
-                  <td className="max-w-48 truncate py-1.5 pr-2 text-slate-600">{r.buyer ?? '—'}</td>
-                  <td className="py-1.5 pr-2 tabular-nums">Lot {r.lotNo}</td>
-                  <td className="py-1.5 pr-2"><span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${r.market === 'EU' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'}`}>{r.market === 'EU' ? 'EU' : 'Gulf'}</span></td>
-                  <td className="py-1.5 pr-2 text-right tabular-nums">{formatAmount(r.quantityMt, 3)}</td>
-                  <td className="py-1.5 pr-2 text-right tabular-nums">{r.containerCount || '—'}</td>
-                  <td className="py-1.5 pr-2 text-slate-600">{r.targetShipDate ?? '—'}</td>
-                  <td className="py-1.5 pr-2"><span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS[r.status] ?? 'bg-slate-100 text-slate-600'}`}>{label(r.status)}</span></td>
-                  <td className="py-1.5 pr-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500" style={{ width: `${r.pipeline?.percent ?? 0}%` }} /></div>
-                      <span className="text-[11px] tabular-nums text-slate-500">{r.pipeline?.done ?? 0}/{r.pipeline?.total ?? 0}</span>
-                      <span className="max-w-24 truncate text-[11px] text-slate-400">{r.pipeline?.next ?? 'done'}</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          groups.map((g) => {
+            const gMt = g.lots.filter((l) => l.status !== 'CANCELLED').reduce((a, l) => a + num(l.quantityMt), 0);
+            const gPct = g.lots.length ? Math.round(g.lots.reduce((a, l) => a + (l.pipeline?.percent ?? 0), 0) / g.lots.length) : 0;
+            return (
+              <section key={g.piId} className="rounded-xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-2.5">
+                  <button type="button" onClick={() => navigate(`/plan/${g.piId}`)} className="font-mono text-[13px] font-semibold text-brand-700 hover:underline">{g.piNumber ?? '—'}</button>
+                  <span className="text-[13px] text-slate-600">{g.buyer ?? '—'}</span>
+                  <span className="ml-auto text-[12px] text-slate-400">{g.lots.length} lot{g.lots.length === 1 ? '' : 's'} · {formatAmount(String(gMt), 3)} MT · {gPct}% avg</span>
+                </div>
+                <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
+                  {g.lots.map((r) => <LotTile key={r.id} r={r} onOpen={() => navigate(`/plan/${r.piId}`)} />)}
+                </div>
+              </section>
+            );
+          })
         )}
+      </div>
+    </div>
+  );
+}
+
+function LotTile({ r, onOpen }: { r: Shipment; onOpen: () => void }) {
+  const steps = r.pipeline?.steps ?? [];
+  const currentIdx = steps.findIndex((s) => !s.done);
+  return (
+    <button type="button" onClick={onOpen} className="rounded-lg border border-slate-200 bg-white p-3 text-left transition-shadow hover:shadow-md">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-[13px] font-semibold text-slate-800">Lot {r.lotNo}</span>
+        <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${r.market === 'EU' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'}`}>{r.market === 'EU' ? 'EU' : 'Gulf'}</span>
+        <span className={`ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium ${STATUS[r.status] ?? 'bg-slate-100 text-slate-600'}`}>{statusLabel(r.status)}</span>
+      </div>
+      <div className="mb-2 grid grid-cols-3 gap-2 text-[12px]">
+        <div><div className="text-[10px] tracking-wide text-slate-400 uppercase">Qty</div><div className="font-medium tabular-nums text-slate-700">{formatAmount(r.quantityMt, 3)}</div></div>
+        <div><div className="text-[10px] tracking-wide text-slate-400 uppercase">Cntr</div><div className="font-medium tabular-nums text-slate-700">{r.containerCount || '—'}</div></div>
+        <div><div className="text-[10px] tracking-wide text-slate-400 uppercase">Charges</div><div className="font-medium tabular-nums text-slate-700">{r.currency ?? ''} {formatAmount(r.chargeTotal, 0)}</div></div>
+      </div>
+      <div className="mb-1.5 flex items-center justify-between text-[11px]">
+        <span className="text-slate-400">{r.targetShipDate ? `Ship ${r.targetShipDate}` : 'No date'}</span>
+        <span className="font-medium text-slate-500">{r.pipeline?.done ?? 0}/{r.pipeline?.total ?? 0} · {r.pipeline?.next ?? 'done'}</span>
+      </div>
+      <div className="mb-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" style={{ width: `${r.pipeline?.percent ?? 0}%` }} />
+      </div>
+      <div className="flex gap-0.5">
+        {steps.map((s, i) => (
+          <span key={s.key} title={`${s.label}${s.done ? ' ✓' : ''}`} className={`h-1.5 flex-1 rounded-full ${s.done ? 'bg-emerald-500' : i === currentIdx ? 'bg-indigo-400' : 'bg-slate-200'}`} />
+        ))}
+      </div>
+    </button>
+  );
+}
+
+const TONES: Record<string, string> = { indigo: 'from-indigo-500 to-indigo-600', sky: 'from-sky-500 to-sky-600', amber: 'from-amber-500 to-amber-600', emerald: 'from-emerald-500 to-emerald-600', violet: 'from-violet-500 to-violet-600' };
+function Stat({ label, value, icon, tone }: { label: string; value: string; icon: ReactNode; tone: keyof typeof TONES }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <span className={`flex size-9 items-center justify-center rounded-lg bg-gradient-to-br text-white ${TONES[tone]}`}>{icon}</span>
+      <div>
+        <div className="text-[11px] tracking-wide text-slate-400 uppercase">{label}</div>
+        <div className="text-[18px] leading-tight font-semibold text-slate-900 tabular-nums">{value}</div>
       </div>
     </div>
   );

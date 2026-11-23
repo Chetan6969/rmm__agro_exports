@@ -217,6 +217,7 @@ export async function listShipments(tx: Tx, ctx: RequestContext) {
   requirePerm(ctx, 'sales.shipments', 'view');
   const pi = docTables.proformaInvoices.header;
   const cust = masterTables.customers;
+  const cur = masterTables.currencies;
   const rows = (await tx
     .select({
       id: shipments.id,
@@ -229,6 +230,7 @@ export async function listShipments(tx: Tx, ctx: RequestContext) {
       piId: shipments.proformaInvoiceId,
       piNumber: pi.documentNumber,
       buyer: cust.name,
+      currency: cur.code,
       productionOrderId: shipments.productionOrderId,
       commercialInvoiceId: shipments.commercialInvoiceId,
       oceanBillId: shipments.oceanBillId,
@@ -236,14 +238,17 @@ export async function listShipments(tx: Tx, ctx: RequestContext) {
     .from(shipments)
     .leftJoin(pi, eq(pi.id, shipments.proformaInvoiceId))
     .leftJoin(cust, eq(cust.id, pi.buyerId))
+    .leftJoin(cur, eq(cur.id, pi.currencyId))
     .where(isNull(shipments.deletedAt))
     .orderBy(desc(shipments.targetShipDate), desc(shipments.createdAt))) as Row[];
-  const stages = await stagesByShipment(tx, rows.map((r) => r.id as string));
-  return rows.map((r) => {
-    const { steps, ...summary } = pipelineOf(r, stages.get(r.id as string) ?? []);
-    void steps;
-    return { ...r, pipeline: summary };
-  });
+  const ids = rows.map((r) => r.id as string);
+  const stages = await stagesByShipment(tx, ids);
+  const charges = await chargesOf(tx, ids);
+  return rows.map((r) => ({
+    ...r,
+    chargeTotal: add((charges.get(r.id as string) ?? []).map((c) => str(c.amount)), 2),
+    pipeline: pipelineOf(r, stages.get(r.id as string) ?? []),
+  }));
 }
 
 export async function shipmentsRoutes(app: FastifyInstance) {
