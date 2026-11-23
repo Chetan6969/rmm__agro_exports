@@ -24,6 +24,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EntityForm, type Values } from '../components/EntityForm';
 import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
+import { ReceiptsPanel } from '../components/ReceiptsPanel';
 import { RefSelect } from '../components/RefSelect';
 import { ConfirmDialog, Modal } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
@@ -466,6 +467,8 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
           )}
 
           {!!def.lines.length && <TotalsPanel def={def} totals={totals} currency={currency} words={!dirty ? record?.amountInWords : null} />}
+
+          {def.key === 'commercialInvoices' && !isNew && <ReceiptsPanel invoiceId={id} />}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
             <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print</span>

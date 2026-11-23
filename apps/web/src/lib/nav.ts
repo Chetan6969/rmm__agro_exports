@@ -9,6 +9,7 @@ import {
   History,
   House,
   Landmark,
+  LayoutDashboard,
   type LucideIcon,
   Package,
   Receipt,
@@ -38,6 +39,7 @@ const DOC_ICONS: Record<string, LucideIcon> = { proformaInvoices: FileSignature,
 /** Every screen in one list: drives the sidebar and the command palette. */
 export const NAV: NavItem[] = [
   { id: 'home', label: 'Home', path: '/', group: 'General', icon: House },
+  { id: 'mis', label: 'MIS dashboard', path: '/mis', group: 'MIS', perm: ['mis.dashboard', 'view'], keywords: 'dashboard analytics graphs payments receivables pending received orders', icon: LayoutDashboard },
   ...DOC_LIST.map((d) => ({
     id: `d-${d.key}`,
     label: d.plural,
@@ -70,6 +72,7 @@ export const NAV: NavItem[] = [
 /** Icon for each sidebar section (also used in the collapsed rail). */
 export const GROUP_ICONS: Record<string, LucideIcon> = {
   General: House,
+  MIS: LayoutDashboard,
   Sales: Receipt,
   'Masters · Company': Building2,
   'Masters · Parties': Users,

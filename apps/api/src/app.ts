@@ -17,7 +17,9 @@ import { documentRoutes } from './modules/documents/documents.routes.js';
 import { exchangeRateRoutes } from './modules/exchange-rates.js';
 import { filesRoutes } from './modules/files.routes.js';
 import { mastersRoutes } from './modules/masters/masters.routes.js';
+import { misRoutes } from './modules/mis.js';
 import { numberingRoutes } from './modules/numbering.js';
+import { paymentsRoutes } from './modules/payments/payments.routes.js';
 import { rolesRoutes } from './modules/roles.routes.js';
 import { sharingRoutes } from './modules/sharing.routes.js';
 import { usersRoutes } from './modules/users.routes.js';
@@ -78,6 +80,8 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
       await api.register(auditRoutes);
       await api.register(exchangeRateRoutes);
       await api.register(documentRoutes);
+      await api.register(paymentsRoutes);
+      await api.register(misRoutes);
 
       api.setNotFoundHandler((_req, reply) =>
         reply.status(404).send({

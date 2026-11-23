@@ -7,6 +7,7 @@ import { NumberingPage } from './pages/admin/NumberingPage';
 import { RolesPage } from './pages/admin/RolesPage';
 import { SharingPage } from './pages/admin/SharingPage';
 import { UserFormPage, UsersPage } from './pages/admin/UsersPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { DocumentFormPage } from './pages/DocumentFormPage';
 import { DocumentListPage } from './pages/DocumentListPage';
 import { HomePage } from './pages/HomePage';
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
     element: <Layout />,
     children: [
       { path: '/', element: <HomePage /> },
+      { path: '/mis', element: <DashboardPage /> },
       { path: '/d/:doc', element: <DocumentListPage /> },
       { path: '/d/:doc/:id', element: <DocumentFormPage /> },
       { path: '/reports/proforma', element: <ProformaReportsPage /> },
