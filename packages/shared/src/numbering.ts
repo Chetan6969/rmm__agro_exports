@@ -93,6 +93,8 @@ export const DOC_TYPES = [
   { key: 'export_order', label: 'Export Order', defaultPattern: '{CO}/ORD/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'purchase_order', label: 'Purchase Order', defaultPattern: '{CO}/PO/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'commercial_invoice', label: 'Commercial Invoice', defaultPattern: '{CO}/EX/{FY}/{SEQ:3}', resetYearly: true },
+  { key: 'ocean_bill', label: 'Ocean Bill of Lading', defaultPattern: '{CO}/OBL/{FY}/{SEQ:3}', resetYearly: true },
+  { key: 'certificate', label: 'Certificate', defaultPattern: '{CO}/CERT/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'packing_list', label: 'Packing List', defaultPattern: '{CO}/PL/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'freight_bill', label: 'Freight Bill', defaultPattern: '{CO}/FB/{FY}/{SEQ:3}', resetYearly: true },
   { key: 'payment_receipt', label: 'Payment Receipt', defaultPattern: '{CO}/RCPT/{FY}/{SEQ:4}', resetYearly: true },

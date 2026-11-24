@@ -114,3 +114,6 @@ export const containerTypes = masterTables.containerTypes;
 export const currencies = masterTables.currencies;
 export const paymentTerms = masterTables.paymentTerms;
 export const tcTemplates = masterTables.tcTemplates;
+export const certificateTemplates = masterTables.certificateTemplates;
+export const letterheads = masterTables.letterheads;
+export const signatures = masterTables.signatures;
