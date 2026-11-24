@@ -3,7 +3,7 @@
  * shipments with planned charges (from the charge-head rate card). Pipeline links (phase 3) live on
  * the shipment row. Company-scoped; RLS applies inside inTenantTx.
  */
-import { add, isDecimal, isPositive, mul, pipelineSteps, round, sub } from '@rmm/shared';
+import { add, businessDate, isDecimal, isPositive, mul, round, sub } from '@rmm/shared';
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -13,7 +13,9 @@ import { badRequest, conflict, notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
 import { docTables } from '../../db/schema/documents.js';
 import { masterTables } from '../../db/schema/masters.js';
+import { files } from '../../db/schema/core.js';
 import { shipmentCharges, shipments, shipmentStages } from '../../db/schema/shipments.js';
+import { lotPipelines, templateFor } from './pipeline.js';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
@@ -73,10 +75,10 @@ async function listForPi(tx: Tx, piId: string): Promise<Row[]> {
     .orderBy(asc(shipments.lotNo))) as Row[];
   const ids = rows.map((r) => r.id as string);
   const charges = await chargesOf(tx, ids);
-  const stages = await stagesByShipment(tx, ids);
+  const pipelines = await lotPipelines(tx, rows);
   return rows.map((r) => {
     const cs = charges.get(r.id as string) ?? [];
-    return { ...r, charges: cs, chargeTotal: add(cs.map((c) => str(c.amount)), 2), pipeline: pipelineOf(r, stages.get(r.id as string) ?? []) };
+    return { ...r, charges: cs, chargeTotal: add(cs.map((c) => str(c.amount)), 2), pipeline: pipelines.get(r.id as string) };
   });
 }
 
@@ -98,25 +100,58 @@ export async function getShipment(tx: Tx, ctx: RequestContext, id: string) {
   const [row] = (await tx.select().from(shipments).where(and(eq(shipments.id, id), isNull(shipments.deletedAt)))) as Row[];
   if (!row) throw notFound('Shipment not found');
   const charges = (await chargesOf(tx, [id])).get(id) ?? [];
-  const stageRows = (await stagesByShipment(tx, [id])).get(id) ?? [];
-  return { ...row, charges, chargeTotal: add(charges.map((c) => str(c.amount)), 2), pipeline: pipelineOf(row, stageRows) };
+  const pipeline = (await lotPipelines(tx, [row])).get(id);
+  return { ...row, charges, chargeTotal: add(charges.map((c) => str(c.amount)), 2), pipeline };
 }
 
-/** Tick / untick a manual pipeline step (document-backed steps are driven by the links instead). */
+/**
+ * Close, reopen or skip a manual checkpoint of a lot. Closing needs a date (default today), a file
+ * when the checkpoint requires proof; skipping needs a reason. Document checkpoints close themselves
+ * when the document is linked to the lot.
+ */
 export async function setStage(tx: Tx, ctx: RequestContext, shipmentId: string, body: unknown) {
   const companyId = requireCompany(ctx);
   requirePerm(ctx, 'sales.shipments', 'edit');
-  const p = z.object({ stageKey: z.string().min(1).max(64), done: z.boolean(), doneDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(), note: z.string().max(500).nullable().optional() }).parse(body);
+  const p = z
+    .object({
+      stageKey: z.string().min(1).max(64),
+      done: z.boolean(),
+      doneDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+      note: z.string().max(500).nullable().optional(),
+      fileId: z.uuid().nullable().optional(),
+      skipped: z.boolean().optional(),
+      skipReason: z.string().trim().max(300).nullable().optional(),
+    })
+    .parse(body);
   const [ship] = (await tx.select().from(shipments).where(and(eq(shipments.id, shipmentId), isNull(shipments.deletedAt)))) as Row[];
   if (!ship) throw notFound('Shipment not found');
-  const step = pipelineSteps(str(ship.market)).find((s) => s.key === p.stageKey);
-  if (!step) throw badRequest('Unknown pipeline step');
-  if (step.doc) throw badRequest('That step completes automatically from its document, not manually');
-  const doneDate = p.done ? (p.doneDate ?? new Date().toISOString().slice(0, 10)) : null;
+  const step = (await templateFor(tx, str(ship.market))).steps.find((st) => st.key === p.stageKey);
+  if (!step) throw badRequest('Unknown checkpoint', 'Reload the page: the checkpoint list may have been changed.');
+  if (step.doc) throw badRequest(`"${step.label}" closes automatically`, 'Link the document to this lot (or create it from the lot) instead of ticking it.');
+  const skipped = !p.done && !!p.skipped;
+  if (skipped && !p.skipReason) throw badRequest('Say why this checkpoint is skipped', { hint: 'The reason is shown on the stage board and kept in the audit log.', fields: { skipReason: 'Required' } });
+  if (p.done && step.requiresFile && !p.fileId) {
+    throw badRequest(`"${step.label}" needs proof`, { hint: `Attach ${step.evidence ? `the ${step.evidence.toLowerCase()}` : 'a photo or scan'} when ticking it.`, fields: { fileId: 'Required' } });
+  }
+  if (p.fileId) {
+    const [f] = await tx.select({ id: files.id }).from(files).where(eq(files.id, p.fileId));
+    if (!f) throw badRequest('The attached file was not found', { hint: 'Upload it again.', fields: { fileId: 'Not found' } });
+  }
+  const doneDate = p.done ? (p.doneDate ?? businessDate()) : null;
+  const values = {
+    done: p.done,
+    doneDate,
+    note: p.note ?? null,
+    skipped,
+    skipReason: skipped ? (p.skipReason ?? null) : null,
+    fileId: p.done ? (p.fileId ?? null) : null,
+    doneBy: p.done || skipped ? ctx.userId : null,
+  };
   await tx
     .insert(shipmentStages)
-    .values({ companyId, shipmentId, stageKey: p.stageKey, done: p.done, doneDate, note: p.note ?? null })
-    .onConflictDoUpdate({ target: [shipmentStages.shipmentId, shipmentStages.stageKey], set: { done: p.done, doneDate, note: p.note ?? null, updatedAt: new Date() } });
+    .values({ companyId, shipmentId, stageKey: p.stageKey, ...values })
+    .onConflictDoUpdate({ target: [shipmentStages.shipmentId, shipmentStages.stageKey], set: { ...values, updatedAt: new Date() } });
+  await audit(tx, ctx, { entity: 'shipments', recordId: shipmentId, action: 'stage', meta: { stage: p.stageKey, done: p.done, skipped, doneDate, skipReason: values.skipReason } });
   return getShipment(tx, ctx, shipmentId);
 }
 
@@ -164,42 +199,6 @@ const shipmentValues = (p: z.infer<typeof shipmentSchema>) => ({
   commercialInvoiceId: p.commercialInvoiceId ?? null,
   oceanBillId: p.oceanBillId ?? null,
 });
-
-/** Pipeline for a shipment: document-backed steps derive from the links, the rest from stage rows. */
-function pipelineOf(shipment: Row, stageRows: Row[]) {
-  const steps = pipelineSteps(str(shipment.market));
-  const manual = new Map(stageRows.map((s) => [s.stageKey as string, s]));
-  const out = steps.map((st) => {
-    let done = false;
-    let date: string | null = null;
-    let note: string | null = null;
-    if (st.doc === 'pi') done = true;
-    else if (st.doc === 'productionOrder') done = !!shipment.productionOrderId;
-    else if (st.doc === 'oceanBill') done = !!shipment.oceanBillId;
-    else if (st.doc === 'commercialInvoice') done = !!shipment.commercialInvoiceId;
-    else {
-      const m = manual.get(st.key);
-      done = !!m?.done;
-      date = (m?.doneDate as string) ?? null;
-      note = (m?.note as string) ?? null;
-    }
-    return { key: st.key, label: st.label, doc: st.doc ?? null, done, date, note };
-  });
-  const doneCount = out.filter((s) => s.done).length;
-  return { steps: out, total: out.length, done: doneCount, percent: Math.round((doneCount / out.length) * 100), next: out.find((s) => !s.done)?.label ?? null };
-}
-
-async function stagesByShipment(tx: Tx, ids: string[]): Promise<Map<string, Row[]>> {
-  const map = new Map<string, Row[]>();
-  if (!ids.length) return map;
-  const rows = (await tx.select().from(shipmentStages).where(inArray(shipmentStages.shipmentId, ids))) as Row[];
-  for (const r of rows) {
-    const list = map.get(r.shipmentId as string) ?? [];
-    list.push(r);
-    map.set(r.shipmentId as string, list);
-  }
-  return map;
-}
 
 export async function createShipment(tx: Tx, ctx: RequestContext, body: unknown) {
   const companyId = requireCompany(ctx);
@@ -294,6 +293,7 @@ export async function listShipments(tx: Tx, ctx: RequestContext) {
       targetShipDate: shipments.targetShipDate,
       status: shipments.status,
       piId: shipments.proformaInvoiceId,
+      proformaInvoiceId: shipments.proformaInvoiceId,
       piNumber: pi.documentNumber,
       buyer: cust.name,
       currency: cur.code,
@@ -308,12 +308,12 @@ export async function listShipments(tx: Tx, ctx: RequestContext) {
     .where(isNull(shipments.deletedAt))
     .orderBy(desc(shipments.targetShipDate), desc(shipments.createdAt))) as Row[];
   const ids = rows.map((r) => r.id as string);
-  const stages = await stagesByShipment(tx, ids);
   const charges = await chargesOf(tx, ids);
+  const pipelines = await lotPipelines(tx, rows);
   return rows.map((r) => ({
     ...r,
     chargeTotal: add((charges.get(r.id as string) ?? []).map((c) => str(c.amount)), 2),
-    pipeline: pipelineOf(r, stages.get(r.id as string) ?? []),
+    pipeline: pipelines.get(r.id as string),
   }));
 }
 

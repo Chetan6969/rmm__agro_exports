@@ -44,6 +44,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'admin.numbering', label: 'Document numbering', group: 'Administration', actions: ['view', 'edit'] },
   { key: 'admin.defaults', label: 'Master default values', group: 'Administration', actions: ['view', 'edit'] },
   { key: 'admin.audit', label: 'Audit log', group: 'Administration', actions: ['view', 'export'] },
+  { key: 'admin.pipeline', label: 'Shipment checkpoints', group: 'Administration', actions: ['view', 'edit'] },
 ];
 
 export const MODULE_MAP: Record<string, ModuleDef> = Object.fromEntries(MODULES.map((m) => [m.key, m]));

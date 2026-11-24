@@ -4,7 +4,8 @@
  * the production order / commercial invoice / OBL made for it (pipeline, phase 3). Company-scoped
  * and RLS-isolated (both tables are in PRIVATE_COMPANY_TABLES in rls.ts).
  */
-import { boolean, date, index, integer, numeric, pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core';
+import type { PipelineStep } from '@rmm/shared';
+import { boolean, date, index, integer, jsonb, numeric, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import { id, recordColumns } from './columns.js';
 import { proformaInvoices } from './documents.js';
 import { companies } from './masters.js';
@@ -71,7 +72,29 @@ export const shipmentStages = pgTable(
     done: boolean('done').notNull().default(false),
     doneDate: date('done_date'),
     note: text('note'),
+    /** Checkpoint deliberately not needed for this lot (with the reason why). */
+    skipped: boolean('skipped').notNull().default(false),
+    skipReason: text('skip_reason'),
+    /** Proof attached when ticking (photo / scan in files). */
+    fileId: uuid('file_id'),
+    doneBy: uuid('done_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('shipment_stages_uq').on(t.shipmentId, t.stageKey)],
+);
+
+/** A company's own checkpoint path per market (overrides the built-in PIPELINE_TEMPLATES). */
+export const pipelineTemplates = pgTable(
+  'pipeline_templates',
+  {
+    companyId: uuid('company_id')
+      .notNull()
+      .references((): AnyPgColumn => companies.id, { onDelete: 'restrict' }),
+    market: text('market').notNull(),
+    steps: jsonb('steps').$type<PipelineStep[]>().notNull(),
+    version: integer('version').notNull().default(1),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedBy: uuid('updated_by'),
+  },
+  (t) => [primaryKey({ columns: [t.companyId, t.market] })],
 );

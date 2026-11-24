@@ -14,6 +14,7 @@ import {
   History,
   House,
   Landmark,
+  ListChecks,
   LayoutDashboard,
   type LucideIcon,
   Package,
@@ -63,7 +64,7 @@ export const NAV: NavItem[] = [
     keywords: `${d.label} ${d.short} sales document`,
     icon: DOC_ICONS[d.key] ?? FileText,
   })),
-  { id: 'shipments', label: 'Shipments', path: '/shipments', group: 'Sales', perm: ['sales.shipments', 'view'], keywords: 'lots order planning shipment charges gulf eu', icon: Ship },
+  { id: 'shipments', label: 'Shipments', path: '/shipments', group: 'Sales', perm: ['sales.shipments', 'view'], keywords: 'lots order planning shipment charges gulf eu staging stage board checkpoints overdue', icon: Ship },
   { id: 'pi-reports', label: 'PI reports', path: '/reports/proforma', group: 'Sales', perm: ['sales.proformaInvoices', 'view'], keywords: 'proforma analysis field usage terms', icon: BarChart3 },
   ...MENU_ORDER.flatMap((menu) =>
     entities
@@ -81,6 +82,7 @@ export const NAV: NavItem[] = [
   { id: 'roles', label: 'Roles & permissions', path: '/admin/roles', group: 'Administration', perm: ['admin.roles', 'view'], keywords: 'rbac rights', icon: ShieldCheck },
   { id: 'sharing', label: 'Data sharing', path: '/admin/sharing', group: 'Administration', perm: ['admin.sharing', 'view'], keywords: 'share companies policy', icon: Share2 },
   { id: 'numbering', label: 'Document numbering', path: '/admin/numbering', group: 'Administration', perm: ['admin.numbering', 'view'], keywords: 'series invoice number fy', icon: Hash },
+  { id: 'checkpoints', label: 'Shipment checkpoints', path: '/admin/checkpoints', group: 'Administration', perm: ['admin.pipeline', 'view'], keywords: 'staging stage pipeline checkpoint path sla due overdue', icon: ListChecks },
   { id: 'audit', label: 'Audit log', path: '/admin/audit', group: 'Administration', perm: ['admin.audit', 'view'], keywords: 'history changes who', icon: History },
 ];
 

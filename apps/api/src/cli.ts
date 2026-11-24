@@ -15,6 +15,7 @@ import argon2 from 'argon2';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { adminSql, closeDb } from './db/client.js';
+import { importCopy, resetCopy } from './db/copy-import.js';
 import { loadDemo, resetDemo } from './db/demo.js';
 import { wipeLocalDatabase } from './db/wipe.js';
 import { sessions, users } from './db/schema/index.js';
@@ -23,6 +24,8 @@ import { seedDatabase } from './db/seed.js';
 import { setupDatabase } from './db/setup.js';
 
 const cmd = process.argv[2];
+/** Command arguments; pnpm forwards the "--" separator, which is not an argument. */
+const args = process.argv.slice(3).filter((a) => a !== '--');
 const commands: Record<string, () => Promise<void>> = {
   setup: async () => {
     await setupDatabase();
@@ -41,6 +44,19 @@ const commands: Record<string, () => Promise<void>> = {
   },
   'demo-reset': async () => {
     console.log((await resetDemo()) ? 'Demo company DEMO and all its data were deleted. Real companies were not touched.' : 'No demo data found (company DEMO does not exist).');
+  },
+  'copy-load': async () => {
+    const file = args[0];
+    if (!file) throw new Error('usage: pnpm copy:load -- <export.json> [CODE]');
+    const r = await importCopy(file, args[1]?.toUpperCase());
+    console.log(`Loaded production copy as company ${r.code}:`, r.counts, `shipments: ${r.shipments}`);
+    if (r.missingGlobals.length) console.log('Not found locally (left as is):', r.missingGlobals.join(', '));
+    if (r.skipped.length) console.log('Fields this version does not have (skipped):', r.skipped.join(', '));
+    console.log('Switch to it in the app with Alt+C. Remove it with "pnpm copy:reset".');
+  },
+  'copy-reset': async () => {
+    const code = (args[0] ?? 'RMMDEMO').toUpperCase();
+    console.log((await resetCopy(code)) ? `Copy company ${code} and all its data were deleted.` : `No company ${code} found.`);
   },
   /** Drops the whole local database (dev only); "pnpm db:reset" recreates it afterwards. */
   wipe: async () => {

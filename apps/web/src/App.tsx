@@ -3,6 +3,7 @@ import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import { useSession } from './lib/session';
 import { AuditPage } from './pages/admin/AuditPage';
+import { CheckpointsPage } from './pages/admin/CheckpointsPage';
 import { NumberingPage } from './pages/admin/NumberingPage';
 import { RolesPage } from './pages/admin/RolesPage';
 import { SharingPage } from './pages/admin/SharingPage';
@@ -55,6 +56,7 @@ const router = createBrowserRouter([
       { path: '/admin/sharing', element: <SharingPage /> },
       { path: '/admin/numbering', element: <NumberingPage /> },
       { path: '/admin/audit', element: <AuditPage /> },
+      { path: '/admin/checkpoints', element: <CheckpointsPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },

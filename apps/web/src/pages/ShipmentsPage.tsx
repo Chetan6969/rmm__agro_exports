@@ -1,13 +1,13 @@
-import { formatAmount } from '@rmm/shared';
+import { formatAmount, type PipelineView } from '@rmm/shared';
 import { useQuery } from '@tanstack/react-query';
-import { Boxes, Check, Container, PackageCheck, Search, Ship } from 'lucide-react';
+import { AlertTriangle, Boxes, Check, Container, PackageCheck, Search, Ship } from 'lucide-react';
+import { CheckpointPath, CheckpointSummary } from '../components/Checkpoints';
 import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
 
-interface Step { key: string; label: string; doc: string | null; done: boolean }
 interface Shipment {
   id: string;
   lotNo: number;
@@ -21,7 +21,7 @@ interface Shipment {
   buyer: string | null;
   currency: string | null;
   chargeTotal: string;
-  pipeline: { percent: number; done: number; total: number; next: string | null; steps: Step[] };
+  pipeline: PipelineView;
 }
 
 const STATUS: Record<string, string> = {
@@ -40,6 +40,9 @@ export function ShipmentsPage() {
   const [search, setSearch] = useState('');
   const [market, setMarket] = useState('');
   const [status, setStatus] = useState('');
+  const [attention, setAttention] = useState(false);
+  /** Lot needs attention: overdue checkpoints, or work done out of order. */
+  const needsAttention = (r: Shipment) => r.status !== 'CANCELLED' && r.status !== 'SHIPPED' && (r.pipeline.overdue > 0 || r.pipeline.steps.some((x) => x.outOfOrder));
 
   const all = q.data ?? [];
   const rows = useMemo(() => {
@@ -48,9 +51,10 @@ export function ShipmentsPage() {
       (r) =>
         (!market || r.market === market) &&
         (!status || r.status === status) &&
+        (!attention || needsAttention(r)) &&
         (!t || `${r.piNumber ?? ''} ${r.buyer ?? ''}`.toLowerCase().includes(t)),
     );
-  }, [all, search, market, status]);
+  }, [all, search, market, status, attention]);
 
   const stats = useMemo(() => {
     const active = rows.filter((r) => r.status !== 'CANCELLED');
@@ -60,6 +64,8 @@ export function ShipmentsPage() {
       shipped: rows.filter((r) => r.status === 'SHIPPED').length,
       inProgress: rows.filter((r) => r.status === 'IN_PROGRESS').length,
       avg: active.length ? Math.round(active.reduce((a, r) => a + (r.pipeline?.percent ?? 0), 0) / active.length) : 0,
+      overdue: active.reduce((a, r) => a + (r.status === 'SHIPPED' ? 0 : r.pipeline.overdue), 0),
+      attention: active.filter(needsAttention).length,
     };
   }, [rows]);
 
@@ -83,12 +89,15 @@ export function ShipmentsPage() {
       <PageHeader title="Shipments" subtitle={`${session.activeCompany.name} · lots & live pipeline status`} />
       <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
         {/* stats */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
           <Stat label="Lots" value={String(stats.lots)} icon={<Boxes className="size-4" />} tone="indigo" />
           <Stat label="Planned MT" value={formatAmount(String(stats.mt), 3)} icon={<Container className="size-4" />} tone="sky" />
           <Stat label="In progress" value={String(stats.inProgress)} icon={<Ship className="size-4" />} tone="amber" />
           <Stat label="Shipped" value={String(stats.shipped)} icon={<PackageCheck className="size-4" />} tone="emerald" />
-          <Stat label="Avg pipeline" value={`${stats.avg}%`} icon={<Check className="size-4" />} tone="violet" />
+          <Stat label="Avg checkpoints" value={`${stats.avg}%`} icon={<Check className="size-4" />} tone="violet" />
+          <button type="button" onClick={() => setAttention((a) => !a)} className="text-left" title="Show only lots with overdue or out-of-order checkpoints">
+            <Stat label={attention ? 'Needs attention ✓' : 'Needs attention'} value={`${stats.attention} lots · ${stats.overdue} late`} icon={<AlertTriangle className="size-4" />} tone="rose" />
+          </button>
         </div>
 
         {/* filters */}
@@ -106,8 +115,12 @@ export function ShipmentsPage() {
             <option value="">All statuses</option>
             {['PLANNED', 'IN_PROGRESS', 'SHIPPED', 'CANCELLED'].map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
           </select>
-          {(search || market || status) && (
-            <button type="button" className="text-[12.5px] text-slate-500 hover:text-slate-800" onClick={() => { setSearch(''); setMarket(''); setStatus(''); }}>Clear</button>
+          <label className="flex items-center gap-1.5 text-[12.5px] text-slate-600">
+            <input type="checkbox" className="accent-brand-700" checked={attention} onChange={(e) => setAttention(e.target.checked)} />
+            Needs attention only
+          </label>
+          {(search || market || status || attention) && (
+            <button type="button" className="text-[12.5px] text-slate-500 hover:text-slate-800" onClick={() => { setSearch(''); setMarket(''); setStatus(''); setAttention(false); }}>Clear</button>
           )}
         </div>
 
@@ -139,8 +152,6 @@ export function ShipmentsPage() {
 }
 
 function LotTile({ r, onOpen }: { r: Shipment; onOpen: () => void }) {
-  const steps = r.pipeline?.steps ?? [];
-  const currentIdx = steps.findIndex((s) => !s.done);
   return (
     <button type="button" onClick={onOpen} className="rounded-lg border border-slate-200 bg-white p-3 text-left transition-shadow hover:shadow-md">
       <div className="mb-2 flex items-center gap-2">
@@ -154,22 +165,18 @@ function LotTile({ r, onOpen }: { r: Shipment; onOpen: () => void }) {
         <div><div className="text-[10px] tracking-wide text-slate-400 uppercase">Charges</div><div className="font-medium tabular-nums text-slate-700">{r.currency ?? ''} {formatAmount(r.chargeTotal, 0)}</div></div>
       </div>
       <div className="mb-1.5 flex items-center justify-between text-[11px]">
-        <span className="text-slate-400">{r.targetShipDate ? `Ship ${r.targetShipDate}` : 'No date'}</span>
-        <span className="font-medium text-slate-500">{r.pipeline?.done ?? 0}/{r.pipeline?.total ?? 0} · {r.pipeline?.next ?? 'done'}</span>
+        <span className="text-slate-400">{r.targetShipDate ? `Ship ${r.targetShipDate}` : 'No ship date — set one to plan checkpoints'}</span>
+        <span className="font-medium text-slate-500">{r.pipeline.done}/{r.pipeline.total}</span>
       </div>
-      <div className="mb-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-        <div className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-emerald-600" style={{ width: `${r.pipeline?.percent ?? 0}%` }} />
+      <div className="mb-1.5">
+        <CheckpointPath p={r.pipeline} />
       </div>
-      <div className="flex gap-0.5">
-        {steps.map((s, i) => (
-          <span key={s.key} title={`${s.label}${s.done ? ' ✓' : ''}`} className={`h-1.5 flex-1 rounded-full ${s.done ? 'bg-emerald-500' : i === currentIdx ? 'bg-indigo-400' : 'bg-slate-200'}`} />
-        ))}
-      </div>
+      <CheckpointSummary p={r.pipeline} />
     </button>
   );
 }
 
-const TONES: Record<string, string> = { indigo: 'from-indigo-500 to-indigo-600', sky: 'from-sky-500 to-sky-600', amber: 'from-amber-500 to-amber-600', emerald: 'from-emerald-500 to-emerald-600', violet: 'from-violet-500 to-violet-600' };
+const TONES: Record<string, string> = { rose: 'from-rose-500 to-rose-600', indigo: 'from-indigo-500 to-indigo-600', sky: 'from-sky-500 to-sky-600', amber: 'from-amber-500 to-amber-600', emerald: 'from-emerald-500 to-emerald-600', violet: 'from-violet-500 to-violet-600' };
 function Stat({ label, value, icon, tone }: { label: string; value: string; icon: ReactNode; tone: keyof typeof TONES }) {
   return (
     <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">

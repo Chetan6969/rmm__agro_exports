@@ -14,6 +14,8 @@
     "db:seed": "tsx --env-file-if-exists=.env src/cli.ts seed",
     "demo": "tsx --env-file-if-exists=.env src/cli.ts demo",
     "demo:reset": "tsx --env-file-if-exists=.env src/cli.ts demo-reset",
+    "copy:load": "tsx --env-file-if-exists=.env src/cli.ts copy-load",
+    "copy:reset": "tsx --env-file-if-exists=.env src/cli.ts copy-reset",
     "test": "vitest run"
   },
   "dependencies": {

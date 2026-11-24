@@ -20,6 +20,8 @@
     "db:status": "node scripts/dev-db.mjs status",
     "db:reset": "node scripts/dev-reset.mjs",
     "demo:load": "pnpm --filter @rmm/api demo",
-    "demo:reset": "pnpm --filter @rmm/api demo:reset"
+    "demo:reset": "pnpm --filter @rmm/api demo:reset",
+    "copy:load": "pnpm --filter @rmm/api copy:load",
+    "copy:reset": "pnpm --filter @rmm/api copy:reset"
   }
 }
