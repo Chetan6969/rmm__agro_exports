@@ -4,7 +4,7 @@
  * the shipment row. Company-scoped; RLS applies inside inTenantTx.
  */
 import { add, isDecimal, isPositive, mul, pipelineSteps, round, sub } from '@rmm/shared';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../../core/audit.js';
@@ -202,6 +202,37 @@ export async function updateShipment(tx: Tx, ctx: RequestContext, id: string, bo
   return getShipment(tx, ctx, id);
 }
 
+/** Link a freshly-created commercial invoice to this lot (and nudge the lot into progress). */
+export async function linkInvoice(tx: Tx, ctx: RequestContext, id: string, body: unknown) {
+  requireCompany(ctx);
+  requirePerm(ctx, 'sales.shipments', 'edit');
+  const { commercialInvoiceId } = z.object({ commercialInvoiceId: z.uuid() }).parse(body);
+  const [ship] = (await tx.select().from(shipments).where(and(eq(shipments.id, id), isNull(shipments.deletedAt)))) as Row[];
+  if (!ship) throw notFound('Shipment not found');
+  const next = { commercialInvoiceId, status: str(ship.status) === 'PLANNED' ? 'IN_PROGRESS' : str(ship.status), updatedAt: new Date(), updatedBy: ctx.userId };
+  await tx.update(shipments).set(next).where(eq(shipments.id, id));
+  await audit(tx, ctx, { entity: 'shipments', recordId: id, action: 'update', before: ship, after: { ...ship, ...next } });
+  return getShipment(tx, ctx, id);
+}
+
+/** Mark the lot shipped/done. The linked commercial invoice (if any) is marked PAID. */
+export async function completeShipment(tx: Tx, ctx: RequestContext, id: string) {
+  requireCompany(ctx);
+  requirePerm(ctx, 'sales.shipments', 'edit');
+  const [ship] = (await tx.select().from(shipments).where(and(eq(shipments.id, id), isNull(shipments.deletedAt)))) as Row[];
+  if (!ship) throw notFound('Shipment not found');
+  await tx.update(shipments).set({ status: 'SHIPPED', updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(shipments.id, id));
+  if (ship.commercialInvoiceId) {
+    const ci = docTables.commercialInvoices.header;
+    await tx
+      .update(ci)
+      .set({ status: 'PAID', version: sql`${ci.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
+      .where(eq(ci.id, ship.commercialInvoiceId as string));
+  }
+  await audit(tx, ctx, { entity: 'shipments', recordId: id, action: 'update', before: ship, after: { ...ship, status: 'SHIPPED' } });
+  return getShipment(tx, ctx, id);
+}
+
 export async function deleteShipment(tx: Tx, ctx: RequestContext, id: string) {
   requireCompany(ctx);
   requirePerm(ctx, 'sales.shipments', 'delete');
@@ -279,5 +310,13 @@ export async function shipmentsRoutes(app: FastifyInstance) {
   app.post<{ Params: { id: string } }>('/shipments/:id/stage', async (req) => {
     const ctx = requireCtx(req);
     return inTenantTx(ctx, (tx) => setStage(tx, ctx, req.params.id, req.body));
+  });
+  app.post<{ Params: { id: string } }>('/shipments/:id/link-invoice', async (req) => {
+    const ctx = requireCtx(req);
+    return inTenantTx(ctx, (tx) => linkInvoice(tx, ctx, req.params.id, req.body));
+  });
+  app.post<{ Params: { id: string } }>('/shipments/:id/complete', async (req) => {
+    const ctx = requireCtx(req);
+    return inTenantTx(ctx, (tx) => completeShipment(tx, ctx, req.params.id));
   });
 }

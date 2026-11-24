@@ -4,6 +4,7 @@ import { ArrowLeft, Check, FileText, Package, Plus, Save, Trash2 } from 'lucide-
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { ReceiptsPanel } from '../components/ReceiptsPanel';
 import { RefSelect } from '../components/RefSelect';
 import { Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api } from '../lib/api';
@@ -221,6 +222,9 @@ function LotCard({ lot, heads, currency, piId, readOnly, isDraft, onDone, onCanc
       {/* pipeline (saved lots only) */}
       {lot.id && lot.pipeline && <PipelineStepper shipmentId={lot.id} pipeline={lot.pipeline} readOnly={readOnly} onChanged={onDone} />}
 
+      {/* commercial invoice against this lot + its payments (saved lots only) */}
+      {lot.id && <InvoiceSection lot={lot} currency={currency} onDone={onDone} />}
+
       {!readOnly && (
         <div className="mt-3 flex items-center justify-end gap-2">
           <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={del}>{isDraft ? 'Cancel' : 'Delete lot'}</Button>
@@ -275,6 +279,77 @@ function PipelineStepper({ shipmentId, pipeline, readOnly, onChanged }: { shipme
           );
         })}
       </div>
+    </div>
+  );
+}
+
+interface PaySummary { invoiceTotal: string; received: string; pending: string; currency: string }
+
+/** Create / show the commercial invoice for a lot, its receipts, and the "shipment done" action. */
+function InvoiceSection({ lot, currency, onDone }: { lot: Lot; currency: string; onDone: () => void }) {
+  const { can } = useSession();
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const ciId = lot.commercialInvoiceId ?? null;
+  const done = lot.status === 'SHIPPED';
+  const canCreateCI = can('sales.commercialInvoices', 'create');
+  const canEditShip = can('sales.shipments', 'edit');
+  const pay = useQuery({
+    queryKey: ['payments', ciId],
+    queryFn: () => api.get<PaySummary>(`/payments?invoice=${ciId}`),
+    enabled: !!ciId && can('sales.payments', 'view'),
+  });
+  const pending = pay.data ? num(pay.data.pending) : null;
+  const fullyPaid = pending !== null && pending <= 0.01 && num(pay.data?.invoiceTotal) > 0;
+
+  const complete = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/shipments/${lot.id}/complete`, {});
+      toast.success(`Lot ${lot.lotNo} — shipment done`);
+      onDone();
+    } catch (e) {
+      showError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-lg border border-slate-100 bg-slate-50/60 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-[11.5px] font-semibold tracking-wide text-slate-500 uppercase">Commercial invoice & payments</span>
+        {ciId && <Link to={`/d/commercialInvoices/${ciId}`} className="text-[12px] font-medium text-brand-700 hover:underline">Open invoice →</Link>}
+      </div>
+
+      {!ciId ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[12px] text-slate-500">No invoice yet for this lot.</p>
+          {canCreateCI && (
+            <Button icon={<FileText className="size-3.5" />} onClick={() => navigate(`/d/commercialInvoices/new?shipment=${lot.id}`)}>
+              Create invoice against this lot
+            </Button>
+          )}
+        </div>
+      ) : (
+        <>
+          <ReceiptsPanel invoiceId={ciId} />
+          {canEditShip && (
+            <div className="mt-2 flex items-center justify-end gap-2">
+              {done ? (
+                <span className="flex items-center gap-1 text-[12.5px] font-medium text-emerald-700"><Check className="size-3.5" /> Shipment done</span>
+              ) : (
+                <>
+                  {pending !== null && !fullyPaid && <span className="text-[11.5px] text-amber-600">{currency} {formatAmount(String(pending))} pending — mark done once fully received</span>}
+                  <Button variant="primary" icon={<Check className="size-3.5" />} disabled={!fullyPaid} loading={busy} onClick={complete}>
+                    Mark shipment done
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

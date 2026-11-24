@@ -38,6 +38,7 @@ import { docTables, masterTables, type DocTables } from '../../db/schema/index.j
 import { audit } from '../../core/audit.js';
 import { can, requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
+import { shipments } from '../../db/schema/shipments.js';
 import { allocateNumber } from '../numbering.js';
 
 type Row = Record<string, unknown>;
@@ -563,7 +564,7 @@ export async function exportDocuments(tx: Tx, ctx: RequestContext, key: string, 
 
 // ------------------------------------------------------------------ drafts
 /** Values for a new document: defaults, the company profile, default T&C — or copied from a parent. */
-export async function draftDocument(tx: Tx, ctx: RequestContext, key: string, from?: string) {
+export async function draftDocument(tx: Tx, ctx: RequestContext, key: string, from?: string, shipmentId?: string) {
   const { def } = resolveDoc(key);
   allow(ctx, def, 'create');
   const companyId = requireCompany(ctx);
@@ -657,6 +658,39 @@ export async function draftDocument(tx: Tx, ctx: RequestContext, key: string, fr
         });
       }
     }
+  }
+
+  // Prefill a commercial invoice from a shipment lot: copy the order's shared header fields and
+  // scale its lines down to the lot's quantity. The user then completes the rest.
+  if (!from && shipmentId && def.key === 'commercialInvoices') {
+    const [ship] = (await tx.select().from(shipments).where(and(eq(shipments.id, shipmentId), isNull(shipments.deletedAt)))) as Row[];
+    if (!ship) throw badRequest('That lot is not available', { fields: { shipment: 'Not found' } });
+    const pdef = resolveDoc('proformaInvoices').def;
+    const pi = await loadHeader(tx, pdef, ship.proformaInvoiceId as string);
+    if (pi.status === CANCELLED) throw badRequest(`Proforma invoice ${pi.documentNumber} is cancelled`, 'Pick an active order.');
+    const piNames = new Set(pdef.header.map((f) => f.name));
+    const skipH = new Set(['documentNumber', 'documentDate', 'status']);
+    for (const f of def.header) {
+      if (piNames.has(f.name) && !skipH.has(f.name) && pi[f.name] != null && (header[f.name] === undefined || header[f.name] === null)) header[f.name] = pi[f.name];
+    }
+    header.proformaInvoiceId = pi.id;
+    if (ship.productionOrderId) header.productionOrderId = ship.productionOrderId;
+    const { lines: plines } = await loadChildren(tx, pdef, pi.id as string);
+    const piTotal = round(String(pi.totalQuantityMt ?? '0'), 3);
+    const lotQty = round(String(ship.quantityMt ?? '0'), 3);
+    const names = new Set(def.lines.map((f) => f.name));
+    const scaled = isPositive(piTotal) && cmp(lotQty, piTotal) !== 0;
+    const share = (x: unknown, s: number) => (x === null || x === undefined || !isPositive(String(x)) ? x : round(divideExact(mul(String(x), lotQty, 9), piTotal), s));
+    for (const pl of plines) {
+      const line: Row = { sourceLineId: null };
+      for (const f of def.lines) if (names.has(f.name) && pl[f.name] !== undefined) line[f.name] = pl[f.name];
+      for (const f of def.lines) if (line[f.name] === undefined && f.default !== undefined) line[f.name] = f.default;
+      line.quantityMt = scaled ? share(pl.quantityMt, 3) : pl.quantityMt;
+      line.noOfBags = scaled ? Number(share(pl.noOfBags, 0) ?? 0) : pl.noOfBags;
+      line.grossWtMt = scaled ? share(pl.grossWtMt, 3) ?? null : pl.grossWtMt;
+      lines.push(line);
+    }
+    await refLabels(tx, def.lines, lines);
   }
 
   // default terms for this document type, one row per line of each default template
