@@ -2,7 +2,7 @@ import { Donut, HBar, MisPage, SimpleTable } from '../../components/MisPage';
 import { compact, inr, num, Panel } from '../../components/mis';
 
 interface Trade {
-  byCountry: { country: string; region: string; revenue: string; invoices: number; buyers: number; volume_mt: string }[];
+  byCountry: { country: string; id: string | null; region: string; revenue: string; invoices: number; buyers: number; volume_mt: string }[];
   byPort: { port: string; country: string; revenue: string; invoices: number }[];
   byIncoterm: { incoterm: string; count: number; revenue: string }[];
 }
@@ -11,17 +11,17 @@ const mt = (v: number) => `${num(v).toLocaleString('en-IN', { maximumFractionDig
 export function TradePage() {
   return (
     <MisPage<Trade> title="Trade analytics" path="/mis/trade" subtitle="Export markets by destination, port & incoterm">
-      {(d) => (
+      {(d, f) => (
         <>
           <div className="grid gap-4 lg:grid-cols-5">
-            <Panel title="Revenue by destination" subtitle="INR per country" className="lg:col-span-3">
-              <HBar data={d.byCountry.slice(0, 10).map((c) => ({ name: c.country, value: num(c.revenue) }))} fmt={(v) => inr(v)} />
+            <Panel title="Revenue by destination" subtitle="INR per country · click to filter" className="lg:col-span-3">
+              <HBar data={d.byCountry.slice(0, 10).map((c) => ({ name: c.country, value: num(c.revenue), pick: c.id ?? '' }))} fmt={(v) => inr(v)} onPick={(v) => f.set('destinationCountryId', v)} />
             </Panel>
             <Panel title="Incoterm mix" subtitle="By revenue" className="lg:col-span-2">
               <Donut data={d.byIncoterm.map((i) => ({ name: i.incoterm, value: num(i.revenue) }))} fmt={(v) => inr(v)} />
             </Panel>
           </div>
-          <Panel title="Destination countries" subtitle="Revenue, volume and buyer reach">
+          <Panel title="Destination countries" subtitle="Revenue, volume and buyer reach · click a row to filter">
             <SimpleTable
               columns={[
                 { key: 'country', label: 'Country' },
@@ -31,7 +31,8 @@ export function TradePage() {
                 { key: 'invoices', label: 'Invoices', num: true },
                 { key: 'buyers', label: 'Buyers', num: true },
               ]}
-              rows={d.byCountry}
+              rows={d.byCountry as unknown as Record<string, unknown>[]}
+              onRow={(r) => r.id && f.set('destinationCountryId', String(r.id))}
             />
           </Panel>
           <div className="grid gap-4 lg:grid-cols-2">

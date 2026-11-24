@@ -56,6 +56,7 @@ export async function misLogistics(tx: Tx, f: MisFilter) {
   const shipments = await rows(
     tx,
     sql`select s.id,
+                pi.id as pi_id,
                 pi.document_number as order_no,
                 coalesce(cust.name, '-') as buyer,
                 s.market,

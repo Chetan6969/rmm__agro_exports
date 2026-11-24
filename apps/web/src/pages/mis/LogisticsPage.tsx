@@ -1,4 +1,5 @@
 import { Anchor, Container, Ship, Timer } from 'lucide-react';
+import { Link } from 'react-router';
 import { Donut, HBar, MisPage, SimpleTable, VBar } from '../../components/MisPage';
 import { compact, inr, Kpi, num, Panel, statusLabel } from '../../components/mis';
 
@@ -8,7 +9,7 @@ interface Data {
   byMarket: { market: string; count: number; qty_mt: string }[];
   charges: { head: string; amount: string }[];
   timing: { on_time: number; late: number; in_pipeline: number };
-  shipments: { id: string; order_no: string; buyer: string; market: string; status: string; qty_mt: string; containers: number; target_date: string | null; vessel_name: string | null; bl_number: string | null; bl_date: string | null; discharge_port: string }[];
+  shipments: { id: string; pi_id: string; order_no: string; buyer: string; market: string; status: string; qty_mt: string; containers: number; target_date: string | null; vessel_name: string | null; bl_number: string | null; bl_date: string | null; discharge_port: string }[];
 }
 const chip = (ok: boolean, text: string) => <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${ok ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{text}</span>;
 
@@ -35,7 +36,7 @@ export function LogisticsPage() {
             <Panel title="Shipments" subtitle="Lot pipeline, target date vs actual B/L">
               <SimpleTable
                 columns={[
-                  { key: 'order_no', label: 'Order' },
+                  { key: 'order_no', label: 'Order', render: (r) => <Link to={`/d/proformaInvoices/${r.pi_id}`} className="font-mono text-[12px] font-medium text-brand-700 hover:underline">{String(r.order_no)}</Link> },
                   { key: 'buyer', label: 'Buyer' },
                   { key: 'market', label: 'Market' },
                   { key: 'status', label: 'Status', render: (r) => statusLabel(String(r.status)) },

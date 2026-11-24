@@ -10,10 +10,11 @@ import { docWhere, type MisFilter } from './filter.js';
 type Row = Record<string, unknown>;
 const rows = async (tx: Tx, q: SQL) => (await tx.execute(q)) as unknown as Row[];
 
-const dim = (tx: Tx, w: SQL, expr: SQL) =>
+const dim = (tx: Tx, w: SQL, expr: SQL, idExpr?: SQL) =>
   rows(
     tx,
     sql`select ${expr} as label,
+                ${idExpr ? sql`${idExpr} as id,` : sql``}
                 coalesce(sum(l.quantity_mt), 0)::text as volume_mt,
                 coalesce(sum(l.amount * ci.exchange_rate), 0)::text as revenue,
                 coalesce(sum(l.no_of_bags), 0)::int as bags
@@ -21,7 +22,7 @@ const dim = (tx: Tx, w: SQL, expr: SQL) =>
          join commercial_invoices ci on ci.id = l.document_id
          left join products p on p.id = l.product_id
          where ${w}
-         group by ${expr} order by sum(l.quantity_mt) desc nulls last`,
+         group by ${expr}${idExpr ? sql`, ${idExpr}` : sql``} order by sum(l.quantity_mt) desc nulls last`,
   );
 
 export async function misProducts(tx: Tx, f: MisFilter) {
@@ -31,7 +32,7 @@ export async function misProducts(tx: Tx, f: MisFilter) {
     dim(tx, w, sql`coalesce(nullif(p.rice_type, ''), 'Unspecified')`),
     dim(tx, w, sql`coalesce(nullif(p.grade, ''), 'Unspecified')`),
     dim(tx, w, sql`coalesce(nullif(l.crop_year, ''), nullif(p.crop_year, ''), 'Unspecified')`),
-    dim(tx, w, sql`coalesce(p.name, 'Unspecified')`),
+    dim(tx, w, sql`coalesce(p.name, 'Unspecified')`, sql`p.id`),
   ]);
   return { byVariety, byProcessing, byGrade, byCropYear, byProduct };
 }

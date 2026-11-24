@@ -31,7 +31,7 @@ interface Overview {
     growthPct: number | null;
   };
   monthly: { month: string; revenue: string; received: string }[];
-  byCountry: { country: string; revenue: string; invoices: number }[];
+  byCountry: { country: string; id: string | null; revenue: string; invoices: number }[];
   byVariety: { variety: string; volume_mt: string; revenue: string }[];
   orderStatus: { status: string; count: number }[];
   receivables: { currency: string; count: number; invoiced: string; received: string; pending: string }[];
@@ -51,9 +51,12 @@ export function DashboardPage() {
   const k = d?.kpis;
   const collected = k && num(k.revenueInr) > 0 ? Math.round((num(k.receivedInr) / num(k.revenueInr)) * 100) : 0;
   const monthly = (d?.monthly ?? []).map((m) => ({ month: monthLabel(m.month), Revenue: num(m.revenue), Received: num(m.received) }));
-  const byCountry = (d?.byCountry ?? []).slice(0, 8).map((c) => ({ name: c.country, value: num(c.revenue), invoices: c.invoices }));
+  const byCountry = (d?.byCountry ?? []).slice(0, 8).map((c) => ({ name: c.country, value: num(c.revenue), invoices: c.invoices, pick: c.id ?? '' }));
   const byVariety = (d?.byVariety ?? []).map((v) => ({ name: v.variety, value: num(v.volume_mt), revenue: num(v.revenue) }));
-  const orderStatus = (d?.orderStatus ?? []).map((s) => ({ name: statusLabel(s.status), value: s.count }));
+  const orderStatus = (d?.orderStatus ?? []).map((s) => ({ name: statusLabel(s.status), value: s.count, pick: s.status }));
+  const pickCountry = (e: { payload?: { pick?: string } }) => { const id = e?.payload?.pick; if (id) f.set('destinationCountryId', id); };
+  const pickVariety = (e: { name?: string }) => { if (e?.name && e.name !== 'Unspecified') f.set('variety', e.name); };
+  const pickStatus = (e: { payload?: { pick?: string } }) => { const s = e?.payload?.pick; if (s) f.set('status', s); };
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-slate-50">
@@ -66,14 +69,14 @@ export function DashboardPage() {
           <div className="space-y-4 p-4 sm:p-5">
             {/* KPI tiles */}
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Kpi label="Export revenue" value={inr(k!.revenueInr)} icon={<TrendingUp className="size-5" />} tone="indigo" trend={k!.growthPct} sub="vs prev. month" />
-              <Kpi label="Received" value={inr(k!.receivedInr)} icon={<Wallet className="size-5" />} tone="emerald" sub={`${collected}% collected`} />
-              <Kpi label="Volume shipped" value={mt(k!.volumeMt)} icon={<Boxes className="size-5" />} tone="sky" sub={`avg ${inr(k!.avgPricePerMt)}/MT`} />
-              <Kpi label="Invoices" value={String(k!.invoices)} icon={<FileText className="size-5" />} tone="violet" sub="commercial invoices" />
-              <Kpi label="Orders" value={String(k!.orders)} icon={<PackageCheck className="size-5" />} tone="amber" sub={`${k!.activeContracts} active contracts`} />
-              <Kpi label="Active buyers" value={String(k!.activeBuyers)} icon={<Users className="size-5" />} tone="rose" sub={`${k!.countries} destinations`} />
-              <Kpi label="Shipments" value={String(k!.shipmentsTotal)} icon={<Ship className="size-5" />} tone="teal" sub={`${k!.shipmentsPending} in progress · ${k!.shipmentsCompleted} shipped`} />
-              <Kpi label="Destinations" value={String(k!.countries)} icon={<Globe2 className="size-5" />} tone="slate" sub="countries served" />
+              <Kpi label="Export revenue" value={inr(k!.revenueInr)} icon={<TrendingUp className="size-5" />} tone="indigo" trend={k!.growthPct} sub="vs prev. month" to={`/mis/financial${f.query}`} />
+              <Kpi label="Received" value={inr(k!.receivedInr)} icon={<Wallet className="size-5" />} tone="emerald" sub={`${collected}% collected`} to={`/mis/financial${f.query}`} />
+              <Kpi label="Volume shipped" value={mt(k!.volumeMt)} icon={<Boxes className="size-5" />} tone="sky" sub={`avg ${inr(k!.avgPricePerMt)}/MT`} to={`/mis/products${f.query}`} />
+              <Kpi label="Invoices" value={String(k!.invoices)} icon={<FileText className="size-5" />} tone="violet" sub="commercial invoices" to={`/mis/reports${f.query}`} />
+              <Kpi label="Orders" value={String(k!.orders)} icon={<PackageCheck className="size-5" />} tone="amber" sub={`${k!.activeContracts} active contracts`} to={`/mis/orders${f.query}`} />
+              <Kpi label="Active buyers" value={String(k!.activeBuyers)} icon={<Users className="size-5" />} tone="rose" sub={`${k!.countries} destinations`} to={`/mis/buyers${f.query}`} />
+              <Kpi label="Shipments" value={String(k!.shipmentsTotal)} icon={<Ship className="size-5" />} tone="teal" sub={`${k!.shipmentsPending} in progress · ${k!.shipmentsCompleted} shipped`} to={`/mis/logistics${f.query}`} />
+              <Kpi label="Destinations" value={String(k!.countries)} icon={<Globe2 className="size-5" />} tone="slate" sub="countries served" to={`/mis/trade${f.query}`} />
             </div>
 
             {/* monthly trend + country */}
@@ -106,7 +109,7 @@ export function DashboardPage() {
                       <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={compact} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} width={88} />
                       <Tooltip cursor={{ fill: '#f1f5f9' }} formatter={(v: number) => inr(v)} />
-                      <Bar dataKey="value" name="Revenue" radius={[0, 6, 6, 0]} maxBarSize={22}>
+                      <Bar dataKey="value" name="Revenue" radius={[0, 6, 6, 0]} maxBarSize={22} onClick={pickCountry} style={{ cursor: 'pointer' }}>
                         {byCountry.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Bar>
                     </BarChart>
@@ -121,7 +124,7 @@ export function DashboardPage() {
                 {byVariety.length ? (
                   <ResponsiveContainer width="100%" height={240}>
                     <PieChart>
-                      <Pie data={byVariety} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none">
+                      <Pie data={byVariety} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none" onClick={pickVariety} style={{ cursor: 'pointer' }}>
                         {byVariety.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Pie>
                       <Tooltip formatter={(v: number) => mt(v)} />
@@ -139,7 +142,7 @@ export function DashboardPage() {
                       <XAxis dataKey="name" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
                       <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} width={28} />
                       <Tooltip cursor={{ fill: '#f1f5f9' }} />
-                      <Bar dataKey="value" name="Orders" radius={[6, 6, 0, 0]} maxBarSize={48}>
+                      <Bar dataKey="value" name="Orders" radius={[6, 6, 0, 0]} maxBarSize={48} onClick={pickStatus} style={{ cursor: 'pointer' }}>
                         {orderStatus.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Bar>
                     </BarChart>

@@ -84,12 +84,13 @@ export async function misOverview(tx: Tx, f: MisFilter) {
     tx,
     sql`
       select coalesce(co.name, 'Unspecified') as country,
+             ci.destination_country_id as id,
              sum(ci.invoice_total * ci.exchange_rate)::text as revenue,
              count(*)::int as invoices
       from commercial_invoices ci
       left join countries co on co.id = ci.destination_country_id
       where ${ciW}
-      group by co.name order by sum(ci.invoice_total * ci.exchange_rate) desc`,
+      group by co.name, ci.destination_country_id order by sum(ci.invoice_total * ci.exchange_rate) desc`,
   );
 
   // ---- product / variety distribution (volume MT + INR revenue from lines) ----

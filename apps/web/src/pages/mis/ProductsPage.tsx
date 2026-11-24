@@ -3,6 +3,7 @@ import { inr, num, Panel } from '../../components/mis';
 
 interface Dim {
   label: string;
+  id?: string | null;
   volume_mt: string;
   revenue: string;
   bags: number;
@@ -20,16 +21,16 @@ const pt = (d: Dim[]) => d.map((x) => ({ name: x.label, value: num(x.volume_mt) 
 export function ProductsPage() {
   return (
     <MisPage<Data> title="Product analytics" path="/mis/products" subtitle="Volume & revenue by variety, processing, grade and crop year">
-      {(d) => (
+      {(d, f) => (
         <>
           <div className="grid gap-4 lg:grid-cols-3">
-            <Panel title="Volume by variety" subtitle="MT"><Donut data={pt(d.byVariety)} fmt={(v) => mt(v)} /></Panel>
+            <Panel title="Volume by variety" subtitle="MT · click to filter"><Donut data={d.byVariety.map((x) => ({ name: x.label, value: num(x.volume_mt), pick: x.label }))} fmt={(v) => mt(v)} onPick={(v) => v !== 'Unspecified' && f.set('variety', v)} /></Panel>
             <Panel title="By processing type" subtitle="MT"><Donut data={pt(d.byProcessing)} fmt={(v) => mt(v)} /></Panel>
             <Panel title="By grade" subtitle="MT"><VBar data={pt(d.byGrade)} fmt={(v) => (v >= 1000 ? `${Math.round(v / 1000)}k` : String(Math.round(v)))} /></Panel>
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <Panel title="By crop year" subtitle="MT shipped"><HBar data={pt(d.byCropYear)} fmt={(v) => mt(v)} height={220} width={90} /></Panel>
-            <Panel title="Top products" subtitle="By volume">
+            <Panel title="Top products" subtitle="By volume · click a row to filter">
               <SimpleTable
                 columns={[
                   { key: 'label', label: 'Product' },
@@ -38,6 +39,7 @@ export function ProductsPage() {
                   { key: 'revenue', label: 'Revenue (₹)', num: true, render: (r) => inr(r.revenue as string) },
                 ]}
                 rows={d.byProduct as unknown as Record<string, unknown>[]}
+                onRow={(r) => r.id && f.set('productId', String(r.id))}
               />
             </Panel>
           </div>

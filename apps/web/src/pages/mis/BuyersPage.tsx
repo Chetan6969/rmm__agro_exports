@@ -20,7 +20,7 @@ const mt = (v: number) => `${num(v).toLocaleString('en-IN', { maximumFractionDig
 export function BuyersPage() {
   return (
     <MisPage<Data> title="Buyers" path="/mis/buyers" subtitle="Buyer & market intelligence">
-      {(d) => {
+      {(d, f) => {
         const total = d.buyers.length;
         const repeat = d.buyers.filter((b) => b.invoices > 1).length;
         const totalRev = d.buyers.reduce((a, b) => a + num(b.revenue_inr), 0);
@@ -35,10 +35,10 @@ export function BuyersPage() {
               <Kpi label="Top-5 share" value={`${share}%`} icon={<Crown className="size-5" />} tone="amber" sub="revenue concentration" />
               <Kpi label="Outstanding" value={inr(outstanding)} icon={<Wallet className="size-5" />} tone="rose" sub="across all buyers" />
             </div>
-            <Panel title="Top buyers by revenue" subtitle="INR">
-              <HBar data={d.buyers.slice(0, 10).map((b) => ({ name: b.name, value: num(b.revenue_inr) }))} fmt={(v) => inr(v)} width={140} />
+            <Panel title="Top buyers by revenue" subtitle="INR · click a bar to filter">
+              <HBar data={d.buyers.slice(0, 10).map((b) => ({ name: b.name, value: num(b.revenue_inr), pick: b.id }))} fmt={(v) => inr(v)} width={140} onPick={(v) => f.set('buyerId', v)} />
             </Panel>
-            <Panel title="Buyer scorecard" subtitle="Revenue, volume, outstanding & average order value">
+            <Panel title="Buyer scorecard" subtitle="Revenue, volume, outstanding & AOV · click a row to filter">
               <SimpleTable
                 columns={[
                   { key: 'name', label: 'Buyer' },
@@ -52,6 +52,7 @@ export function BuyersPage() {
                   { key: 'repeat', label: 'Type', render: (r) => (num(r.invoices) > 1 ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700">Repeat</span> : <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">New</span>) },
                 ]}
                 rows={d.buyers as unknown as Record<string, unknown>[]}
+                onRow={(r) => r.id && f.set('buyerId', String(r.id))}
               />
             </Panel>
           </>

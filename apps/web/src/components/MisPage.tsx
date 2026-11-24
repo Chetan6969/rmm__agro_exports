@@ -40,11 +40,18 @@ export function MisPage<T>({ title, subtitle, path, extra, children }: { title: 
   );
 }
 
-type Pt = { name: string; value: number };
+type Pt = { name: string; value: number; pick?: string };
+/** Resolve the filter value a clicked datum carries (its `pick`, else its name). */
+const picked = (d: unknown): string | undefined => {
+  const p = (d as { pick?: string; name?: string; payload?: { pick?: string; name?: string } }) ?? {};
+  return p.pick ?? p.payload?.pick ?? p.name ?? p.payload?.name;
+};
+const clickable = (on?: (v: string) => void) => (on ? { cursor: 'pointer' as const } : {});
 
-/** Horizontal bar chart (ranked categories). */
-export function HBar({ data, fmt, height = 260, width = 110 }: { data: Pt[]; fmt: (v: number) => string; height?: number; width?: number }) {
+/** Horizontal bar chart (ranked categories). `onPick` makes bars clickable (drill / filter). */
+export function HBar({ data, fmt, height = 260, width = 110, onPick }: { data: Pt[]; fmt: (v: number) => string; height?: number; width?: number; onPick?: (v: string) => void }) {
   if (!data.length) return <NoData />;
+  const fire = (d: unknown) => { const v = picked(d); if (v && onPick) onPick(v); };
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} layout="vertical" margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
@@ -52,7 +59,7 @@ export function HBar({ data, fmt, height = 260, width = 110 }: { data: Pt[]; fmt
         <XAxis type="number" tickFormatter={fmt} tick={ax} tickLine={false} axisLine={false} />
         <YAxis type="category" dataKey="name" width={width} tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
         <Tooltip cursor={{ fill: '#f1f5f9' }} formatter={(v: number) => fmt(v)} />
-        <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={22}>
+        <Bar dataKey="value" radius={[0, 6, 6, 0]} maxBarSize={22} onClick={fire} style={clickable(onPick)}>
           {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
         </Bar>
       </BarChart>
@@ -60,9 +67,10 @@ export function HBar({ data, fmt, height = 260, width = 110 }: { data: Pt[]; fmt
   );
 }
 
-/** Vertical bar chart. */
-export function VBar({ data, fmt, height = 240 }: { data: Pt[]; fmt: (v: number) => string; height?: number }) {
+/** Vertical bar chart. `onPick` makes bars clickable. */
+export function VBar({ data, fmt, height = 240, onPick }: { data: Pt[]; fmt: (v: number) => string; height?: number; onPick?: (v: string) => void }) {
   if (!data.length) return <NoData />;
+  const fire = (d: unknown) => { const v = picked(d); if (v && onPick) onPick(v); };
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 8, right: 8, left: -14, bottom: 0 }}>
@@ -70,7 +78,7 @@ export function VBar({ data, fmt, height = 240 }: { data: Pt[]; fmt: (v: number)
         <XAxis dataKey="name" tick={ax} tickLine={false} axisLine={false} />
         <YAxis tickFormatter={fmt} tick={ax} tickLine={false} axisLine={false} width={40} />
         <Tooltip cursor={{ fill: '#f1f5f9' }} formatter={(v: number) => fmt(v)} />
-        <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={48}>
+        <Bar dataKey="value" radius={[6, 6, 0, 0]} maxBarSize={48} onClick={fire} style={clickable(onPick)}>
           {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
         </Bar>
       </BarChart>
@@ -78,13 +86,14 @@ export function VBar({ data, fmt, height = 240 }: { data: Pt[]; fmt: (v: number)
   );
 }
 
-/** Donut chart with legend. */
-export function Donut({ data, fmt, height = 240 }: { data: Pt[]; fmt: (v: number) => string; height?: number }) {
+/** Donut chart with legend. `onPick` makes slices clickable. */
+export function Donut({ data, fmt, height = 240, onPick }: { data: Pt[]; fmt: (v: number) => string; height?: number; onPick?: (v: string) => void }) {
   if (!data.length || data.every((d) => !d.value)) return <NoData />;
+  const fire = (d: unknown) => { const v = picked(d); if (v && onPick) onPick(v); };
   return (
     <ResponsiveContainer width="100%" height={height}>
       <PieChart>
-        <Pie data={data} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none">
+        <Pie data={data} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none" onClick={fire} style={clickable(onPick)}>
           {data.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
         </Pie>
         <Tooltip formatter={(v: number) => fmt(v)} />
@@ -101,8 +110,8 @@ export interface Col {
   render?: (row: Record<string, unknown>) => ReactNode;
 }
 
-/** Compact data table matching the dashboard's style. */
-export function SimpleTable({ columns, rows, empty = 'No data for this selection' }: { columns: Col[]; rows: Record<string, unknown>[]; empty?: string }) {
+/** Compact data table matching the dashboard's style. `onRow` makes rows clickable. */
+export function SimpleTable({ columns, rows, empty = 'No data for this selection', onRow }: { columns: Col[]; rows: Record<string, unknown>[]; empty?: string; onRow?: (row: Record<string, unknown>) => void }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-[13px]">
@@ -113,7 +122,7 @@ export function SimpleTable({ columns, rows, empty = 'No data for this selection
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-b border-slate-50 hover:bg-slate-50">
+            <tr key={i} onClick={onRow ? () => onRow(r) : undefined} className={`border-b border-slate-50 hover:bg-slate-50 ${onRow ? 'cursor-pointer' : ''}`}>
               {columns.map((c) => (
                 <td key={c.key} className={`py-1.5 pr-3 ${c.num ? 'text-right tabular-nums text-slate-600' : 'text-slate-600'}`}>
                   {c.render ? c.render(r) : String(r[c.key] ?? '')}

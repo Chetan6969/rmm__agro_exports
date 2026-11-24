@@ -17,6 +17,7 @@ export async function misTrade(tx: Tx, f: MisFilter) {
     tx,
     sql`
       select coalesce(co.name, 'Unspecified') as country,
+             ci.destination_country_id as id,
              coalesce(co.region, '') as region,
              sum(ci.invoice_total * ci.exchange_rate)::text as revenue,
              count(distinct ci.id)::int as invoices,
@@ -26,7 +27,7 @@ export async function misTrade(tx: Tx, f: MisFilter) {
       left join countries co on co.id = ci.destination_country_id
       left join lateral (select sum(l.quantity_mt) as vol from commercial_invoice_lines l where l.document_id = ci.id) lv on true
       where ${w}
-      group by co.name, co.region
+      group by co.name, ci.destination_country_id, co.region
       order by sum(ci.invoice_total * ci.exchange_rate) desc`,
   );
 

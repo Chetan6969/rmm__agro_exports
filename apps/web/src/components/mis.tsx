@@ -4,6 +4,7 @@
  */
 import { formatAmount } from '@rmm/shared';
 import type { ReactNode } from 'react';
+import { Link } from 'react-router';
 
 export const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#0ea5e9', '#a855f7', '#ec4899', '#14b8a6'];
 
@@ -40,6 +41,7 @@ export function Kpi({
   icon,
   tone,
   trend,
+  to,
 }: {
   label: string;
   value: string;
@@ -47,28 +49,31 @@ export function Kpi({
   icon?: ReactNode;
   tone: keyof typeof TONES;
   trend?: number | null;
+  /** When set, the tile becomes a link to this route. */
+  to?: string;
 }) {
-  return (
-    <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-start justify-between">
-        <div className="min-w-0">
-          <div className="text-[11.5px] font-medium tracking-wide text-slate-400 uppercase">{label}</div>
-          <div className="mt-1 truncate text-[22px] leading-tight font-semibold text-slate-900 tabular-nums">{value}</div>
-          {(sub || trend != null) && (
-            <div className="mt-1 flex items-center gap-1 text-[11.5px] text-slate-400">
-              {trend != null && (
-                <span className={`font-medium ${trend >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
-                  {trend >= 0 ? '▲' : '▼'} {Math.abs(trend).toFixed(1)}%
-                </span>
-              )}
-              {sub && <span>{sub}</span>}
-            </div>
-          )}
-        </div>
-        {icon && <span className={`flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white ${TONES[tone]}`}>{icon}</span>}
+  const body = (
+    <div className="flex items-start justify-between">
+      <div className="min-w-0">
+        <div className="text-[11.5px] font-medium tracking-wide text-slate-400 uppercase">{label}</div>
+        <div className="mt-1 truncate text-[22px] leading-tight font-semibold text-slate-900 tabular-nums">{value}</div>
+        {(sub || trend != null) && (
+          <div className="mt-1 flex items-center gap-1 text-[11.5px] text-slate-400">
+            {trend != null && (
+              <span className={`font-medium ${trend >= 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
+                {trend >= 0 ? '▲' : '▼'} {Math.abs(trend).toFixed(1)}%
+              </span>
+            )}
+            {sub && <span>{sub}</span>}
+          </div>
+        )}
       </div>
+      {icon && <span className={`flex size-10 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br text-white ${TONES[tone]}`}>{icon}</span>}
     </div>
   );
+  const cls = 'relative block overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm';
+  if (to) return <Link to={to} className={`${cls} transition hover:border-brand-300 hover:shadow-md`}>{body}</Link>;
+  return <div className={cls}>{body}</div>;
 }
 
 export function Panel({ title, subtitle, children, className = '', right }: { title: string; subtitle?: string; children: ReactNode; className?: string; right?: ReactNode }) {

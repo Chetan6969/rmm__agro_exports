@@ -1,11 +1,12 @@
 import { FileCheck2, FileStack, Ship, ScrollText } from 'lucide-react';
+import { Link } from 'react-router';
 import { HBar, MisPage, SimpleTable } from '../../components/MisPage';
 import { Kpi, num, Panel, statusLabel } from '../../components/mis';
 
 interface Data {
   summary: { total: number; with_po: number; with_ci: number; with_obl: number };
   certsByTemplate: { name: string; count: number }[];
-  checklist: { id: string; order_no: string; buyer: string; market: string; status: string; po: boolean; ci: boolean; obl: boolean; certs: number; stages_done: number }[];
+  checklist: { id: string; pi_id: string; order_no: string; buyer: string; market: string; status: string; po: boolean; ci: boolean; obl: boolean; certs: number; stages_done: number }[];
 }
 const mark = (ok: boolean) => (ok ? <span className="font-semibold text-emerald-600">✓</span> : <span className="text-slate-300">✗</span>);
 
@@ -29,7 +30,7 @@ export function DocumentationPage() {
             <Panel title="Document checklist" subtitle="✓ present · ✗ missing — per shipment">
               <SimpleTable
                 columns={[
-                  { key: 'order_no', label: 'Order' },
+                  { key: 'order_no', label: 'Order', render: (r) => <Link to={`/d/proformaInvoices/${r.pi_id}`} className="font-mono text-[12px] font-medium text-brand-700 hover:underline">{String(r.order_no)}</Link> },
                   { key: 'buyer', label: 'Buyer' },
                   { key: 'market', label: 'Market' },
                   { key: 'status', label: 'Status', render: (r) => statusLabel(String(r.status)) },

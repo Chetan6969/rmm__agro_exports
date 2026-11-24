@@ -12,7 +12,7 @@ interface Data {
 export function OrdersPage() {
   return (
     <MisPage<Data> title="Orders & contracts" path="/mis/orders" subtitle="Proforma orders: contract vs executed value">
-      {(d) => {
+      {(d, f) => {
         const s = d.summary;
         const fulfil = num(s.contract_value_inr) > 0 ? Math.round((num(s.executed_value_inr) / num(s.contract_value_inr)) * 100) : 0;
         return (
@@ -24,11 +24,11 @@ export function OrdersPage() {
               <Kpi label="Fulfilment" value={`${fulfil}%`} icon={<CheckCircle2 className="size-5" />} tone="amber" sub="executed ÷ contract" />
             </div>
             <div className="grid gap-4 lg:grid-cols-2">
-              <Panel title="Orders by status" subtitle="Count">
-                <Donut data={d.byStatus.map((x) => ({ name: statusLabel(x.status), value: x.count }))} fmt={(v) => String(v)} />
+              <Panel title="Orders by status" subtitle="Count · click to filter">
+                <Donut data={d.byStatus.map((x) => ({ name: statusLabel(x.status), value: x.count, pick: x.status }))} fmt={(v) => String(v)} onPick={(v) => f.set('status', v)} />
               </Panel>
-              <Panel title="Order value by status" subtitle="INR">
-                <Donut data={d.byStatus.map((x) => ({ name: statusLabel(x.status), value: num(x.value_inr) }))} fmt={(v) => inr(v)} />
+              <Panel title="Order value by status" subtitle="INR · click to filter">
+                <Donut data={d.byStatus.map((x) => ({ name: statusLabel(x.status), value: num(x.value_inr), pick: x.status }))} fmt={(v) => inr(v)} onPick={(v) => f.set('status', v)} />
               </Panel>
             </div>
             <Panel title="Orders" subtitle="Contract value and what has been executed (billed)">
