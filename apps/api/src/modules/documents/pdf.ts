@@ -190,7 +190,8 @@ class Writer {
       const w = RIGHT - LEFT;
       let h = 96;
       try {
-        const img = pdf.openImage(letterhead);
+        // openImage exists in PDFKit but is missing from @types/pdfkit
+        const img = (pdf as Doc & { openImage(src: Buffer): { width: number; height: number } }).openImage(letterhead);
         h = Math.min((img.height / img.width) * w, 150);
       } catch {
         /* keep the default height */

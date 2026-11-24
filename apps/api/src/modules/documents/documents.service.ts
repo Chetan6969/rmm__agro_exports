@@ -149,6 +149,7 @@ async function allocatedQty(tx: Tx, child: DocDef, parentId: string, excludeId?:
 /** Quantity already generated against each parent line (by sourceLineId). */
 async function allocatedByLine(tx: Tx, child: DocDef, parentId: string): Promise<Map<string, string>> {
   const { header: h, lines: l } = docTables[child.key];
+  if (!l) return new Map(); // document type without product lines
   const rows = await tx
     .select({ source: l.sourceLineId, q: sql<string>`sum(${l.quantityMt})::text` })
     .from(l)
@@ -767,13 +768,15 @@ export async function proformaFieldUsage(tx: Tx, ctx: RequestContext, field: str
 export async function proformaTermsUsage(tx: Tx, ctx: RequestContext) {
   const { def, t } = resolveDoc('proformaInvoices');
   allow(ctx, def, 'view');
+  const terms = t.terms;
+  if (!terms) return [];
   return tx
-    .select({ content: t.terms.content, count: sql<number>`count(distinct ${t.terms.documentId})::int` })
-    .from(t.terms)
-    .innerJoin(t.header, eq(t.terms.documentId, t.header.id))
+    .select({ content: terms.content, count: sql<number>`count(distinct ${terms.documentId})::int` })
+    .from(terms)
+    .innerJoin(t.header, eq(terms.documentId, t.header.id))
     .where(and(isNull(t.header.deletedAt), ne(t.header.status, CANCELLED)))
-    .groupBy(t.terms.content)
-    .orderBy(sql`2 desc`, asc(t.terms.content));
+    .groupBy(terms.content)
+    .orderBy(sql`2 desc`, asc(terms.content));
 }
 
 export const DOC_KEYS = DOC_LIST.map((d) => d.key);
