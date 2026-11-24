@@ -1,0 +1,62 @@
+import { Users, UserCheck, Wallet, Crown } from 'lucide-react';
+import { HBar, MisPage, SimpleTable } from '../../components/MisPage';
+import { inr, Kpi, num, Panel } from '../../components/mis';
+
+interface Buyer {
+  id: string;
+  name: string;
+  revenue_inr: string;
+  outstanding_inr: string;
+  invoices: number;
+  volume_mt: string;
+  last_order: string | null;
+  country: string;
+}
+interface Data {
+  buyers: Buyer[];
+}
+const mt = (v: number) => `${num(v).toLocaleString('en-IN', { maximumFractionDigits: 1 })} MT`;
+
+export function BuyersPage() {
+  return (
+    <MisPage<Data> title="Buyers" path="/mis/buyers" subtitle="Buyer & market intelligence">
+      {(d) => {
+        const total = d.buyers.length;
+        const repeat = d.buyers.filter((b) => b.invoices > 1).length;
+        const totalRev = d.buyers.reduce((a, b) => a + num(b.revenue_inr), 0);
+        const outstanding = d.buyers.reduce((a, b) => a + num(b.outstanding_inr), 0);
+        const top5 = d.buyers.slice(0, 5).reduce((a, b) => a + num(b.revenue_inr), 0);
+        const share = totalRev > 0 ? Math.round((top5 / totalRev) * 100) : 0;
+        return (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Kpi label="Active buyers" value={String(total)} icon={<Users className="size-5" />} tone="indigo" />
+              <Kpi label="Repeat buyers" value={String(repeat)} icon={<UserCheck className="size-5" />} tone="emerald" sub={`${total - repeat} single-order`} />
+              <Kpi label="Top-5 share" value={`${share}%`} icon={<Crown className="size-5" />} tone="amber" sub="revenue concentration" />
+              <Kpi label="Outstanding" value={inr(outstanding)} icon={<Wallet className="size-5" />} tone="rose" sub="across all buyers" />
+            </div>
+            <Panel title="Top buyers by revenue" subtitle="INR">
+              <HBar data={d.buyers.slice(0, 10).map((b) => ({ name: b.name, value: num(b.revenue_inr) }))} fmt={(v) => inr(v)} width={140} />
+            </Panel>
+            <Panel title="Buyer scorecard" subtitle="Revenue, volume, outstanding & average order value">
+              <SimpleTable
+                columns={[
+                  { key: 'name', label: 'Buyer' },
+                  { key: 'country', label: 'Top destination' },
+                  { key: 'revenue_inr', label: 'Revenue (₹)', num: true, render: (r) => inr(r.revenue_inr as string) },
+                  { key: 'invoices', label: 'Orders', num: true },
+                  { key: 'aov', label: 'Avg order (₹)', num: true, render: (r) => inr(num(r.revenue_inr) / Math.max(1, num(r.invoices))) },
+                  { key: 'volume_mt', label: 'Volume', num: true, render: (r) => mt(num(r.volume_mt)) },
+                  { key: 'outstanding_inr', label: 'Outstanding (₹)', num: true, render: (r) => inr(r.outstanding_inr as string) },
+                  { key: 'last_order', label: 'Last order' },
+                  { key: 'repeat', label: 'Type', render: (r) => (num(r.invoices) > 1 ? <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700">Repeat</span> : <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">New</span>) },
+                ]}
+                rows={d.buyers as unknown as Record<string, unknown>[]}
+              />
+            </Panel>
+          </>
+        );
+      }}
+    </MisPage>
+  );
+}

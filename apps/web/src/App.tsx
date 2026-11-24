@@ -14,6 +14,14 @@ import { HomePage } from './pages/HomePage';
 import { ChangePasswordPage, LoginPage } from './pages/LoginPage';
 import { MasterFormPage } from './pages/MasterFormPage';
 import { MasterListPage } from './pages/MasterListPage';
+import { BuyersPage } from './pages/mis/BuyersPage';
+import { DocumentationPage } from './pages/mis/DocumentationPage';
+import { FinancialPage } from './pages/mis/FinancialPage';
+import { LogisticsPage } from './pages/mis/LogisticsPage';
+import { OrdersPage } from './pages/mis/OrdersPage';
+import { ProductsPage } from './pages/mis/ProductsPage';
+import { ReportsPage } from './pages/mis/ReportsPage';
+import { TradePage } from './pages/mis/TradePage';
 import { OrderPlanningPage } from './pages/OrderPlanningPage';
 import { ProformaReportsPage } from './pages/ProformaReportsPage';
 import { ShipmentsPage } from './pages/ShipmentsPage';
@@ -26,6 +34,14 @@ const router = createBrowserRouter([
     children: [
       { path: '/', element: <HomePage /> },
       { path: '/mis', element: <DashboardPage /> },
+      { path: '/mis/trade', element: <TradePage /> },
+      { path: '/mis/buyers', element: <BuyersPage /> },
+      { path: '/mis/orders', element: <OrdersPage /> },
+      { path: '/mis/logistics', element: <LogisticsPage /> },
+      { path: '/mis/financial', element: <FinancialPage /> },
+      { path: '/mis/products', element: <ProductsPage /> },
+      { path: '/mis/documentation', element: <DocumentationPage /> },
+      { path: '/mis/reports', element: <ReportsPage /> },
       { path: '/shipments', element: <ShipmentsPage /> },
       { path: '/plan/:piId', element: <OrderPlanningPage /> },
       { path: '/d/:doc', element: <DocumentListPage /> },
