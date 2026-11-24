@@ -72,20 +72,21 @@ const STARTER_ROLES: { name: string; description: string; permissions: string[] 
   {
     name: 'Documentation Executive',
     description: 'Maintains parties, products and logistics masters; prepares documents',
-    permissions: [...mastersWith(['view', 'create', 'edit', 'export']), ...salesWith(['view', 'create', 'edit', 'print', 'export']), perm('admin.numbering', 'view')],
+    permissions: [...mastersWith(['view', 'create', 'edit', 'export']), ...salesWith(['view', 'create', 'edit', 'print', 'export']), perm('mis.dashboard', 'view'), perm('admin.numbering', 'view')],
   },
   {
     name: 'Accounts',
     description: 'Finance masters and bank accounts; read-only on the rest',
     permissions: [
       ...mastersWith(['view', 'export']),
-      ...salesWith(['view', 'print', 'export']),
+      ...salesWith(['view', 'create', 'delete', 'print', 'export']),
+      perm('mis.dashboard', 'view'),
       ...all('master.bankAccounts', ['create', 'edit']),
       ...all('master.currencies', ['create', 'edit']),
       ...all('master.paymentTerms', ['create', 'edit']),
     ],
   },
-  { name: 'Viewer', description: 'Read-only access to masters and sales documents', permissions: [...mastersWith(['view']), ...salesWith(['view'])] },
+  { name: 'Viewer', description: 'Read-only access to masters and sales documents', permissions: [...mastersWith(['view']), ...salesWith(['view']), perm('mis.dashboard', 'view')] },
 ];
 
 export async function seedDatabase(url?: string) {

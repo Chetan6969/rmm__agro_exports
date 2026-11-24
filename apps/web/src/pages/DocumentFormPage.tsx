@@ -18,12 +18,13 @@ import {
   type LiveRatesResponse,
 } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Lock, Package, Pencil, Plus, Printer, Save, Trash2, Unlock } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Lock, Package, Pencil, Plus, Printer, Save, Ship, Trash2, Unlock } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { EntityForm, type Values } from '../components/EntityForm';
 import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
+import { ReceiptsPanel } from '../components/ReceiptsPanel';
 import { RefSelect } from '../components/RefSelect';
 import { ConfirmDialog, Modal } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
@@ -80,10 +81,11 @@ export function DocumentFormPage() {
   const def = getDoc(doc);
   if (!def) return <div className="p-6"><ErrorBox error={new Error(`Unknown document type: ${doc}`)} /></div>;
   const from = params.get('from') ?? '';
-  return <DocumentForm key={`${def.key}-${id}-${from}`} def={def} id={id} from={from} />;
+  const shipment = params.get('shipment') ?? '';
+  return <DocumentForm key={`${def.key}-${id}-${from}-${shipment}`} def={def} id={id} from={from} shipment={shipment} />;
 }
 
-function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string }) {
+function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; from: string; shipment: string }) {
   const isNew = id === 'new';
   const { can } = useSession();
   const navigate = useNavigate();
@@ -107,9 +109,10 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rateNote, setRateNote] = useState<string | null>(null);
 
+  const draftQuery = from ? `?from=${from}` : shipment ? `?shipment=${shipment}` : '';
   const source = useQuery({
-    queryKey: ['documents', def.key, 'one', id, from],
-    queryFn: () => api.get<Loaded>(isNew ? `/documents/${def.key}/draft${from ? `?from=${from}` : ''}` : `/documents/${def.key}/${id}`),
+    queryKey: ['documents', def.key, 'one', id, from, shipment],
+    queryFn: () => api.get<Loaded>(isNew ? `/documents/${def.key}/draft${draftQuery}` : `/documents/${def.key}/${id}`),
     refetchOnWindowFocus: false,
   });
   const record = source.data;
@@ -295,8 +298,18 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
       toast.success(`${def.label} ${saved.documentNumber} saved`);
       setDirty(false);
       cache.clear();
-      if (isNew) navigate(`/d/${def.key}/${saved.id}`, { replace: true });
-      else {
+      if (isNew) {
+        // created from a shipment lot: link it back so it shows on the lot + pipeline, then return there
+        if (shipment && def.key === 'commercialInvoices') {
+          try {
+            await api.post(`/shipments/${shipment}/link-invoice`, { commercialInvoiceId: saved.id });
+          } catch (e) {
+            showError(e);
+          }
+          const piId = (saved as Record<string, unknown>).proformaInvoiceId as string | undefined;
+          navigate(piId ? `/plan/${piId}` : `/d/${def.key}/${saved.id}`, { replace: true });
+        } else navigate(`/d/${def.key}/${saved.id}`, { replace: true });
+      } else {
         setLoaded(false);
         await source.refetch();
       }
@@ -382,6 +395,11 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
                 <History className="size-3.5" /> History
               </Link>
             )}
+            {!isNew && def.key === 'proformaInvoices' && can('sales.shipments', 'view') && (
+              <Button icon={<Ship className="size-3.5" />} onClick={() => navigate(`/plan/${id}`)}>
+                Plan shipments
+              </Button>
+            )}
             {!isNew && can(def.module, 'print') && (
               <>
                 <Button icon={<Printer className="size-3.5" />} onClick={() => openPdf('pdf')} shortcut="mod+p">
@@ -466,6 +484,8 @@ function DocumentForm({ def, id, from }: { def: DocDef; id: string; from: string
           )}
 
           {!!def.lines.length && <TotalsPanel def={def} totals={totals} currency={currency} words={!dirty ? record?.amountInWords : null} />}
+
+          {def.key === 'commercialInvoices' && !isNew && <ReceiptsPanel invoiceId={id} />}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
             <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print</span>

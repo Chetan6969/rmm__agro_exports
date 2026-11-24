@@ -327,6 +327,7 @@ export const DOC_LIST: DocDef[] = [
       { name: 'repositionCharge', label: 'Reposition charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'oceanFreightCharge', label: 'Ocean freight (CFR / CIF)', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'insuranceCharge', label: 'Insurance (CIF)', type: 'decimal', precision: 12, scale: 2, default: 0 },
+      { name: 'discountAmount', label: 'Discount', type: 'decimal', precision: 15, scale: 2, default: 0, section: 'Discount', help: 'Deducted from the FOB value; printed above the invoice total' },
       { name: 'bankAccountId', label: 'Bank account for remittance', type: 'ref', ref: 'bankAccounts', span: 2, section: 'Bank & print' },
       { name: 'showSignature', label: 'Print signature & stamp', type: 'boolean', default: true },
     ],
@@ -527,7 +528,7 @@ export function computeTotals(def: DocDef, header: Values, lines: Values[]): Rec
     gstAmount,
     oceanFreightAmount: charges.oceanFreightCharge,
     insuranceAmount: charges.insuranceCharge,
-    invoiceTotal: add([goods, charges.oceanFreightCharge, charges.insuranceCharge], 2),
+    invoiceTotal: sub(add([goods, charges.oceanFreightCharge, charges.insuranceCharge], 2), v(header.discountAmount), 2),
   };
 }
 

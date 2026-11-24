@@ -7,6 +7,7 @@ import { DOC_LIST, type DocDef, type DocKey } from '@rmm/shared';
 import { sql } from 'drizzle-orm';
 import {
   boolean,
+  doublePrecision,
   index,
   integer,
   numeric,
@@ -51,6 +52,8 @@ function headerTable(def: DocDef): AnyTable {
   cols.locked = boolean('locked').notNull().default(false);
   cols.lockedAt = timestamp('locked_at', { withTimezone: true });
   cols.lockedBy = uuid('locked_by');
+  // Manual list order (move up/down); defaults to the creation time so the newest is on top.
+  cols.sortOrder = doublePrecision('sort_order');
   Object.assign(cols, recordColumns());
   return pgTable(def.table, cols, (t) => [
     uniqueIndex(`${def.table}_number_uq`).on(t.companyId, t.documentNumber).where(sql`deleted_at is null`),

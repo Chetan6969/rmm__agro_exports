@@ -1,0 +1,1 @@
+ALTER TABLE "commercial_invoices" ADD COLUMN "discount_amount" numeric(15, 2);

@@ -71,6 +71,41 @@
       "when": 1795166886513,
       "tag": "0009_useful_reptil",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795417328084,
+      "tag": "0010_boring_thanos",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795427786161,
+      "tag": "0011_closed_fat_cobra",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795431226433,
+      "tag": "0012_solid_giant_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795431980627,
+      "tag": "0013_real_leader",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795432729106,
+      "tag": "0014_flaky_shape",
+      "breakpoints": true
     }
   ]
 }

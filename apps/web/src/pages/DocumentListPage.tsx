@@ -1,13 +1,13 @@
 import { childDocs, documentValue, formatAmount, getDoc, statusLabel, type DocDef, type ListResult } from '@rmm/shared';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { Download, Plus, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, Download, Plus, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router';
 import { DataGrid, type Column, type DataGridHandle } from '../components/DataGrid';
 import { Badge, Button, ErrorBox, PageHeader } from '../components/ui';
 import { api, qs } from '../lib/api';
 import { useHotkeys } from '../lib/hotkeys';
-import { showProblem } from '../lib/notify';
+import { showError, showProblem } from '../lib/notify';
 import { useSession } from '../lib/session';
 import { useDebounced } from './MasterListPage';
 
@@ -64,7 +64,7 @@ function DocumentList({ def }: { def: DocDef }) {
   const rows = q.data?.rows ?? [];
   const pages = Math.max(1, Math.ceil((q.data?.total ?? 0) / 50));
 
-  const columns = useMemo<Column<Row>[]>(() => {
+  const baseColumns = useMemo<Column<Row>[]>(() => {
     const cols: Column<Row>[] = [
       { key: 'documentNumber', label: 'Number', className: 'font-mono text-[12.5px] font-medium text-slate-900', render: (r) => String(r.documentNumber) },
       { key: 'documentDate', label: 'Date', render: (r) => String(r.documentDate) },
@@ -100,7 +100,40 @@ function DocumentList({ def }: { def: DocDef }) {
   }, [def, children]);
 
   const canCreate = can(def.module, 'create');
+  const canEdit = can(def.module, 'edit');
   const open = (r: Row) => navigate(`/d/${def.key}/${r.id}`);
+  const reorder = async (r: Row, direction: 'up' | 'down') => {
+    try {
+      await api.post(`/documents/${def.key}/${r.id}/reorder`, { direction });
+      await q.refetch();
+    } catch (e) {
+      showError(e);
+    }
+  };
+  // Manual up/down only in the default view (no search); the list is ordered by this.
+  const orderBtn = 'rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700';
+  const columns: Column<Row>[] =
+    canEdit && !debounced
+      ? [
+          ...baseColumns,
+          {
+            key: '_reorder',
+            label: 'Order',
+            align: 'right',
+            className: 'w-20',
+            render: (r) => (
+              <span className="flex justify-end gap-0.5" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+                <button type="button" title="Move up" aria-label="Move up" className={orderBtn} onClick={() => reorder(r, 'up')}>
+                  <ArrowUp className="size-3.5" />
+                </button>
+                <button type="button" title="Move down" aria-label="Move down" className={orderBtn} onClick={() => reorder(r, 'down')}>
+                  <ArrowDown className="size-3.5" />
+                </button>
+              </span>
+            ),
+          },
+        ]
+      : baseColumns;
   const exportCsv = () => {
     if (!can(def.module, 'export')) return showProblem(`You do not have export permission for ${def.plural}`, `Ask an administrator to tick "export" for ${def.plural} in your role.`);
     const a = document.createElement('a');

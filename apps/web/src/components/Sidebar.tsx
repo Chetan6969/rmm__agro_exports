@@ -7,6 +7,20 @@ import { useSession } from '../lib/session';
 
 export const SIDEBAR_SHORTCUT = 'mod+\\';
 
+/** Colour the whole sidebar by the active company (RMM green, Pragati yellow, Dudani blue). */
+function companyTone(code?: string): { bar: string; badge: string; panel: string; accent: string } {
+  switch ((code ?? '').toUpperCase()) {
+    case 'RMM':
+      return { bar: 'bg-emerald-500/15 ring-emerald-400/30 hover:bg-emerald-500/25', badge: 'bg-emerald-400/20 text-emerald-200', panel: 'border-emerald-900/60 bg-emerald-950', accent: 'bg-emerald-400' };
+    case 'PRAGATI':
+      return { bar: 'bg-amber-400/15 ring-amber-300/30 hover:bg-amber-400/25', badge: 'bg-amber-300/25 text-amber-100', panel: 'border-amber-900/60 bg-amber-950', accent: 'bg-amber-300' };
+    case 'DUDANI':
+      return { bar: 'bg-sky-500/15 ring-sky-400/30 hover:bg-sky-500/25', badge: 'bg-sky-400/20 text-sky-200', panel: 'border-sky-900/60 bg-sky-950', accent: 'bg-sky-400' };
+    default:
+      return { bar: 'bg-white/5 ring-white/5 hover:bg-white/10', badge: 'bg-amber-300/15 text-amber-200', panel: 'border-slate-800 bg-slate-900', accent: 'bg-amber-300' };
+  }
+}
+
 const read = <T,>(key: string, fallback: T): T => {
   try {
     const v = localStorage.getItem(key);
@@ -98,7 +112,7 @@ export function Sidebar({
       >
         {({ isActive: a }) => (
           <>
-            {a && <span className="absolute top-1.5 bottom-1.5 left-0 w-[3px] rounded-r bg-amber-300" aria-hidden />}
+            {a && <span className={`absolute top-1.5 bottom-1.5 left-0 w-[3px] rounded-r ${companyTone(session.activeCompany?.code).accent}`} aria-hidden />}
             {Icon && !nested && <Icon className="size-4 shrink-0" />}
             <span className="truncate">{i.label}</span>
           </>
@@ -111,7 +125,7 @@ export function Sidebar({
     <aside
       id="main-nav"
       aria-label="Main navigation"
-      className={`flex shrink-0 flex-col border-r border-slate-800 bg-slate-900 text-slate-300 transition-[width] duration-200 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:shadow-2xl max-md:transition-transform ${
+      className={`flex shrink-0 flex-col border-r ${companyTone(session.activeCompany?.code).panel} text-slate-300 transition-[width] duration-200 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:shadow-2xl max-md:transition-transform ${
         drawerOpen ? '' : 'max-md:-translate-x-full'
       } ${rail ? 'md:w-[60px]' : 'md:w-60'}`}
     >
@@ -147,7 +161,7 @@ export function Sidebar({
           <button
             type="button"
             onClick={onSwitchCompany}
-            className="flex size-9 items-center justify-center rounded-md bg-white/5 font-mono text-[11px] font-semibold text-amber-200 hover:bg-white/10"
+            className={`flex size-9 items-center justify-center rounded-md font-mono text-[11px] font-semibold hover:brightness-125 ${companyTone(session.activeCompany?.code).badge}`}
             title={`${session.activeCompany?.name ?? 'No company selected'} — switch company (Alt+C)`}
             aria-label="Switch company"
           >
@@ -160,10 +174,10 @@ export function Sidebar({
               onCloseDrawer();
               onSwitchCompany();
             }}
-            className="flex w-full items-center gap-2.5 rounded-md bg-white/5 px-2.5 py-2 text-left ring-1 ring-white/5 hover:bg-white/10"
+            className={`flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left ring-1 ${companyTone(session.activeCompany?.code).bar}`}
             title="Switch company (Alt+C)"
           >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded bg-amber-300/15 font-mono text-[10.5px] font-semibold text-amber-200">
+            <span className={`flex size-7 shrink-0 items-center justify-center rounded font-mono text-[10.5px] font-semibold ${companyTone(session.activeCompany?.code).badge}`}>
               {session.activeCompany?.code.slice(0, 3) ?? <Building2 className="size-3.5" />}
             </span>
             <span className="min-w-0 flex-1">
@@ -207,7 +221,7 @@ export function Sidebar({
                     aria-haspopup="menu"
                     aria-expanded={flyout?.group === g}
                   >
-                    {here && <span className="absolute top-2 bottom-2 left-0 w-[3px] rounded-r bg-amber-300" aria-hidden />}
+                    {here && <span className={`absolute top-2 bottom-2 left-0 w-[3px] rounded-r ${companyTone(session.activeCompany?.code).accent}`} aria-hidden />}
                     {Icon && <Icon className="size-[18px]" />}
                   </button>
                 </li>
