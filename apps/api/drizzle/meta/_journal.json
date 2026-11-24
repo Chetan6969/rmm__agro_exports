@@ -113,6 +113,13 @@
       "when": 1795517515338,
       "tag": "0015_shipment_checkpoints",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795519028422,
+      "tag": "0016_sharing_soft_delete",
+      "breakpoints": true
     }
   ]
 }

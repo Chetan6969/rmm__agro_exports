@@ -25,6 +25,7 @@ import {
   Shield,
   ShieldCheck,
   Ship,
+  Trash2,
   Users,
   UserCog,
 } from 'lucide-react';
@@ -82,6 +83,7 @@ export const NAV: NavItem[] = [
   { id: 'roles', label: 'Roles & permissions', path: '/admin/roles', group: 'Administration', perm: ['admin.roles', 'view'], keywords: 'rbac rights', icon: ShieldCheck },
   { id: 'sharing', label: 'Data sharing', path: '/admin/sharing', group: 'Administration', perm: ['admin.sharing', 'view'], keywords: 'share companies policy', icon: Share2 },
   { id: 'numbering', label: 'Document numbering', path: '/admin/numbering', group: 'Administration', perm: ['admin.numbering', 'view'], keywords: 'series invoice number fy', icon: Hash },
+  { id: 'recycle-bin', label: 'Recycle bin', path: '/recycle-bin', group: 'Administration', keywords: 'deleted trash restore undo bin removed', icon: Trash2 },
   { id: 'checkpoints', label: 'Shipment checkpoints', path: '/admin/checkpoints', group: 'Administration', perm: ['admin.pipeline', 'view'], keywords: 'staging stage pipeline checkpoint path sla due overdue', icon: ListChecks },
   { id: 'audit', label: 'Audit log', path: '/admin/audit', group: 'Administration', perm: ['admin.audit', 'view'], keywords: 'history changes who', icon: History },
 ];

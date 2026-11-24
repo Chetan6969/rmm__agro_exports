@@ -124,9 +124,13 @@ export const sharingPolicies = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     createdBy: uuid('created_by'),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Removed policies stay in the recycle bin (they grant nothing while deleted). */
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    deletedBy: uuid('deleted_by'),
+    deleteReason: text('delete_reason'),
   },
   (t) => [
-    uniqueIndex('sharing_uq').on(t.entity, t.sourceCompanyId, t.targetCompanyId),
+    uniqueIndex('sharing_uq').on(t.entity, t.sourceCompanyId, t.targetCompanyId).where(sql`deleted_at is null`),
     index('sharing_target_idx').on(t.entity, t.targetCompanyId),
   ],
 );

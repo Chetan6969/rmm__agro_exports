@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { db, type Tx } from '../db/client.js';
-import { rolePermissions, roles, userCompanyRoles } from '../db/schema/index.js';
+import { rolePermissions, roles, userCompanyRoles, users } from '../db/schema/index.js';
 import { companiesForUser } from '../core/access.js';
 import { audit } from '../core/audit.js';
 import { inTenantTx, requireCtx, requirePerm, type RequestContext } from '../core/context.js';
@@ -145,7 +145,12 @@ export async function rolesRoutes(app: FastifyInstance) {
       const [r] = await tx.select().from(roles).where(and(eq(roles.id, req.params.id), isNull(roles.deletedAt)));
       if (!r) throw notFound('Role not found', 'It may have been deleted. Reload the roles list.');
       if (r.isSystem) throw badRequest('System roles cannot be deleted', 'Remove the role from users instead (Administration → Users).');
-      const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(userCompanyRoles).where(eq(userCompanyRoles.roleId, r.id));
+      // assignments of deleted users (kept for restore) do not count
+      const [{ n }] = await tx
+        .select({ n: sql<number>`count(*)::int` })
+        .from(userCompanyRoles)
+        .innerJoin(users, and(eq(users.id, userCompanyRoles.userId), isNull(users.deletedAt)))
+        .where(eq(userCompanyRoles.roleId, r.id));
       if (n > 0) {
         throw conflict(`This role is still assigned ${n} time(s)`, 'Open Administration → Users, untick this role for each user, then delete it.');
       }

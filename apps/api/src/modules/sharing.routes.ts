@@ -1,5 +1,5 @@
 import { getEntity } from '@rmm/shared';
-import { and, asc, eq, or, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, or, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { companies, sharingPolicies } from '../db/schema/index.js';
@@ -34,7 +34,7 @@ export async function sharingRoutes(app: FastifyInstance) {
           target: sql<string>`(select code from companies c where c.id = ${sharingPolicies.targetCompanyId})`,
         })
         .from(sharingPolicies)
-        .where(where)
+        .where(and(isNull(sharingPolicies.deletedAt), where))
         .orderBy(asc(sharingPolicies.entity));
       return rows.map((r) => ({ ...r.policy, sourceCode: r.source, targetCode: r.target }));
     });
@@ -65,6 +65,7 @@ export async function sharingRoutes(app: FastifyInstance) {
             eq(sharingPolicies.entity, body.entity),
             eq(sharingPolicies.sourceCompanyId, sourceCompanyId),
             eq(sharingPolicies.targetCompanyId, body.targetCompanyId),
+            isNull(sharingPolicies.deletedAt),
           ),
         );
       if (dupe) throw conflict('A policy for this master and these companies already exists', 'Open the existing policy in the list and edit it instead.');
@@ -83,7 +84,7 @@ export async function sharingRoutes(app: FastifyInstance) {
     requirePerm(ctx, 'admin.sharing', 'edit');
     const body = policySchema.pick({ access: true, recordIds: true, note: true }).parse(req.body);
     return inTenantTx(ctx, async (tx) => {
-      const [before] = await tx.select().from(sharingPolicies).where(eq(sharingPolicies.id, req.params.id));
+      const [before] = await tx.select().from(sharingPolicies).where(and(eq(sharingPolicies.id, req.params.id), isNull(sharingPolicies.deletedAt)));
       if (!before) throw notFound('Policy not found', 'It may have been removed. Reload the list.');
       if (!ctx.isSuperAdmin && before.sourceCompanyId !== ctx.companyId) {
         throw forbidden('Only the owning company can change this policy', 'Switch to the company that shares the data (Alt+C) to change it.');
@@ -102,12 +103,13 @@ export async function sharingRoutes(app: FastifyInstance) {
     const ctx = requireCtx(req);
     requirePerm(ctx, 'admin.sharing', 'delete');
     return inTenantTx(ctx, async (tx) => {
-      const [before] = await tx.select().from(sharingPolicies).where(eq(sharingPolicies.id, req.params.id));
+      const [before] = await tx.select().from(sharingPolicies).where(and(eq(sharingPolicies.id, req.params.id), isNull(sharingPolicies.deletedAt)));
       if (!before) throw notFound('Policy not found', 'It may have been removed. Reload the list.');
       if (!ctx.isSuperAdmin && before.sourceCompanyId !== ctx.companyId) {
         throw forbidden('Only the owning company can remove this policy', 'Switch to the company that shares the data (Alt+C) to remove it.');
       }
-      await tx.delete(sharingPolicies).where(eq(sharingPolicies.id, before.id));
+      // kept in the recycle bin; a removed policy grants nothing (RLS ignores it)
+      await tx.update(sharingPolicies).set({ deletedAt: new Date(), deletedBy: ctx.userId }).where(eq(sharingPolicies.id, before.id));
       await audit(tx, ctx, { entity: 'sharing_policies', recordId: before.id, action: 'delete', before });
       return { ok: true };
     });

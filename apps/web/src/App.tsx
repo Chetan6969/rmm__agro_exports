@@ -25,6 +25,7 @@ import { ReportsPage } from './pages/mis/ReportsPage';
 import { TradePage } from './pages/mis/TradePage';
 import { OrderPlanningPage } from './pages/OrderPlanningPage';
 import { ProformaReportsPage } from './pages/ProformaReportsPage';
+import { RecycleBinPage } from './pages/RecycleBinPage';
 import { ShipmentsPage } from './pages/ShipmentsPage';
 
 const NotFound = () => <div className="p-6 text-slate-500">Page not found. Press Ctrl+K to find a screen.</div>;
@@ -57,6 +58,7 @@ const router = createBrowserRouter([
       { path: '/admin/numbering', element: <NumberingPage /> },
       { path: '/admin/audit', element: <AuditPage /> },
       { path: '/admin/checkpoints', element: <CheckpointsPage /> },
+      { path: '/recycle-bin', element: <RecycleBinPage /> },
       { path: '*', element: <NotFound /> },
     ],
   },

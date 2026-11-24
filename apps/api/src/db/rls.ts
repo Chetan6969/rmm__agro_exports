@@ -33,6 +33,7 @@ $$
        and p.target_company_id = app_company_id()
        and (p.record_ids is null or p_record = any(p.record_ids))
        and (not p_need_write or p.access = 'write')
+       and p.deleted_at is null
   )
 $$;
 `;

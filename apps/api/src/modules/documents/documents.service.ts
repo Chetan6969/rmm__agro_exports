@@ -31,7 +31,7 @@ import {
   type EntityDef,
   type FieldDef,
 } from '@rmm/shared';
-import { and, asc, desc, eq, gt, ilike, inArray, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
+import { and, isNotNull, asc, desc, eq, gt, ilike, inArray, isNull, lt, ne, or, sql, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Tx } from '../../db/client.js';
 import { docTables, masterTables, type DocTables } from '../../db/schema/index.js';
@@ -338,6 +338,36 @@ export async function updateDocument(tx: Tx, ctx: RequestContext, key: string, i
   await writeChildren(tx, def, companyId, id, p);
   await audit(tx, ctx, { entity: def.key, recordId: id, action: 'update', before, after: row, meta: { lines: p.lines.length } });
   return getDocument(tx, ctx, key, id, 'edit');
+}
+
+/**
+ * Bring a deleted document back from the recycle bin. Same rules as saving it: its number must
+ * still be free, the document it was generated against must exist, and the quantity must still
+ * fit that parent's balance.
+ */
+export async function restoreDocument(tx: Tx, ctx: RequestContext, key: string, id: string) {
+  const { def, t } = resolveDoc(key);
+  allow(ctx, def, 'delete');
+  const companyId = requireCompany(ctx);
+  const h = t.header;
+  const [row] = (await tx.select().from(h).where(and(eq(h.id, id), isNotNull(h.deletedAt))).for('update')) as Row[];
+  if (!row) throw notFound(`Deleted ${def.label.toLowerCase()} not found`, 'It may already have been restored. Reload the recycle bin.');
+  await assertNumberFree(tx, def, companyId, row.documentNumber as string, id);
+  if (def.parent && row[def.parent.field]) {
+    const ph = docTables[def.parent.doc].header;
+    const [parent] = (await tx.select({ deletedAt: ph.deletedAt, number: ph.documentNumber }).from(ph).where(eq(ph.id, row[def.parent.field] as string))) as Row[];
+    if (!parent || parent.deletedAt) {
+      throw badRequest(`Restore ${resolveDoc(def.parent.doc).def.label.toLowerCase()} ${parent?.number ?? ''} first`, 'This document was generated against it; bring that one back from the recycle bin before this one.');
+    }
+    await checkParentBalance(tx, def, row, row.totalQuantityMt as string, id);
+  }
+  const [after] = (await tx
+    .update(h)
+    .set({ deletedAt: null, deletedBy: null, deleteReason: null, version: sql`${h.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
+    .where(eq(h.id, id))
+    .returning()) as Row[];
+  await audit(tx, ctx, { entity: def.key, recordId: id, action: 'restore', meta: { documentNumber: row.documentNumber } });
+  return after;
 }
 
 export async function deleteDocument(tx: Tx, ctx: RequestContext, key: string, id: string, reason: string) {

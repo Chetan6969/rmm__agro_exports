@@ -353,7 +353,7 @@ export async function usersRoutes(app: FastifyInstance) {
         .update(users)
         .set({ deletedAt: new Date(), deletedBy: ctx.userId, deleteReason: reason, isActive: false })
         .where(eq(users.id, target.id));
-      await tx.delete(userCompanyRoles).where(eq(userCompanyRoles.userId, target.id));
+      // company access is kept so a restore from the recycle bin brings the user back as they were
       await audit(tx, ctx, { entity: 'users', recordId: target.id, action: 'delete', meta: { reason } });
     });
     await revokeUserSessions(req.params.id);
