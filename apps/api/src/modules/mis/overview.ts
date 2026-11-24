@@ -1,12 +1,12 @@
 /**
- * Export Overview — headline KPIs + charts for the MIS landing page. Revenue is normalised to INR
- * using each document's own transaction exchange rate (so mixed-currency invoices add up); a
+ * Export Overview — headline KPIs + charts for the MIS landing page. Money is shown in the
+ * reporting currency (USD or INR, see `fx` in filter.ts) so mixed-currency invoices add up; a
  * per-currency receivables breakdown is kept alongside for the real figures. Everything respects the
  * shared MisFilter.
  */
 import { sql, type SQL } from 'drizzle-orm';
 import type { Tx } from '../../db/client.js';
-import { docWhere, type MisFilter } from './filter.js';
+import { docWhere, fx, type MisFilter } from './filter.js';
 
 type Row = Record<string, unknown>;
 const rows = async (tx: Tx, q: SQL) => (await tx.execute(q)) as unknown as Row[];
@@ -14,16 +14,17 @@ const one = async (tx: Tx, q: SQL) => (await rows(tx, q))[0] ?? {};
 
 export async function misOverview(tx: Tx, f: MisFilter) {
   const ciW = docWhere('ci', 'commercial_invoice_lines', f);
+  const ciFx = fx('ci', f.ccy);
   const piW = docWhere('pi', 'proforma_invoice_lines', f);
   // order-status donut ignores the status filter so the whole mix is visible
   const piAll = docWhere('pi', 'proforma_invoice_lines', { ...f, status: null });
 
-  // ---- headline KPIs (INR normalised) ----
+  // ---- headline KPIs (reporting currency) ----
   const kpi = await one(
     tx,
     sql`
       select
-        coalesce(sum(ci.invoice_total * ci.exchange_rate), 0)::text as revenue_inr,
+        coalesce(sum(ci.invoice_total * ${ciFx}), 0)::text as revenue_rpt,
         count(*)::int as invoices,
         count(distinct ci.buyer_id)::int as buyers,
         count(distinct ci.destination_country_id)::int as countries
@@ -38,7 +39,7 @@ export async function misOverview(tx: Tx, f: MisFilter) {
   );
   const received = await one(
     tx,
-    sql`select coalesce(sum(p.amount * ci.exchange_rate), 0)::text as received_inr
+    sql`select coalesce(sum(p.amount * ${ciFx}), 0)::text as received_rpt
         from payments p join commercial_invoices ci on ci.id = p.commercial_invoice_id
         where p.deleted_at is null and ${ciW}`,
   );
@@ -57,18 +58,18 @@ export async function misOverview(tx: Tx, f: MisFilter) {
          where s.deleted_at is null and ${piW}`,
   );
 
-  // ---- monthly revenue & received (INR), last 12 months in range ----
+  // ---- monthly revenue & received (reporting currency), last 12 months in range ----
   const monthly = await rows(
     tx,
     sql`
       with m as (
         select to_char(ci.document_date, 'YYYY-MM') as month,
-               sum(ci.invoice_total * ci.exchange_rate) as revenue
+               sum(ci.invoice_total * ${ciFx}) as revenue
         from commercial_invoices ci where ${ciW} group by 1
       ),
       r as (
         select to_char(p.payment_date, 'YYYY-MM') as month,
-               sum(p.amount * ci.exchange_rate) as received
+               sum(p.amount * ${ciFx}) as received
         from payments p join commercial_invoices ci on ci.id = p.commercial_invoice_id
         where p.deleted_at is null and ${ciW} group by 1
       )
@@ -79,27 +80,27 @@ export async function misOverview(tx: Tx, f: MisFilter) {
       order by month desc limit 12`,
   );
 
-  // ---- revenue by destination country (INR) ----
+  // ---- revenue by destination country (reporting currency) ----
   const byCountry = await rows(
     tx,
     sql`
       select coalesce(co.name, 'Unspecified') as country,
              ci.destination_country_id as id,
-             sum(ci.invoice_total * ci.exchange_rate)::text as revenue,
+             sum(ci.invoice_total * ${ciFx})::text as revenue,
              count(*)::int as invoices
       from commercial_invoices ci
       left join countries co on co.id = ci.destination_country_id
       where ${ciW}
-      group by co.name, ci.destination_country_id order by sum(ci.invoice_total * ci.exchange_rate) desc`,
+      group by co.name, ci.destination_country_id order by sum(ci.invoice_total * ${ciFx}) desc`,
   );
 
-  // ---- product / variety distribution (volume MT + INR revenue from lines) ----
+  // ---- product / variety distribution (volume MT + revenue from lines, reporting currency) ----
   const byVariety = await rows(
     tx,
     sql`
       select coalesce(p.variety, 'Unspecified') as variety,
              sum(l.quantity_mt)::text as volume_mt,
-             sum(l.amount * ci.exchange_rate)::text as revenue
+             sum(l.amount * ${ciFx})::text as revenue
       from commercial_invoice_lines l
       join commercial_invoices ci on ci.id = l.document_id
       left join products p on p.id = l.product_id
@@ -131,7 +132,7 @@ export async function misOverview(tx: Tx, f: MisFilter) {
   );
 
   const monthlyAsc = monthly.reverse();
-  const revenueInr = Number((kpi.revenue_inr as string) ?? 0);
+  const revenue = Number((kpi.revenue_rpt as string) ?? 0);
   const volumeMt = Number((volume.volume_mt as string) ?? 0);
   // month-over-month growth on the last two populated months
   let growthPct: number | null = null;
@@ -143,10 +144,10 @@ export async function misOverview(tx: Tx, f: MisFilter) {
 
   return {
     kpis: {
-      revenueInr: String(revenueInr),
-      receivedInr: String(received.received_inr ?? 0),
+      revenue: String(revenue),
+      received: String(received.received_rpt ?? 0),
       volumeMt: String(volumeMt),
-      avgPricePerMt: String(volumeMt > 0 ? revenueInr / volumeMt : 0),
+      avgPricePerMt: String(volumeMt > 0 ? revenue / volumeMt : 0),
       invoices: kpi.invoices ?? 0,
       activeBuyers: kpi.buyers ?? 0,
       countries: kpi.countries ?? 0,

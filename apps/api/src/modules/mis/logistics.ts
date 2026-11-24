@@ -5,7 +5,7 @@
  */
 import { sql, type SQL } from 'drizzle-orm';
 import type { Tx } from '../../db/client.js';
-import { docWhere, type MisFilter } from './filter.js';
+import { docWhere, fxFromInr, type MisFilter } from './filter.js';
 
 type Row = Record<string, unknown>;
 const rows = async (tx: Tx, q: SQL) => (await tx.execute(q)) as unknown as Row[];
@@ -29,16 +29,17 @@ export async function misLogistics(tx: Tx, f: MisFilter) {
   const byStatus = await rows(tx, sql`select s.status, count(*)::int as count, coalesce(sum(s.quantity_mt),0)::text as qty_mt ${base} group by s.status order by count desc`);
   const byMarket = await rows(tx, sql`select s.market, count(*)::int as count, coalesce(sum(s.quantity_mt),0)::text as qty_mt ${base} group by s.market order by count desc`);
 
-  // planned charges (₹) by head
+  // planned charges by head (recorded in ₹; shown in the reporting currency at the shipment's date)
+  const chargeFx = fxFromInr(sql`coalesce(s.target_ship_date, pi.document_date)`, f.ccy);
   const charges = await rows(
     tx,
     sql`select coalesce(nullif(sc.label, ''), 'Other') as head,
-                coalesce(sum(sc.amount), 0)::text as amount
+                coalesce(sum(sc.amount * ${chargeFx}), 0)::text as amount
          from shipment_charges sc
          join shipments s on s.id = sc.shipment_id
          join proforma_invoices pi on pi.id = s.proforma_invoice_id
          where s.deleted_at is null and ${w}
-         group by sc.label order by sum(sc.amount) desc`,
+         group by sc.label order by sum(sc.amount * ${chargeFx}) desc`,
   );
 
   // on-time analysis: BL date vs target ship date

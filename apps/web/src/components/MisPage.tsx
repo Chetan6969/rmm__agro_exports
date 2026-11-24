@@ -9,7 +9,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveCo
 import { api } from '../lib/api';
 import { useMisFilter, type MisFilterApi } from '../lib/useMisFilter';
 import { useSession } from '../lib/session';
-import { GlobalFilterBar } from './GlobalFilterBar';
+import { GlobalFilterBar, type MisFx } from './GlobalFilterBar';
 import { COLORS, NoData } from './mis';
 import { ErrorBox, PageHeader, Spinner } from './ui';
 
@@ -28,7 +28,7 @@ export function MisPage<T>({ title, subtitle, path, extra, children }: { title: 
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-slate-50">
       <PageHeader title={title} subtitle={subtitle ?? `${session.activeCompany.name} · MIS`} />
-      <GlobalFilterBar f={f} enabled={enabled} />
+      <GlobalFilterBar f={f} enabled={enabled} fx={(q.data as { fx?: MisFx } | undefined)?.fx} />
       <div className="flex-1 overflow-y-auto">
         {q.isLoading || !q.data ? (
           q.error ? <div className="p-6"><ErrorBox error={q.error} /></div> : <Spinner label="Loading…" />

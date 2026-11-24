@@ -1,7 +1,7 @@
 import { Anchor, Container, Ship, Timer } from 'lucide-react';
 import { Link } from 'react-router';
 import { Donut, HBar, MisPage, SimpleTable, VBar } from '../../components/MisPage';
-import { compact, inr, Kpi, num, Panel, statusLabel } from '../../components/mis';
+import { compact, Kpi, num, Panel, statusLabel } from '../../components/mis';
 
 interface Data {
   summary: { total: number; active: number; shipped: number; cancelled: number; qty_mt: string; containers: number };
@@ -16,7 +16,7 @@ const chip = (ok: boolean, text: string) => <span className={`rounded px-1.5 py-
 export function LogisticsPage() {
   return (
     <MisPage<Data> title="Logistics" path="/mis/logistics" subtitle="Shipments, pipeline status & planned charges">
-      {(d) => {
+      {(d, f) => {
         const s = d.summary;
         return (
           <>
@@ -29,8 +29,8 @@ export function LogisticsPage() {
             <div className="grid gap-4 lg:grid-cols-3">
               <Panel title="By status"><Donut data={d.byStatus.map((x) => ({ name: statusLabel(x.status), value: x.count }))} fmt={(v) => String(v)} /></Panel>
               <Panel title="By market" subtitle="MT by Gulf / EU"><VBar data={d.byMarket.map((x) => ({ name: x.market, value: num(x.qty_mt) }))} fmt={(v) => compact(v)} /></Panel>
-              <Panel title="Planned charges" subtitle="₹ by head">
-                {d.charges.length ? <HBar data={d.charges.slice(0, 8).map((c) => ({ name: c.head, value: num(c.amount) }))} fmt={(v) => inr(v)} height={240} width={90} /> : <div className="flex h-[200px] items-center justify-center text-[13px] text-slate-400">No charges recorded</div>}
+              <Panel title="Planned charges" subtitle={`${f.sym} by head`}>
+                {d.charges.length ? <HBar data={d.charges.slice(0, 8).map((c) => ({ name: c.head, value: num(c.amount) }))} fmt={(v) => f.fmt(v)} height={240} width={90} /> : <div className="flex h-[200px] items-center justify-center text-[13px] text-slate-400">No charges recorded</div>}
               </Panel>
             </div>
             <Panel title="Shipments" subtitle="Lot pipeline, target date vs actual B/L">

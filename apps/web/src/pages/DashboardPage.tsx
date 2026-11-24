@@ -1,14 +1,14 @@
 /**
  * Export Overview — the MIS landing page. Headline KPIs + charts, all driven by the shared
- * GlobalFilterBar. Revenue is shown in INR (normalised via each invoice's transaction rate); the
- * per-currency receivables table keeps the untouched figures.
+ * GlobalFilterBar. Money is shown in the reporting currency chosen at the top ($ or ₹, converted on
+ * the server); the per-currency receivables table keeps the untouched figures.
  */
 import { formatAmount } from '@rmm/shared';
 import { useQuery } from '@tanstack/react-query';
 import { Boxes, FileText, Gauge, Globe2, PackageCheck, Ship, TrendingUp, Users, Wallet } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { GlobalFilterBar } from '../components/GlobalFilterBar';
-import { COLORS, compact, inr, Kpi, money, monthLabel, NoData, num, Panel, statusLabel } from '../components/mis';
+import { GlobalFilterBar, type MisFx } from '../components/GlobalFilterBar';
+import { COLORS, Kpi, money, monthLabel, NoData, num, Panel, statusLabel } from '../components/mis';
 import { ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
@@ -16,8 +16,8 @@ import { useMisFilter } from '../lib/useMisFilter';
 
 interface Overview {
   kpis: {
-    revenueInr: string;
-    receivedInr: string;
+    revenue: string;
+    received: string;
     volumeMt: string;
     avgPricePerMt: string;
     invoices: number;
@@ -35,6 +35,7 @@ interface Overview {
   byVariety: { variety: string; volume_mt: string; revenue: string }[];
   orderStatus: { status: string; count: number }[];
   receivables: { currency: string; count: number; invoiced: string; received: string; pending: string }[];
+  fx?: MisFx;
 }
 
 const mt = (v: string | number) => `${formatAmount(String(v), 3)} MT`;
@@ -49,7 +50,7 @@ export function DashboardPage() {
 
   const d = q.data;
   const k = d?.kpis;
-  const collected = k && num(k.revenueInr) > 0 ? Math.round((num(k.receivedInr) / num(k.revenueInr)) * 100) : 0;
+  const collected = k && num(k.revenue) > 0 ? Math.round((num(k.received) / num(k.revenue)) * 100) : 0;
   const monthly = (d?.monthly ?? []).map((m) => ({ month: monthLabel(m.month), Revenue: num(m.revenue), Received: num(m.received) }));
   const byCountry = (d?.byCountry ?? []).slice(0, 8).map((c) => ({ name: c.country, value: num(c.revenue), invoices: c.invoices, pick: c.id ?? '' }));
   const byVariety = (d?.byVariety ?? []).map((v) => ({ name: v.variety, value: num(v.volume_mt), revenue: num(v.revenue) }));
@@ -61,7 +62,7 @@ export function DashboardPage() {
   return (
     <div className="flex flex-1 flex-col overflow-hidden bg-slate-50">
       <PageHeader title="Export overview" subtitle={`${session.activeCompany.name} · analytics & receivables`} />
-      <GlobalFilterBar f={f} enabled={enabled} />
+      <GlobalFilterBar f={f} enabled={enabled} fx={d?.fx} />
       <div className="flex-1 overflow-y-auto">
         {q.isLoading || !d ? (
           q.error ? <div className="p-6"><ErrorBox error={q.error} /></div> : <Spinner label="Loading overview…" />
@@ -69,9 +70,9 @@ export function DashboardPage() {
           <div className="space-y-4 p-4 sm:p-5">
             {/* KPI tiles */}
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Kpi label="Export revenue" value={inr(k!.revenueInr)} icon={<TrendingUp className="size-5" />} tone="indigo" trend={k!.growthPct} sub="vs prev. month" to={`/mis/financial${f.query}`} />
-              <Kpi label="Received" value={inr(k!.receivedInr)} icon={<Wallet className="size-5" />} tone="emerald" sub={`${collected}% collected`} to={`/mis/financial${f.query}`} />
-              <Kpi label="Volume shipped" value={mt(k!.volumeMt)} icon={<Boxes className="size-5" />} tone="sky" sub={`avg ${inr(k!.avgPricePerMt)}/MT`} to={`/mis/products${f.query}`} />
+              <Kpi label="Export revenue" value={f.fmt(k!.revenue)} icon={<TrendingUp className="size-5" />} tone="indigo" trend={k!.growthPct} sub="vs prev. month" to={`/mis/financial${f.query}`} />
+              <Kpi label="Received" value={f.fmt(k!.received)} icon={<Wallet className="size-5" />} tone="emerald" sub={`${collected}% collected`} to={`/mis/financial${f.query}`} />
+              <Kpi label="Volume shipped" value={mt(k!.volumeMt)} icon={<Boxes className="size-5" />} tone="sky" sub={`avg ${f.fmt(k!.avgPricePerMt)}/MT`} to={`/mis/products${f.query}`} />
               <Kpi label="Invoices" value={String(k!.invoices)} icon={<FileText className="size-5" />} tone="violet" sub="commercial invoices" to={`/mis/reports${f.query}`} />
               <Kpi label="Orders" value={String(k!.orders)} icon={<PackageCheck className="size-5" />} tone="amber" sub={`${k!.activeContracts} active contracts`} to={`/mis/orders${f.query}`} />
               <Kpi label="Active buyers" value={String(k!.activeBuyers)} icon={<Users className="size-5" />} tone="rose" sub={`${k!.countries} destinations`} to={`/mis/buyers${f.query}`} />
@@ -81,7 +82,7 @@ export function DashboardPage() {
 
             {/* monthly trend + country */}
             <div className="grid gap-4 lg:grid-cols-5">
-              <Panel title="Monthly revenue & collections" subtitle="INR, normalised at each invoice's rate" className="lg:col-span-3">
+              <Panel title="Monthly revenue & collections" subtitle={`${f.ccy}, converted per invoice`} className="lg:col-span-3">
                 {monthly.length ? (
                   <ResponsiveContainer width="100%" height={260}>
                     <AreaChart data={monthly} margin={{ top: 8, right: 8, left: -8, bottom: 0 }}>
@@ -91,8 +92,8 @@ export function DashboardPage() {
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" vertical={false} />
                       <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} />
-                      <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={compact} width={48} />
-                      <Tooltip formatter={(v: number) => inr(v)} />
+                      <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={f.tick} width={48} />
+                      <Tooltip formatter={(v: number) => f.fmt(v)} />
                       <Area type="monotone" dataKey="Revenue" stroke="#6366f1" strokeWidth={2} fill="url(#gRev)" />
                       <Area type="monotone" dataKey="Received" stroke="#10b981" strokeWidth={2} fill="url(#gRec)" />
                       <Legend verticalAlign="top" height={24} iconType="circle" />
@@ -101,14 +102,14 @@ export function DashboardPage() {
                 ) : <NoData />}
               </Panel>
 
-              <Panel title="Revenue by destination" subtitle="Top export markets (INR)" className="lg:col-span-2">
+              <Panel title="Revenue by destination" subtitle={`Top export markets (${f.ccy})`} className="lg:col-span-2">
                 {byCountry.length ? (
                   <ResponsiveContainer width="100%" height={260}>
                     <BarChart data={byCountry} layout="vertical" margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#eef2f7" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={compact} />
+                      <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} tickLine={false} axisLine={false} tickFormatter={f.tick} />
                       <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} width={88} />
-                      <Tooltip cursor={{ fill: '#f1f5f9' }} formatter={(v: number) => inr(v)} />
+                      <Tooltip cursor={{ fill: '#f1f5f9' }} formatter={(v: number) => f.fmt(v)} />
                       <Bar dataKey="value" name="Revenue" radius={[0, 6, 6, 0]} maxBarSize={22} onClick={pickCountry} style={{ cursor: 'pointer' }}>
                         {byCountry.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                       </Bar>
@@ -150,16 +151,16 @@ export function DashboardPage() {
                 ) : <NoData />}
               </Panel>
 
-              <Panel title="Collections" subtitle="Received vs outstanding (INR)">
-                {num(k!.revenueInr) > 0 ? (
+              <Panel title="Collections" subtitle={`Received vs outstanding (${f.ccy})`}>
+                {num(k!.revenue) > 0 ? (
                   <>
                     <ResponsiveContainer width="100%" height={240}>
                       <PieChart>
-                        <Pie data={[{ name: 'Received', value: num(k!.receivedInr) }, { name: 'Outstanding', value: Math.max(0, num(k!.revenueInr) - num(k!.receivedInr)) }]} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none">
+                        <Pie data={[{ name: 'Received', value: num(k!.received) }, { name: 'Outstanding', value: Math.max(0, num(k!.revenue) - num(k!.received)) }]} dataKey="value" nameKey="name" innerRadius={55} outerRadius={88} paddingAngle={2} stroke="none">
                           <Cell fill="#10b981" />
                           <Cell fill="#f59e0b" />
                         </Pie>
-                        <Tooltip formatter={(v: number) => inr(v)} />
+                        <Tooltip formatter={(v: number) => f.fmt(v)} />
                         <Legend verticalAlign="bottom" height={24} iconType="circle" />
                       </PieChart>
                     </ResponsiveContainer>

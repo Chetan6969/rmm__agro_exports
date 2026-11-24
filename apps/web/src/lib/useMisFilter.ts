@@ -2,7 +2,33 @@
  * URL-synced MIS filter shared by every MIS page. Date presets resolve to a concrete from/to
  * (Indian financial year = 1 Apr–31 Mar). Only fields the platform actually records are exposed.
  */
+import { formatAmount } from '@rmm/shared';
 import { useSearchParams } from 'react-router';
+
+/** Reporting currency for MIS money figures. USD by default; ₹ on request (remembered per browser). */
+export type MisCurrency = 'USD' | 'INR';
+const CCY_KEY = 'mis.ccy';
+const storedCcy = (): MisCurrency => {
+  try {
+    return localStorage.getItem(CCY_KEY) === 'INR' ? 'INR' : 'USD';
+  } catch {
+    return 'USD';
+  }
+};
+
+/** Compact axis labels: $ 1.2M / $ 450k, or ₹ in lakh / crore. */
+export function compactMoney(v: number, ccy: MisCurrency): string {
+  const a = Math.abs(v);
+  if (ccy === 'INR') {
+    if (a >= 1e7) return `${(v / 1e7).toFixed(1)}Cr`;
+    if (a >= 1e5) return `${(v / 1e5).toFixed(1)}L`;
+  } else {
+    if (a >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+    if (a >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  }
+  if (a >= 1e3) return `${Math.round(v / 1e3)}k`;
+  return String(Math.round(v));
+}
 
 export interface MisFilterParams {
   preset: string;
@@ -14,9 +40,10 @@ export interface MisFilterParams {
   variety: string;
   currencyId: string;
   status: string;
+  ccy: MisCurrency;
 }
 
-const KEYS: (keyof MisFilterParams)[] = ['preset', 'from', 'to', 'buyerId', 'destinationCountryId', 'productId', 'variety', 'currencyId', 'status'];
+const KEYS: (keyof MisFilterParams)[] = ['preset', 'from', 'to', 'buyerId', 'destinationCountryId', 'productId', 'variety', 'currencyId', 'status', 'ccy'];
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 const fyStart = (y: number) => `${y}-04-01`;
@@ -39,6 +66,14 @@ export interface MisFilterApi {
   setPreset: (key: string) => void;
   reset: () => void;
   active: number; // count of non-date filters applied
+  /** Reporting currency and its money formatters. */
+  ccy: MisCurrency;
+  sym: '$' | '₹';
+  setCcy: (c: MisCurrency) => void;
+  /** Full money label, e.g. "$ 1,234,567". */
+  fmt: (v: string | number) => string;
+  /** Short axis label, e.g. "1.2M" or "4.5Cr". */
+  tick: (v: number) => string;
 }
 
 export function useMisFilter(): MisFilterApi {
@@ -54,6 +89,7 @@ export function useMisFilter(): MisFilterApi {
     variety: get('variety'),
     currencyId: get('currencyId'),
     status: get('status'),
+    ccy: get('ccy') === 'INR' ? 'INR' : get('ccy') === 'USD' ? 'USD' : storedCcy(),
   };
   // default preset (this FY) applies its range when no explicit dates are set
   if (!sp.has('from') && !sp.has('to') && !sp.has('preset')) {
@@ -67,7 +103,7 @@ export function useMisFilter(): MisFilterApi {
     const n = new URLSearchParams();
     for (const k of KEYS) {
       const v = merged[k];
-      if (v) n.set(k, v);
+      if (v && !(k === 'ccy' && v === 'USD')) n.set(k, v);
     }
     setSp(n, { replace: true });
   };
@@ -79,16 +115,38 @@ export function useMisFilter(): MisFilterApi {
     const r = p.range();
     write({ preset: key, from: r.from, to: r.to });
   };
-  const reset = () => setSp(new URLSearchParams(), { replace: true });
+  const reset = () => setSp(params.ccy === 'INR' ? new URLSearchParams({ ccy: 'INR' }) : new URLSearchParams(), { replace: true });
+  const setCcy = (c: MisCurrency) => {
+    try {
+      localStorage.setItem(CCY_KEY, c);
+    } catch {
+      /* not remembered in private mode */
+    }
+    write({ ccy: c });
+  };
 
   const query =
     '?' +
-    (['from', 'to', 'buyerId', 'destinationCountryId', 'productId', 'variety', 'currencyId', 'status'] as const)
+    (['from', 'to', 'buyerId', 'destinationCountryId', 'productId', 'variety', 'currencyId', 'status', 'ccy'] as const)
       .filter((k) => params[k])
       .map((k) => `${k}=${encodeURIComponent(params[k])}`)
       .join('&');
 
   const active = (['buyerId', 'destinationCountryId', 'productId', 'variety', 'currencyId', 'status'] as const).filter((k) => params[k]).length;
 
-  return { params, query: query === '?' ? '' : query, set, setPreset, reset, active };
+  const ccy = params.ccy;
+  const sym = ccy === 'INR' ? '₹' : '$';
+  return {
+    params,
+    query: query === '?' ? '' : query,
+    set,
+    setPreset,
+    reset,
+    active,
+    ccy,
+    sym,
+    setCcy,
+    fmt: (v) => `${sym} ${formatAmount(String(v), 0)}`,
+    tick: (v) => compactMoney(v, ccy),
+  };
 }

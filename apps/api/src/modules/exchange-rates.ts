@@ -15,7 +15,7 @@
  * use the CBIC-notified rate, which is a separate, fortnightly figure.
  */
 import { CURRENCY_CODE_RE, type LiveRate, type LiveRatesResponse } from '@rmm/shared';
-import { and, desc, eq, inArray, isNull, max } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, max } from 'drizzle-orm';
 import type { FastifyBaseLogger, FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { config } from '../config.js';
@@ -156,6 +156,66 @@ async function fromMarket(codes: string[], ecbInrPerUsd: EcbResult['inrPerUsd'])
 }
 
 // ------------------------------------------------------------------ refresh + read
+// ------------------------------------------------------------------ ₹ per US dollar history (MIS in USD)
+const seriesSchema = z.object({
+  base: z.literal('EUR'),
+  rates: z.record(z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.record(z.string(), z.number().positive())),
+});
+const DAY = 86_400_000;
+const isoDay = (t: number) => new Date(t).toISOString().slice(0, 10);
+let historyInflight: Promise<string | null> | null = null;
+let historyFailedAt = 0;
+
+/** True when stored ECB ₹/USD rates leave no gap longer than 6 days from `from` (minus a week) up to today. */
+async function usdHistoryCovered(from: string): Promise<boolean> {
+  const since = isoDay(Date.parse(from) - 7 * DAY);
+  const rows = await db()
+    .select({ d: exchangeRates.rateDate })
+    .from(exchangeRates)
+    .where(and(eq(exchangeRates.currencyCode, 'USD'), eq(exchangeRates.source, 'ECB'), gte(exchangeRates.rateDate, since)))
+    .orderBy(exchangeRates.rateDate);
+  const days = [...new Set(rows.map((r) => r.d))].map((d) => Date.parse(d));
+  if (!days.length || days[0] > Date.parse(from)) return false;
+  for (let i = 1; i < days.length; i++) if (days[i] - days[i - 1] > 6 * DAY) return false;
+  return Date.now() - days[days.length - 1] <= 6 * DAY;
+}
+
+/**
+ * Makes sure the ECB ₹-per-US-dollar reference rate is stored for every working day from
+ * `from` until today, fetching the missing history once (ECB time series via Frankfurter).
+ * Historical rows are stamped with their publication day, so the live-rate screens keep
+ * showing the newest rate. Returns a problem text when the history could not be loaded.
+ */
+export function ensureUsdHistory(from: string): Promise<string | null> {
+  historyInflight ??= (async () => {
+    try {
+      if (await usdHistoryCovered(from)) return null;
+      if (Date.now() - historyFailedAt < RETRY_AFTER_FAILURE_MS) return 'ECB rate history is temporarily unavailable';
+      const start = isoDay(Date.parse(from) - 7 * DAY);
+      const body = seriesSchema.parse(await getJson(`https://api.frankfurter.dev/v1/${start}..${isoDay(Date.now())}?base=EUR&symbols=INR,USD`));
+      const values = Object.entries(body.rates)
+        .filter(([, r]) => r.INR && r.USD)
+        .map(([date, r]) => ({
+          currencyCode: 'USD',
+          rateToInr: divide(decimalText(r.INR!), decimalText(r.USD!)),
+          rateDate: date,
+          source: 'ECB',
+          // ECB publishes around 16:00 CET; never later than now
+          fetchedAt: new Date(Math.min(Date.parse(`${date}T15:00:00Z`), Date.now())),
+        }));
+      if (values.length) await db().insert(exchangeRates).values(values).onConflictDoNothing();
+      historyFailedAt = 0;
+      return null;
+    } catch (e) {
+      historyFailedAt = Date.now();
+      return `ECB rate history could not be loaded (${e instanceof Error ? e.message : e})`;
+    } finally {
+      historyInflight = null;
+    }
+  })();
+  return historyInflight;
+}
+
 let inflight: Promise<string[]> | null = null;
 let lastFailureAt = 0;
 /** Problems from the latest refresh, reported until a later refresh succeeds. */

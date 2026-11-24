@@ -1,5 +1,5 @@
 import { Donut, HBar, MisPage, SimpleTable, VBar } from '../../components/MisPage';
-import { inr, num, Panel } from '../../components/mis';
+import { num, Panel } from '../../components/mis';
 
 interface Dim {
   label: string;
@@ -36,7 +36,7 @@ export function ProductsPage() {
                   { key: 'label', label: 'Product' },
                   { key: 'volume_mt', label: 'Volume', num: true, render: (r) => mt(num(r.volume_mt)) },
                   { key: 'bags', label: 'Bags', num: true, render: (r) => num(r.bags).toLocaleString('en-IN') },
-                  { key: 'revenue', label: 'Revenue (₹)', num: true, render: (r) => inr(r.revenue as string) },
+                  { key: 'revenue', label: `Revenue (${f.sym})`, num: true, render: (r) => f.fmt(r.revenue as string) },
                 ]}
                 rows={d.byProduct as unknown as Record<string, unknown>[]}
                 onRow={(r) => r.id && f.set('productId', String(r.id))}

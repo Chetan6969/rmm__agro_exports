@@ -16,7 +16,36 @@ export interface MisFilter {
   variety: string | null; // products.variety (Basmati / Non-Basmati)
   currencyId: string | null;
   status: string | null; // document status; when null, cancelled docs are excluded
+  /** Reporting currency for every money figure (default USD). */
+  ccy: MisCurrency;
 }
+
+export type MisCurrency = 'USD' | 'INR';
+
+/**
+ * ₹ per US dollar on a date: the ECB reference rate published on or before it; before the
+ * stored history starts, the earliest stored rate; with no history at all, the USD master rate.
+ */
+export const usdInrOn = (date: SQL) => sql`coalesce(
+  (select er.rate_to_inr from exchange_rates er where er.currency_code = 'USD' and er.source = 'ECB' and er.rate_date <= ${date} order by er.rate_date desc limit 1),
+  (select er.rate_to_inr from exchange_rates er where er.currency_code = 'USD' and er.source = 'ECB' order by er.rate_date asc limit 1),
+  (select cu.exchange_rate from currencies cu where cu.code = 'USD' and cu.deleted_at is null limit 1))`;
+
+/**
+ * Factor that turns an amount in a document's own currency into the reporting currency.
+ *  ₹: the document's own exchange rate (the rate it was billed at).
+ *  $: 1 for US-dollar documents (exact billed figures); other currencies go through ₹ with the
+ *     document's rate, then into dollars at the ECB ₹/$ rate of the document's date.
+ */
+export function fx(alias: string, ccy: MisCurrency): SQL {
+  const a = sql.raw(alias);
+  if (ccy === 'INR') return sql`${a}.exchange_rate`;
+  return sql`(case when (select cu.code from currencies cu where cu.id = ${a}.currency_id) = 'USD' then 1
+                   else ${a}.exchange_rate / nullif(${usdInrOn(sql`${a}.document_date`)}, 0) end)`;
+}
+
+/** Factor for amounts recorded in rupees (e.g. shipment charges) dated `date`. */
+export const fxFromInr = (date: SQL, ccy: MisCurrency): SQL => (ccy === 'INR' ? sql`1` : sql`(1 / nullif(${usdInrOn(date)}, 0))`);
 
 const str = (v: unknown): string | null => {
   if (typeof v !== 'string') return null;
@@ -35,6 +64,7 @@ export function parseMisFilter(q: Record<string, unknown>): MisFilter {
     variety: str(q.variety),
     currencyId: str(q.currencyId),
     status: str(q.status),
+    ccy: str(q.ccy)?.toUpperCase() === 'INR' ? 'INR' : 'USD',
   };
 }
 

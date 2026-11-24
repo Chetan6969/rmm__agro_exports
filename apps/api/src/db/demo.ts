@@ -221,6 +221,12 @@ export async function loadDemo() {
 
   const ctx: RequestContext = { userId: admin.id, sessionId: 'demo', username: admin.username, isSuperAdmin: true, companyId: null, permissions: new Set(), ip: '127.0.0.1' };
 
+  // the demo uses the baseline global masters created by "pnpm db:seed"
+  const needed = [...new Set(['INR', ...BUYERS.map((b) => b[5])])];
+  const have = await inCompanyTx(null, (tx) => globalIds(tx, 'currencies'));
+  const missing = needed.filter((code) => !have.has(code));
+  if (missing.length) throw new Error(`Currencies ${missing.join(', ')} are missing. Run "pnpm db:seed" first (it adds the standard currencies, countries and ports).`);
+
   const company = await inCompanyTx(null, async (tx) => {
     const countries = await globalIds(tx, 'countries');
     const currencies = await globalIds(tx, 'currencies');

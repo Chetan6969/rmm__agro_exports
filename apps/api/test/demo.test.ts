@@ -12,6 +12,15 @@ beforeAll(async () => {
   await createSuperAdmin('demo-root');
   root = new Client(app);
   await root.login('demo-root');
+  // baseline currencies normally come from "pnpm db:seed"; other test files may or may not have run first
+  for (const [code, name] of [
+    ['INR', 'Indian Rupee'],
+    ['USD', 'US Dollar'],
+    ['GBP', 'Pound Sterling'],
+  ]) {
+    const res = await root.post('/masters/currencies', { code, name, exchangeRate: 1 });
+    expect([201, 409]).toContain(res.status);
+  }
 });
 
 afterAll(async () => {

@@ -4,7 +4,7 @@
  * loaded from real invoice data, so only buyers / countries / products that exist appear.
  */
 import { useQuery } from '@tanstack/react-query';
-import { X } from 'lucide-react';
+import { Info, TriangleAlert, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { DATE_PRESETS, type MisFilterApi } from '../lib/useMisFilter';
 
@@ -16,9 +16,16 @@ interface Options {
 }
 
 const STATUSES = ['DRAFT', 'CONFIRMED', 'FULFILLED', 'CANCELLED'];
+
+/** How the server converted money for this view (sent with every MIS response). */
+export interface MisFx {
+  currency: 'USD' | 'INR';
+  basis: string;
+  problem?: { message: string; hint: string };
+}
 const sel = 'rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12.5px] text-slate-700 shadow-sm focus:border-brand-400 focus:ring-1 focus:ring-brand-200 focus:outline-none';
 
-export function GlobalFilterBar({ f, enabled }: { f: MisFilterApi; enabled: boolean }) {
+export function GlobalFilterBar({ f, enabled, fx }: { f: MisFilterApi; enabled: boolean; fx?: MisFx | null }) {
   const opts = useQuery({ queryKey: ['mis', 'filter-options'], queryFn: () => api.get<Options>('/mis/filter-options'), enabled });
   const o = opts.data;
   const varieties = Array.from(new Set((o?.products ?? []).map((p) => p.variety).filter(Boolean)));
@@ -26,6 +33,30 @@ export function GlobalFilterBar({ f, enabled }: { f: MisFilterApi; enabled: bool
   return (
     <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 px-4 py-2.5 backdrop-blur sm:px-5">
       <div className="flex flex-wrap items-center gap-2">
+        {/* reporting currency */}
+        <div className="flex items-center rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm" role="radiogroup" aria-label="Show amounts in">
+          {(
+            [
+              ['USD', '$ USD'],
+              ['INR', '₹ INR'],
+            ] as const
+          ).map(([c, label]) => (
+            <button
+              key={c}
+              type="button"
+              role="radio"
+              aria-checked={f.ccy === c}
+              onClick={() => f.setCcy(c)}
+              title={c === 'USD' ? 'Show amounts in US dollars' : 'Show amounts in Indian rupees'}
+              className={`rounded-md px-2.5 py-1 text-[12px] font-semibold transition ${f.ccy === c ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-100'}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="mx-1 h-6 w-px bg-slate-200" />
+
         {/* date presets */}
         <div className="flex flex-wrap items-center gap-1 rounded-lg border border-slate-200 bg-white p-0.5 shadow-sm">
           {DATE_PRESETS.map((p) => (
@@ -77,6 +108,20 @@ export function GlobalFilterBar({ f, enabled }: { f: MisFilterApi; enabled: bool
           </button>
         )}
       </div>
+      {fx && (
+        <div className={`mt-1.5 flex items-start gap-1.5 text-[11.5px] ${fx.problem ? 'text-amber-700' : 'text-slate-500'}`}>
+          {fx.problem ? <TriangleAlert className="mt-px size-3.5 shrink-0" /> : <Info className="mt-px size-3.5 shrink-0" />}
+          <span>
+            Amounts in {fx.currency === 'USD' ? 'US dollars' : 'Indian rupees'}: {fx.basis}
+            {fx.problem && (
+              <>
+                {' '}
+                <b>{fx.problem.message}.</b> {fx.problem.hint}
+              </>
+            )}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
