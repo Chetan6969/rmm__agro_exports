@@ -9,7 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { audit } from '../../core/audit.js';
 import { inTenantTx, requireCompany, requireCtx, requirePerm, type RequestContext } from '../../core/context.js';
-import { badRequest, notFound } from '../../core/errors.js';
+import { badRequest, conflict, notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
 import { docTables } from '../../db/schema/documents.js';
 import { masterTables } from '../../db/schema/masters.js';
@@ -129,6 +129,28 @@ async function writeCharges(tx: Tx, companyId: string, shipmentId: string, charg
   }
 }
 
+/**
+ * Linked documents must exist in this company, not be deleted, and (for the production order and
+ * commercial invoice) belong to the shipment's own order (proforma invoice).
+ */
+async function checkLinks(tx: Tx, p: { proformaInvoiceId: string; productionOrderId?: string | null; commercialInvoiceId?: string | null; oceanBillId?: string | null }) {
+  if (!(await piInfo(tx, p.proformaInvoiceId))) throw badRequest('That order (proforma invoice) is not available', { fields: { proformaInvoiceId: 'Not found' } });
+  const links = [
+    { key: 'productionOrders', id: p.productionOrderId, field: 'productionOrderId', label: 'production order', samePi: true },
+    { key: 'commercialInvoices', id: p.commercialInvoiceId, field: 'commercialInvoiceId', label: 'commercial invoice', samePi: true },
+    { key: 'oceanBills', id: p.oceanBillId, field: 'oceanBillId', label: 'bill of lading', samePi: false },
+  ] as const;
+  for (const l of links) {
+    if (!l.id) continue;
+    const h = docTables[l.key].header;
+    const [doc] = (await tx.select().from(h).where(and(eq(h.id, l.id), isNull(h.deletedAt)))) as Row[];
+    if (!doc) throw badRequest(`The linked ${l.label} is not available`, { hint: 'It may have been deleted. Pick it again from the list.', fields: { [l.field]: 'Not found' } });
+    if (l.samePi && doc.proformaInvoiceId && doc.proformaInvoiceId !== p.proformaInvoiceId) {
+      throw badRequest(`${doc.documentNumber} belongs to another order`, { hint: `Link a ${l.label} generated against this order's proforma invoice.`, fields: { [l.field]: 'Other order' } });
+    }
+  }
+}
+
 const shipmentValues = (p: z.infer<typeof shipmentSchema>) => ({
   proformaInvoiceId: p.proformaInvoiceId,
   lotNo: p.lotNo,
@@ -183,7 +205,7 @@ export async function createShipment(tx: Tx, ctx: RequestContext, body: unknown)
   const companyId = requireCompany(ctx);
   requirePerm(ctx, 'sales.shipments', 'create');
   const p = shipmentSchema.parse(body);
-  if (!(await piInfo(tx, p.proformaInvoiceId))) throw badRequest('That order (proforma invoice) is not available', { fields: { proformaInvoiceId: 'Not found' } });
+  await checkLinks(tx, p);
   const [row] = (await tx.insert(shipments).values({ ...shipmentValues(p), companyId, createdBy: ctx.userId, updatedBy: ctx.userId }).returning()) as Row[];
   await writeCharges(tx, companyId, row.id as string, p.charges);
   await audit(tx, ctx, { entity: 'shipments', recordId: row.id as string, action: 'create', after: row });
@@ -196,6 +218,7 @@ export async function updateShipment(tx: Tx, ctx: RequestContext, id: string, bo
   const p = shipmentSchema.parse(body);
   const [before] = (await tx.select().from(shipments).where(and(eq(shipments.id, id), isNull(shipments.deletedAt)))) as Row[];
   if (!before) throw notFound('Shipment not found');
+  await checkLinks(tx, p);
   const [row] = (await tx.update(shipments).set({ ...shipmentValues(p), updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(shipments.id, id)).returning()) as Row[];
   await writeCharges(tx, companyId, id, p.charges);
   await audit(tx, ctx, { entity: 'shipments', recordId: id, action: 'update', before, after: row });
@@ -209,18 +232,30 @@ export async function linkInvoice(tx: Tx, ctx: RequestContext, id: string, body:
   const { commercialInvoiceId } = z.object({ commercialInvoiceId: z.uuid() }).parse(body);
   const [ship] = (await tx.select().from(shipments).where(and(eq(shipments.id, id), isNull(shipments.deletedAt)))) as Row[];
   if (!ship) throw notFound('Shipment not found');
+  await checkLinks(tx, { proformaInvoiceId: str(ship.proformaInvoiceId), commercialInvoiceId });
   const next = { commercialInvoiceId, status: str(ship.status) === 'PLANNED' ? 'IN_PROGRESS' : str(ship.status), updatedAt: new Date(), updatedBy: ctx.userId };
   await tx.update(shipments).set(next).where(eq(shipments.id, id));
   await audit(tx, ctx, { entity: 'shipments', recordId: id, action: 'update', before: ship, after: { ...ship, ...next } });
   return getShipment(tx, ctx, id);
 }
 
-/** Mark the lot shipped/done. The linked commercial invoice (if any) is marked PAID. */
+/**
+ * Mark the lot shipped/done. The linked commercial invoice (if any) is marked PAID, which is an
+ * invoice change: it needs edit rights on commercial invoices and an unlocked, active invoice.
+ */
 export async function completeShipment(tx: Tx, ctx: RequestContext, id: string) {
   requireCompany(ctx);
   requirePerm(ctx, 'sales.shipments', 'edit');
   const [ship] = (await tx.select().from(shipments).where(and(eq(shipments.id, id), isNull(shipments.deletedAt)))) as Row[];
   if (!ship) throw notFound('Shipment not found');
+  if (ship.commercialInvoiceId) {
+    requirePerm(ctx, 'sales.commercialInvoices', 'edit');
+    const ci = docTables.commercialInvoices.header;
+    const [inv] = (await tx.select().from(ci).where(and(eq(ci.id, ship.commercialInvoiceId as string), isNull(ci.deletedAt))).for('update')) as Row[];
+    if (!inv) throw badRequest('The linked commercial invoice is not available', 'It may have been deleted. Link the right invoice to this lot, then mark it complete.');
+    if (inv.locked) throw conflict(`Invoice ${inv.documentNumber} is locked`, 'An administrator must unlock the invoice before the lot can be completed.');
+    if (inv.status === 'CANCELLED') throw badRequest(`Invoice ${inv.documentNumber} is cancelled`, 'Link the active invoice for this lot, then mark it complete.');
+  }
   await tx.update(shipments).set({ status: 'SHIPPED', updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(shipments.id, id));
   if (ship.commercialInvoiceId) {
     const ci = docTables.commercialInvoices.header;

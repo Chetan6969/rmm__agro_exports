@@ -76,11 +76,12 @@ const STARTER_ROLES: { name: string; description: string; permissions: string[] 
   },
   {
     name: 'Accounts',
-    description: 'Finance masters and bank accounts; read-only on the rest',
+    description: 'Finance masters, bank accounts and payment receipts; read-only on the rest',
     permissions: [
       ...mastersWith(['view', 'export']),
-      ...salesWith(['view', 'create', 'delete', 'print', 'export']),
-      perm('mis.dashboard', 'view'),
+      ...salesWith(['view', 'print', 'export']),
+      ...all('sales.payments', ['create', 'delete']),
+      ...all('mis.dashboard', ['view', 'export']),
       ...all('master.bankAccounts', ['create', 'edit']),
       ...all('master.currencies', ['create', 'edit']),
       ...all('master.paymentTerms', ['create', 'edit']),

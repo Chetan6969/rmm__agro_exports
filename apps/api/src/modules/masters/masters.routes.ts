@@ -4,7 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { entityDefaults } from '../../db/schema/index.js';
 import { audit } from '../../core/audit.js';
-import { inTenantTx, requireCompany, requireCtx, requirePerm } from '../../core/context.js';
+import { can, inTenantTx, requireCompany, requireCtx, requirePerm } from '../../core/context.js';
 import {
   createRecord,
   deleteRecord,
@@ -70,6 +70,10 @@ export async function mastersRoutes(app: FastifyInstance) {
   app.get<{ Params: P }>('/defaults/:entity', async (req) => {
     const ctx = requireCtx(req);
     const { def } = resolveEntity(req.params.entity);
+    // defaults prefill the "new record" form: readable by those who may view or create that master
+    if (!can(ctx, `master.${def.key}`, 'view') && !can(ctx, `master.${def.key}`, 'create') && !can(ctx, 'admin.defaults', 'view')) {
+      requirePerm(ctx, `master.${def.key}`, 'view');
+    }
     const companyId = ctx.companyId;
     const builtIn = Object.fromEntries(def.fields.filter((f) => f.default !== undefined).map((f) => [f.name, f.default]));
     if (!companyId) return { values: builtIn, configured: {} };

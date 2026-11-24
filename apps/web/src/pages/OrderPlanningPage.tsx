@@ -48,7 +48,9 @@ export function OrderPlanningPage() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['plan', piId], queryFn: () => api.get<Plan>(`/shipments/plan/${piId}`), enabled: !!session?.activeCompany });
   const [drafts, setDrafts] = useState<number[]>([]);
-  const canEdit = can('sales.shipments', 'create');
+  const canCreate = can('sales.shipments', 'create');
+  const canEdit = can('sales.shipments', 'edit');
+  const canDelete = can('sales.shipments', 'delete');
 
   if (q.isLoading) return <Spinner label="Loading order…" />;
   if (q.error) return <div className="p-6"><ErrorBox error={q.error} /></div>;
@@ -91,7 +93,7 @@ export function OrderPlanningPage() {
         </div>
 
         {plan.shipments.map((lot) => (
-          <LotCard key={lot.id} lot={lot} heads={plan.chargeHeads} currency={cur} piId={piId} readOnly={!canEdit} onDone={refetch} />
+          <LotCard key={lot.id} lot={lot} heads={plan.chargeHeads} currency={cur} piId={piId} readOnly={!canEdit} canDelete={canDelete} onDone={refetch} />
         ))}
         {drafts.map((d) => (
           <LotCard
@@ -110,7 +112,7 @@ export function OrderPlanningPage() {
           />
         ))}
 
-        {canEdit && (
+        {canCreate && (
           <Button icon={<Plus className="size-3.5" />} onClick={() => setDrafts((s) => [...s, Date.now()])}>
             Add lot
           </Button>
@@ -120,7 +122,7 @@ export function OrderPlanningPage() {
   );
 }
 
-function LotCard({ lot, heads, currency, piId, readOnly, isDraft, onDone, onCancel }: { lot: Lot; heads: ChargeHead[]; currency: string; piId: string; readOnly: boolean; isDraft?: boolean; onDone: () => void; onCancel?: () => void }) {
+function LotCard({ lot, heads, currency, piId, readOnly, canDelete, isDraft, onDone, onCancel }: { lot: Lot; heads: ChargeHead[]; currency: string; piId: string; readOnly: boolean; canDelete?: boolean; isDraft?: boolean; onDone: () => void; onCancel?: () => void }) {
   const [s, setS] = useState<Lot>(() => ({ ...lot, charges: lot.charges.map((c) => ({ ...c })) }));
   const [busy, setBusy] = useState(false);
   const chargeTotal = add(s.charges.map(amt), 2);
@@ -227,7 +229,11 @@ function LotCard({ lot, heads, currency, piId, readOnly, isDraft, onDone, onCanc
 
       {!readOnly && (
         <div className="mt-3 flex items-center justify-end gap-2">
-          <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={del}>{isDraft ? 'Cancel' : 'Delete lot'}</Button>
+          {(isDraft || canDelete) && (
+            <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={del}>
+              {isDraft ? 'Cancel' : 'Delete lot'}
+            </Button>
+          )}
           <Button variant="primary" icon={<Save className="size-3.5" />} loading={busy} onClick={save}>Save lot</Button>
         </div>
       )}
@@ -294,6 +300,8 @@ function InvoiceSection({ lot, currency, onDone }: { lot: Lot; currency: string;
   const done = lot.status === 'SHIPPED';
   const canCreateCI = can('sales.commercialInvoices', 'create');
   const canEditShip = can('sales.shipments', 'edit');
+  // completing the lot also marks its invoice PAID, so it needs invoice edit rights too
+  const canComplete = canEditShip && can('sales.commercialInvoices', 'edit');
   const pay = useQuery({
     queryKey: ['payments', ciId],
     queryFn: () => api.get<PaySummary>(`/payments?invoice=${ciId}`),
@@ -334,7 +342,7 @@ function InvoiceSection({ lot, currency, onDone }: { lot: Lot; currency: string;
       ) : (
         <>
           <ReceiptsPanel invoiceId={ciId} />
-          {canEditShip && (
+          {(done || canComplete) && (
             <div className="mt-2 flex items-center justify-end gap-2">
               {done ? (
                 <span className="flex items-center gap-1 text-[12.5px] font-medium text-emerald-700"><Check className="size-3.5" /> Shipment done</span>

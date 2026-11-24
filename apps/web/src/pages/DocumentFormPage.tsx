@@ -134,7 +134,8 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
 
   const locked = !isNew && Boolean(record?.locked);
   const readOnly = isNew ? !can(def.module, 'create') : !can(def.module, 'edit') || locked;
-  const canLock = !isNew && can(def.module, 'delete');
+  // same rule as the server: edit + delete rights on this document type
+  const canLock = !isNew && can(def.module, 'edit') && can(def.module, 'delete');
   const back = () => navigate(`/d/${def.key}`);
   const touch = () => setDirty(true);
 

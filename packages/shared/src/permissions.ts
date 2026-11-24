@@ -36,7 +36,7 @@ export const MODULES: ModuleDef[] = [
   ...salesModules,
   { key: 'sales.payments', label: 'Payments / receipts', group: 'Sales', actions: ['view', 'create', 'delete', 'export'] },
   { key: 'sales.shipments', label: 'Shipments / order planning', group: 'Sales', actions: ['view', 'create', 'edit', 'delete'] },
-  { key: 'mis.dashboard', label: 'MIS dashboard', group: 'MIS', actions: ['view'] },
+  { key: 'mis.dashboard', label: 'MIS dashboard', group: 'MIS', actions: ['view', 'export'] },
   ...masterModules,
   { key: 'admin.users', label: 'Users', group: 'Administration', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'admin.roles', label: 'Roles & permissions', group: 'Administration', actions: ['view', 'create', 'edit', 'delete'] },

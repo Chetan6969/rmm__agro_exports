@@ -1,5 +1,6 @@
 import { Download } from 'lucide-react';
 import { useState } from 'react';
+import { useSession } from '../../lib/session';
 import { MisPage, SimpleTable, type Col } from '../../components/MisPage';
 import { num, Panel } from '../../components/mis';
 
@@ -34,6 +35,8 @@ function exportCsv(name: string, columns: Col[], rows: Record<string, unknown>[]
 
 export function ReportsPage() {
   const [report, setReport] = useState('invoices');
+  const { can } = useSession();
+  const canExport = can('mis.dashboard', 'export');
   return (
     <MisPage<Data> title="Custom reports" path="/mis/reports" extra={{ report }} subtitle="Filtered datasets over the real tables · export to CSV">
       {(d) => (
@@ -45,9 +48,9 @@ export function ReportsPage() {
               <select value={report} onChange={(e) => setReport(e.target.value)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[12.5px] text-slate-700 shadow-sm focus:border-brand-400 focus:ring-1 focus:ring-brand-200 focus:outline-none">
                 {DATASETS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
               </select>
-              <button onClick={() => exportCsv(d.report, d.columns, d.rows)} disabled={!d.rows.length} className="flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1.5 text-[12.5px] font-medium text-white shadow-sm hover:bg-brand-700 disabled:opacity-40">
+              {canExport && <button onClick={() => exportCsv(d.report, d.columns, d.rows)} disabled={!d.rows.length} className="flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1.5 text-[12.5px] font-medium text-white shadow-sm hover:bg-brand-700 disabled:opacity-40">
                 <Download className="size-3.5" /> CSV
-              </button>
+              </button>}
             </div>
           }
         >
