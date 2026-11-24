@@ -17,7 +17,7 @@ import { documentRoutes } from './modules/documents/documents.routes.js';
 import { exchangeRateRoutes } from './modules/exchange-rates.js';
 import { filesRoutes } from './modules/files.routes.js';
 import { mastersRoutes } from './modules/masters/masters.routes.js';
-import { misRoutes } from './modules/mis.js';
+import { misRoutes } from './modules/mis/index.js';
 import { numberingRoutes } from './modules/numbering.js';
 import { paymentsRoutes } from './modules/payments/payments.routes.js';
 import { shipmentsRoutes } from './modules/shipments/shipments.routes.js';
