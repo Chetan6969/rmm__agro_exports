@@ -16,6 +16,8 @@ import {
   Landmark,
   ListChecks,
   LayoutDashboard,
+  Mail,
+  MailSearch,
   type LucideIcon,
   Package,
   PackageCheck,
@@ -66,6 +68,8 @@ export const NAV: NavItem[] = [
     icon: DOC_ICONS[d.key] ?? FileText,
   })),
   { id: 'shipments', label: 'Shipments', path: '/shipments', group: 'Sales', perm: ['sales.shipments', 'view'], keywords: 'lots order planning shipment charges gulf eu staging stage board checkpoints overdue', icon: Ship },
+  { id: 'freight', label: 'Freight quotations', path: '/freight', group: 'Sales', perm: ['sales.freight', 'view'], keywords: 'freight rate quote quotation shipping line email mail negotiation booking ocean carrier compare best', icon: MailSearch },
+  { id: 'mailbox', label: 'My mailbox', path: '/freight/mailbox', group: 'Sales', perm: ['sales.freight', 'view'], keywords: 'email smtp imap app password gmail outlook connect mail account', icon: Mail },
   { id: 'pi-reports', label: 'PI reports', path: '/reports/proforma', group: 'Sales', perm: ['sales.proformaInvoices', 'view'], keywords: 'proforma analysis field usage terms', icon: BarChart3 },
   ...MENU_ORDER.flatMap((menu) =>
     entities

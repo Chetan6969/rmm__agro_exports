@@ -3,3 +3,4 @@ export * from './core.js';
 export * from './documents.js';
 export * from './payments.js';
 export * from './shipments.js';
+export * from './freight.js';

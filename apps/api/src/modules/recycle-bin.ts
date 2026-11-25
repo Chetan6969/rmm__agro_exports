@@ -11,7 +11,7 @@ import { audit } from '../core/audit.js';
 import { can, inTenantTx, requireCompany, requireCtx, requirePerm, type RequestContext } from '../core/context.js';
 import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
 import type { Tx } from '../db/client.js';
-import { docTables, masterTables, payments, roles, sharingPolicies, shipments, users, type AnyTable } from '../db/schema/index.js';
+import { docTables, freightEnquiries, masterTables, payments, roles, sharingPolicies, shipments, users, type AnyTable } from '../db/schema/index.js';
 import { restoreDocument } from './documents/documents.service.js';
 
 type Row = Record<string, unknown>;
@@ -102,6 +102,22 @@ const sources: Source[] = [
       if (!inv) throw badRequest('Restore its commercial invoice first', 'This receipt belongs to a deleted invoice; bring the invoice back first.');
       await tx.update(payments).set({ deletedAt: null, deletedBy: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(payments.id, id));
       await audit(tx, ctx, { entity: 'payments', recordId: id, action: 'restore' });
+    },
+  },
+  {
+    type: 'freightEnquiries',
+    label: 'Freight enquiry',
+    group: 'Sales documents',
+    module: 'sales.freight',
+    table: freightEnquiries,
+    title: sql`${freightEnquiries.number}`,
+    sub: sql`${freightEnquiries.portOfLoading} || ' → ' || ${freightEnquiries.portOfDischarge} || ' · ' || ${freightEnquiries.containerCount} || ' × ' || ${freightEnquiries.containerType}`,
+    hasReason: true,
+    restore: async (tx, ctx, id) => {
+      const [f] = await tx.select({ id: freightEnquiries.id }).from(freightEnquiries).where(and(eq(freightEnquiries.id, id), isNotNull(freightEnquiries.deletedAt)));
+      if (!f) throw notFound('Deleted enquiry not found', 'Reload the recycle bin.');
+      await tx.update(freightEnquiries).set({ deletedAt: null, deletedBy: null, deleteReason: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(freightEnquiries.id, id));
+      await audit(tx, ctx, { entity: 'freightEnquiries', recordId: id, action: 'restore' });
     },
   },
   ...entities.map(

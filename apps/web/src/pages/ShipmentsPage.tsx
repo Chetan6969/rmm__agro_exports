@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Boxes, Check, Container, PackageCheck, Search, Ship } from 'lucide-react';
 import { CheckpointPath, CheckpointSummary } from '../components/Checkpoints';
 import { useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
@@ -152,8 +152,10 @@ export function ShipmentsPage() {
 }
 
 function LotTile({ r, onOpen }: { r: Shipment; onOpen: () => void }) {
+  const { can } = useSession();
   return (
-    <button type="button" onClick={onOpen} className="rounded-lg border border-slate-200 bg-white p-3 text-left transition-shadow hover:shadow-md">
+    <div className="flex flex-col rounded-lg border border-slate-200 bg-white transition-shadow hover:shadow-md">
+    <button type="button" onClick={onOpen} className="p-3 text-left">
       <div className="mb-2 flex items-center gap-2">
         <span className="text-[13px] font-semibold text-slate-800">Lot {r.lotNo}</span>
         <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${r.market === 'EU' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'}`}>{r.market === 'EU' ? 'EU' : 'Gulf'}</span>
@@ -173,6 +175,12 @@ function LotTile({ r, onOpen }: { r: Shipment; onOpen: () => void }) {
       </div>
       <CheckpointSummary p={r.pipeline} />
     </button>
+      {can('sales.freight', 'create') && r.status !== 'SHIPPED' && r.status !== 'CANCELLED' && (
+        <Link to={`/freight/new?shipment=${r.id}`} className="flex items-center gap-1 border-t border-slate-100 px-3 py-1.5 text-[12px] font-medium text-brand-700 hover:bg-brand-50">
+          <Ship className="size-3.5" /> Get freight quotes
+        </Link>
+      )}
+    </div>
   );
 }
 

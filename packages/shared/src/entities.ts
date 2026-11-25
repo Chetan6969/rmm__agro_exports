@@ -67,6 +67,8 @@ export interface FieldDef {
   /** Default value for new records when the company has not configured one. */
   default?: string | number | boolean;
   help?: string;
+  /** Text with {{placeholders}}: edited with the variable editor ('line' = one line, 'block' = message). */
+  template?: 'line' | 'block';
   /** Extra format rule (applied after upper-casing). */
   pattern?: { regex: string; message: string };
   /** decimal precision/scale */
@@ -386,6 +388,30 @@ export const ENTITY_LIST = [
   },
 
   {
+    key: 'freightContacts',
+    table: 'freight_contacts',
+    label: 'Freight contact',
+    plural: 'Freight contacts',
+    menu: 'Logistics',
+    scope: 'company',
+    shareable: true,
+    displayField: 'name',
+    fields: [
+      { name: 'name', label: 'Contact person', type: 'text', required: true, list: true, search: true },
+      { name: 'email', label: 'Email', type: 'email', required: true, list: true, search: true, span: 2 },
+      { name: 'partyType', label: 'Works for', type: 'select', required: true, options: ['Shipping line', 'Freight forwarder', 'NVOCC'], default: 'Shipping line', list: true },
+      { name: 'shippingLineId', label: 'Shipping line', type: 'ref', ref: 'shippingLines', list: true },
+      { name: 'serviceProviderId', label: 'Forwarder', type: 'ref', ref: 'serviceProviders' },
+      { name: 'companyName', label: 'Company name (if not in masters)', type: 'text', search: true },
+      { name: 'phone', label: 'Phone / WhatsApp', type: 'text' },
+      { name: 'ports', label: 'Routes / ports they quote', type: 'textarea', span: 3, search: true, help: 'Port names or codes, comma separated (e.g. Mundra, Jebel Ali, Jeddah). Used to suggest this contact for an enquiry; leave blank for all routes.' },
+      { name: 'markets', label: 'Markets', type: 'select', options: ['All', 'Gulf', 'EU', 'Africa', 'Asia', 'Americas'], default: 'All', list: true },
+      { name: 'notes', label: 'Notes', type: 'textarea', span: 3 },
+      active,
+    ],
+  },
+
+  {
     key: 'containerTypes',
     table: 'container_types',
     label: 'Container type',
@@ -453,6 +479,24 @@ export const ENTITY_LIST = [
       { name: 'docType', label: 'Document type', type: 'select', required: true, options: ['Proforma Invoice', 'Production Order', 'Sales Contract', 'Commercial Invoice', 'Purchase Order', 'General'], list: true },
       { name: 'body', label: 'Terms text (one per line)', type: 'textarea', required: true, span: 3 },
       { name: 'isDefault', label: 'Default for this document type', type: 'boolean', default: false, list: true },
+      active,
+    ],
+  },
+  {
+    key: 'mailTemplates',
+    table: 'mail_templates',
+    label: 'Email template',
+    plural: 'Email templates',
+    menu: 'General',
+    scope: 'company',
+    shareable: true,
+    displayField: 'name',
+    fields: [
+      { name: 'name', label: 'Name', type: 'text', required: true, list: true, search: true, span: 2 },
+      { name: 'kind', label: 'Used for', type: 'select', required: true, options: ['Rate request', 'Reminder', 'Counter offer', 'Award', 'Regret'], list: true },
+      { name: 'subject', label: 'Subject', type: 'text', required: true, span: 3, template: 'line', help: 'Type / to insert a value (port, containers, contact name…); it is filled in for each mail' },
+      { name: 'body', label: 'Message', type: 'textarea', required: true, span: 3, template: 'block', help: 'Type / to insert a value. Backspace twice removes one.' },
+      { name: 'isDefault', label: 'Default for this use', type: 'boolean', default: false, list: true },
       active,
     ],
   },

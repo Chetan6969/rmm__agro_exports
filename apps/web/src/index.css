@@ -38,6 +38,40 @@ body {
   @apply border-red-500 focus:ring-red-500/25;
 }
 
+/* Mail template editor: placeholders show as boxes with their real value */
+.tpl-editor {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  cursor: text;
+  line-height: 1.45;
+}
+.tpl-editor[data-empty]::before {
+  content: attr(data-placeholder);
+  @apply pointer-events-none absolute text-slate-400;
+}
+.tpl-chip {
+  @apply mx-px inline rounded border border-brand-200 bg-brand-50 px-1 py-px font-sans text-[12.5px] font-medium text-brand-800 select-none;
+  box-decoration-break: clone;
+}
+.tpl-chip::before {
+  content: '[';
+  @apply text-brand-500;
+}
+.tpl-chip::after {
+  content: ']';
+  @apply text-brand-500;
+}
+.tpl-chip-empty {
+  @apply border-amber-300 bg-amber-50 text-amber-800 italic;
+}
+.tpl-chip-empty::before,
+.tpl-chip-empty::after {
+  @apply text-amber-400;
+}
+.tpl-chip-armed {
+  @apply border-red-400 bg-red-50 text-red-700 ring-2 ring-red-300;
+}
+
 .kbd {
   @apply inline-flex min-w-5 items-center justify-center rounded border border-slate-300 border-b-2 bg-white px-1 font-mono text-[11px] leading-4 text-slate-600;
 }

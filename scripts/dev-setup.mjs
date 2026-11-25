@@ -43,6 +43,10 @@ SESSION_HOURS=12
 COOKIE_SECURE=false
 TRUST_PROXY=false
 STORAGE_DIR=./storage
+
+# Encrypts saved mailbox app passwords (freight quotations by email).
+MAIL_SECRET_KEY=${secret(32)}
+MAIL_POLL_MINUTES=5
 `,
     { mode: 0o600 },
   );

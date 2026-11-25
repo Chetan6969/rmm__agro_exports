@@ -9,6 +9,9 @@ import { RolesPage } from './pages/admin/RolesPage';
 import { SharingPage } from './pages/admin/SharingPage';
 import { UserFormPage, UsersPage } from './pages/admin/UsersPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { FreightDetailPage } from './pages/freight/FreightDetailPage';
+import { FreightListPage, FreightNewPage } from './pages/freight/FreightListPage';
+import { MailboxPage } from './pages/freight/MailboxPage';
 import { DocumentFormPage } from './pages/DocumentFormPage';
 import { DocumentListPage } from './pages/DocumentListPage';
 import { HomePage } from './pages/HomePage';
@@ -45,6 +48,10 @@ const router = createBrowserRouter([
       { path: '/mis/documentation', element: <DocumentationPage /> },
       { path: '/mis/reports', element: <ReportsPage /> },
       { path: '/shipments', element: <ShipmentsPage /> },
+      { path: '/freight', element: <FreightListPage /> },
+      { path: '/freight/new', element: <FreightNewPage /> },
+      { path: '/freight/mailbox', element: <MailboxPage /> },
+      { path: '/freight/:id', element: <FreightDetailPage /> },
       { path: '/plan/:piId', element: <OrderPlanningPage /> },
       { path: '/d/:doc', element: <DocumentListPage /> },
       { path: '/d/:doc/:id', element: <DocumentFormPage /> },

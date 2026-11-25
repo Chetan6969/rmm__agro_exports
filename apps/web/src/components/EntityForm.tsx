@@ -3,6 +3,7 @@ import type { KeyboardEvent, ReactNode } from 'react';
 import { FileField } from './FileField';
 import { imageKindOf } from './ImageEditor';
 import { RefSelect } from './RefSelect';
+import { TemplateEditor } from './TemplateEditor';
 
 export type Values = Record<string, unknown>;
 
@@ -58,6 +59,9 @@ function FieldInput({
 }) {
   const id = `f-${f.name}`;
   const common = { id, 'data-nav': '1', disabled: readOnly, 'aria-invalid': error ? true : undefined } as const;
+  if (f.template) {
+    return <TemplateEditor id={id} value={(value as string) ?? ''} onChange={onChange} multiline={f.template === 'block'} rows={10} disabled={readOnly} invalid={!!error} ariaLabel={f.label} nav />;
+  }
   switch (f.type) {
     case 'textarea':
       return <textarea {...common} rows={3} className="field-input resize-y" value={(value as string) ?? ''} onChange={(e) => onChange(e.target.value)} />;

@@ -46,6 +46,7 @@ function ago(iso: string) {
 /** Where a restored record opens. */
 function openPath(r: BinRow): string | null {
   if (['proformaInvoices', 'productionOrders', 'commercialInvoices', 'oceanBills', 'certificates'].includes(r.type)) return `/d/${r.type}/${r.id}`;
+  if (r.type === 'freightEnquiries') return `/freight/${r.id}`;
   if (r.type === 'users') return `/admin/users/${r.id}`;
   if (r.type === 'roles') return '/admin/roles';
   if (r.type === 'sharing') return '/admin/sharing';

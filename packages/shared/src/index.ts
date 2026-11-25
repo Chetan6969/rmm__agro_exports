@@ -6,3 +6,4 @@ export * from './api-types.js';
 export * from './money.js';
 export * from './documents.js';
 export * from './pipeline.js';
+export * from './freight.js';

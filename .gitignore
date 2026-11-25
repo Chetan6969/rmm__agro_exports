@@ -157,3 +157,7 @@ apps/api/storage-test/
 
 # Local LAN auto-start (holds local DB admin password)
 .lan/
+
+
+#ignore meta data of the rmm production 
+rmm-production-export.json

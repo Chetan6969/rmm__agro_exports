@@ -143,7 +143,63 @@ Users open `http://<server-ip>:4000`. For HTTPS on the LAN put Caddy/nginx in fr
 0 1 * * * pg_dump -Fc rmm_export_erp > /backup/rmm_$(date +\%F).dump && find /backup -name 'rmm_*.dump' -mtime +30 -delete
 ```
 
-Also back up `apps/api/storage/` (uploaded logos, seals, signatures).
+Also back up `apps/api/storage/` (uploaded logos, seals, signatures, mail attachments) and keep a copy of `MAIL_SECRET_KEY`.
+
+## Email: freight quotations
+
+Sales → **Freight quotations** asks shipping lines and forwarders for ocean freight by email, reads their
+replies back into the ERP, helps negotiate in the same mail thread and ranks the offers by best value.
+
+**How it works**
+
+1. Each user connects **their own mailbox** once (Sales → My mailbox): they pick **Google** (default —
+   Gmail and company mail on Google Workspace), **Microsoft** (Outlook / Microsoft 365) or **Yahoo**, then
+   enter the email address and an *app password*. The SMTP/IMAP servers are fixed per provider in the ERP;
+   users never type server settings. The connection is tested before it is saved. The password is stored encrypted (AES-256-GCM with `MAIL_SECRET_KEY`) and never shown again.
+2. Save shipping-line contacts in Masters → **Freight contacts** (the ports / routes they quote help the ERP
+   suggest them). Mail texts live in Masters → **Email templates** (rate request, reminder, counter offer,
+   award, regret). In the editor every value shows as a box with its real content (e.g. **[Mundra]**,
+   **[Ravi]**): press `/` to list all values (↑ ↓ to choose, Enter to insert, Esc to close), Backspace or
+   Delete twice next to a box removes it, and one space is kept on each side of a box. Saved as
+   `{{pol}}`-style placeholders. Built-in texts are used until you save your own.
+3. Create an enquiry (or press **Get freight quotes** on a shipment lot — route, containers and cargo are
+   filled in) and choose contacts. Each contact gets a personal mail **from your address** (nodemailer/SMTP),
+   tagged `[FQ <number>]` in the subject.
+4. Replies arrive in your normal inbox. Every `MAIL_POLL_MINUTES` the server reads new INBOX mail over IMAP
+   (imapflow + mailparser; also the **Check now** button). Replies are matched to their conversation by the
+   mail headers (In-Reply-To / References), or by the `[FQ …]` tag and sender when a mail client dropped them.
+   Unrelated mail is ignored and left untouched. Attachments are saved with the conversation.
+5. The rate, currency, free days, transit time and validity are **read from each reply automatically** and
+   marked "check" until a user confirms or corrects them. Counter offers and other replies are sent from
+   the ERP in the same thread; every new offer is a new round.
+6. **Best value** ranking uses each carrier's latest offer: total for all containers converted to US dollars
+   with the Masters → Currencies rates (70% of the score), transit time (15%) and free days (15%); expired
+   offers drop to the bottom. It also shows the saving against the next offer and how much negotiation saved.
+7. **Book** the winner: the confirmation mail goes to them, a polite regret to the others who replied, and
+   (for a lot) the freight is put on the lot's charges in ₹. Contacts who never reply get automatic
+   reminders after the enquiry's reminder window.
+
+**Server settings** (`apps/api/.env`; `pnpm setup:dev` creates the key for you):
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `MAIL_SECRET_KEY` | — (required) | Encrypts saved app passwords. Any long random text: `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`. Back it up; if it changes, users re-enter their app password. |
+| `MAIL_POLL_MINUTES` | `5` | How often connected mailboxes are checked for replies. `0` = only on "Check now". |
+| `MAIL_REMINDER_HOURS` | `48` | Default reminder window for new enquiries (`0` = no reminders). |
+| `MAIL_MAX_REMINDERS` | `2` | Most reminders per contact and enquiry. |
+| `MAIL_LOOKBACK_DAYS` | `30` | On first connection, only mail of the last N days is read. |
+| `MAIL_MAX_ATTACHMENT_MB` | `10` | Bigger reply attachments are listed, not saved. |
+
+**Getting an app password**
+
+| Provider | Servers (filled in automatically) | App password |
+| --- | --- | --- |
+| Google (Gmail / Google Workspace) | smtp.gmail.com:465 SSL · imap.gmail.com:993 SSL | Turn on 2-Step Verification, then Google Account → Security → App passwords. In Gmail settings → Forwarding and POP/IMAP, enable IMAP. |
+| Microsoft (Outlook / Microsoft 365) | smtp.office365.com:587 STARTTLS · outlook.office365.com:993 SSL | Microsoft account → Security → Advanced security options → App passwords (needs two-step verification). Work accounts: the admin must allow SMTP AUTH and IMAP for the mailbox. |
+| Yahoo | smtp.mail.yahoo.com:465 · imap.mail.yahoo.com:993 | Account security → Generate app password. |
+
+The server needs outbound access to the mail servers (ports 465/587 and 993). Mail is only read from
+INBOX and is never deleted or marked as read.
 
 ## How it is built to grow
 
@@ -167,3 +223,4 @@ search, export and audit come from that one definition.
 - Permissions are checked on every endpoint. Sub-admins cannot grant permissions they do not hold or manage companies they are not admins of.
 - Uploads are checked by magic bytes (PNG/JPG/WEBP/PDF only; SVG rejected). CSV export neutralises spreadsheet formulas.
 - The audit log is append-only at the database level (UPDATE/DELETE revoked).
+- Mailbox app passwords are encrypted with `MAIL_SECRET_KEY` (AES-256-GCM) and never returned by the API. Received mail is shown as plain text (no remote images or scripts); attachments that are not images or PDFs download instead of opening.
