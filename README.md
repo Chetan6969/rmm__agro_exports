@@ -52,7 +52,7 @@ Day to day:
 |---|---|
 | `pnpm start:dev` | start the development database, then the API and web app |
 | `pnpm serve:lan` | run the built app for other computers on the office network (see below) |
-| `pnpm demo:load` | add the demo company **DEMO** (buyers, products, PIs, production orders, invoices) — switch to it with Alt+C |
+| `pnpm demo:load` | add the demo company **DEMO** (buyers, products, PIs, production orders, invoices) — switch to it with Alt+C. Refused when `NODE_ENV=production` or the database is not on this computer |
 | `pnpm demo:reset` | delete the DEMO company and everything in it; real companies are not touched |
 | `pnpm db:reset -- --yes` | erase the whole local database and uploads, then set up and seed again (`--demo` also loads the demo) |
 | `pnpm db:start` / `pnpm db:stop` / `pnpm db:status` | control the development database (needed again after a reboot) |
@@ -220,7 +220,8 @@ destination port, the dispatch date (days 1–15 = P1, 16–end = P2) and the bu
 **2. Document inbox** (Export flow → Document inbox). Drop any file — PDF, scan or phone photo,
 Excel (.xlsx/.xls), Word (.docx/.doc), text:
 - PDFs with a text layer are read directly; scans and photos go through **offline OCR**
-  (Tesseract, English + Arabic models bundled in `node_modules`, nothing downloaded at run time).
+  (Tesseract, English and Hindi models bundled in `node_modules`, nothing downloaded at run time;
+  a page that reads poorly as English is read again as Hindi + English).
 - The type is recognised (buyer PO / contract, PI, LC, booking, BL, shipping bill, export invoice,
   packing list, COO, phyto, fumigation, health certificate, COC, test report, APEDA/COI, bill of exchange,
   EIA intimation, traceability, our purchase order to a supplier, a supplier's purchase invoice) and its fields are read with the words they came from.

@@ -10,6 +10,8 @@
 import { add, DOCS, mul, round, type DocKey } from '@rmm/shared';
 import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import { config } from '../config.js';
+import { assertDevelopmentDatabase } from './dev-only.js';
 import type { Tx } from './client.js';
 import { adminSql } from './client.js';
 import { companies, exchangeRates, masterTables, users } from './schema/index.js';
@@ -212,6 +214,8 @@ async function rateFor(tx: Tx, code: string): Promise<string> {
 
 // ------------------------------------------------------------------ load
 export async function loadDemo() {
+  // made-up records must never reach a real server
+  assertDevelopmentDatabase(config.databaseUrl(), 'load demo data');
   const [admin] = await inCompanyTx(null, (tx) =>
     tx.select({ id: users.id, username: users.username }).from(users).where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt))).limit(1),
   );

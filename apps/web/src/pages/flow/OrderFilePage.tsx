@@ -294,14 +294,16 @@ function Documents({ data, orderId, onUpload, onLot }: { data: OrderFile; orderI
         <FileList files={folders.orderPapers} />
         <MadeList docs={folders.documents} />
       </FolderBox>
-      {vendorPos.length > 0 && (
-        <FolderBox title="Purchase orders (to suppliers)" count={`${vendorPos.length}`}>
+      {(vendorPos.length > 0 || folders.purchaseOrders.length > 0) && (
+        <FolderBox title="Purchase orders (to suppliers)" count={`${vendorPos.length} order(s) · ${folders.purchaseOrders.length} file(s)`}>
           <PoList pos={vendorPos} />
+          <FileList files={folders.purchaseOrders} />
         </FolderBox>
       )}
-      {data.purchaseInvoices.length > 0 && (
-        <FolderBox title="Purchase invoices (supplier bills)" count={`${data.purchaseInvoices.length}`}>
-          <BillTable rows={data.purchaseInvoices} />
+      {(data.purchaseInvoices.length > 0 || folders.purchaseInvoices.length > 0) && (
+        <FolderBox title="Purchase invoices (supplier bills)" count={`${data.purchaseInvoices.length} bill(s) · ${folders.purchaseInvoices.length} file(s)`}>
+          {data.purchaseInvoices.length > 0 && <BillTable rows={data.purchaseInvoices} />}
+          <FileList files={folders.purchaseInvoices} />
         </FolderBox>
       )}
       {lots.map((l) => {

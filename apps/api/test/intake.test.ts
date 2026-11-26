@@ -139,6 +139,13 @@ describe('reading documents (pure rules)', () => {
     expect(x.fields.quantityMt.value).toBe('120.5');
   });
 
+  it("reads a supplier bill's counted quantity, not the pack size in the item name", () => {
+    const bill = (items: string[]) => ['Unity Packaging', 'TAX INVOICE', 'Invoice No: UP/9', 'Description HSN Qty Rate Amount', ...items, 'Grand Total 35,700.00'].join(String.fromCharCode(10));
+    expect(extract(bill(['Jute bags 40 Kg printed 6305 800 Nos 42.50 34,000.00']), 'purchase_invoice').fields.quantity?.value).toBe('800');
+    expect(extract(bill(['Jute bags 40 Kg 800 Nos 34,000.00', 'Tags 250 Nos 500.00']), 'purchase_invoice').fields.quantity).toBeUndefined();
+    expect(extract(bill(['Jute bags 40 Kg 800 Nos', 'Tags 250 Nos', 'Total Qty 1050']), 'purchase_invoice').fields.quantity?.value).toBe('1050');
+  });
+
   it('learns where a corrected value sits and reads it there next time', () => {
     const doc = 'ACME LINES LTD\nBooking ref.: XYZ-77812 / vessel MSC ANNA\nShipper: RMM';
     const t = learnTemplate(doc, 'bookingNo', 'XYZ-77812');
@@ -400,6 +407,12 @@ describe('document inbox → order → plan → packaging → tracker', () => {
     expect(file.vendorPos).toHaveLength(2);
     expect(file.purchaseInvoices.map((b: { invoiceNo: string }) => b.invoiceNo)).toEqual(['UP/881']);
     expect(Number(file.vendorPos.find((p: { id: string }) => p.id === packPo.id).billedAmount)).toBeCloseTo(78673.88, 2);
+
+    // the supplier's bill sits in the purchase folder, not among the buyer's order papers or the lots
+    const names = (list: { fileName: string }[]) => list.map((x) => x.fileName);
+    expect(names(file.folders.purchaseInvoices)).toEqual(['unity-bill.txt']);
+    expect(names(file.folders.orderPapers)).not.toContain('unity-bill.txt');
+    expect(names(file.lots.flatMap((l: { files: { fileName: string }[] }) => l.files))).not.toContain('unity-bill.txt');
 
     // buyer PO orders and our PIs can be listed apart
     expect((await root.ok('GET', '/order-files?state=all&source=po')).total).toBe(2);

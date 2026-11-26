@@ -112,7 +112,7 @@ export const INTAKE_KINDS: IntakeKind[] = [
     action: 'lot',
     title: [/export\s+invoice/i, /commercial\s+invoice/i, /invoice\s+cum\s+packing/i, /custom\s+invoice/i],
     words: [/exporter/i, /consignee/i, /port\s+of\s+(loading|discharge)/i, /terms\s+of\s+delivery/i, /net\s+weight/i, /\bIEC\b/i],
-    file: /(export invoice|commercial invoice|custom invoice|invoice[-_ ]rmm)/i,
+    file: /(export invoice|commercial invoice|custom invoice)/i,
     fields: [f('invoiceNumber', 'Export invoice no.'), f('invoiceDate', 'Invoice date', 'date'), f('buyerPoRef', "Buyer's PO / contract no."), f('lcNumber', 'LC no.'), f('quantityMt', 'Quantity (MT)', 'number'), f('amount', 'Invoice amount', 'money'), f('currency', 'Currency', 'currency'), f('containerCount', 'Containers', 'number'), f('batchNo', 'Batch no.')],
   },
   {
@@ -277,7 +277,7 @@ export function classify(text: string, fileName = ''): Classification {
     if (k.file?.test(name)) score += 9;
     return { kind: k.key, score };
   });
-  // our own purchase orders (packaging) carry "Invoice To RMM…" and "Supplier (Bill from)"
+  // our own purchase orders (packaging) carry "Invoice To <our company>" and "Supplier (Bill from)"
   const vp = scores.find((s) => s.kind === 'vendor_po')!;
   const po = scores.find((s) => s.kind === 'buyer_po')!;
   if (/supplier\s*\(bill\s*from\)/i.test(body)) {
@@ -650,6 +650,8 @@ const RULES: Record<string, Rule> = {
 };
 export const GSTIN_RX = /\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b/g;
 
+const COUNTED_RX = /(?<![\d.,])(\d[\d,]*(?:\.\d+)?)[ \t]*(?:Nos|Pcs|Pieces|Bags|MTS?|Qtls?|Quintals?)\b/gi;
+
 RULES.purchase_invoice = (t, o) => {
   put(o, 'invoiceNo', valueAfter(t, /\b(Invoice\s+(No|Number)|Bill\s+(No|Number))\b\.?/i, /(?=[A-Z/-]*\d)[A-Z0-9][A-Z0-9/\-]{0,30}/i), 0.75);
   put(o, 'invoiceDate', valueAfter(t, /\b(Invoice\s+Date|Bill\s+Date)\b/i, DATE_RX), 0.8, 'date');
@@ -679,7 +681,14 @@ RULES.purchase_invoice = (t, o) => {
     .filter((x): x is { l: string; n: number[] } => !!x && x.n.length > 0);
   const best = totals.flatMap((x) => x.n.map((n) => ({ n, l: x.l }))).sort((a, b) => b.n - a.n)[0];
   if (best) o.totalAmount ??= { value: String(best.n), confidence: 0.7, evidence: best.l.slice(0, 200), source: 'rule' };
-  put(o, 'quantity', valueAfter(t, /\b(Total\s+)?(Qty|Quantity)\b/i, MONEY_RX), 0.4, 'number');
+  put(o, 'quantity', valueAfter(t, /\bTotal\s+(Qty|Quantity)\b/i, MONEY_RX), 0.7, 'number');
+  // else the one counted quantity on the bill ("800 Nos"); a pack size ("40 Kg bags") is not a quantity,
+  // and when the items differ nothing is guessed
+  const counted = new Map([...t.matchAll(COUNTED_RX)].map((m) => [m[1].replace(/,/g, ''), m[0]]));
+  if (counted.size === 1) {
+    const [[value, evidence]] = counted;
+    o.quantity ??= { value, confidence: 0.6, evidence, source: 'rule' };
+  }
   put(o, 'vendorPoNo', valueAfter(t, /\b(Buyer'?s\s+Order\s+No|P\.?\s?O\.?\s+No|Order\s+No)\b\.?/i, /(?=[A-Z/-]*\d)[A-Z0-9][A-Z0-9/\-]{0,24}/i), 0.6);
 };
 

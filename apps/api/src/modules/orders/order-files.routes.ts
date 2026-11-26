@@ -254,6 +254,14 @@ async function orderFile(tx: Tx, ctx: RequestContext, id: string) {
   const billed = await billedByPo(tx, pos.map((p) => p.id));
   const bills = can(ctx, 'sales.purchaseInvoices', 'view') ? await listPurchaseInvoices(tx, { orderId: id }) : [];
 
+  // supplier papers (our purchase orders, their invoices) have their own folders, never among the buyer's or a lot's papers
+  const BUYING: Record<string, string> = { vendor_po: 'sales.vendorPos', purchase_invoice: 'sales.purchaseInvoices' };
+  const confirmed = inbox.filter((i) => i.status === 'CONFIRMED').map((i) => ({ ...i, label: intakeKind(i.kind).label }));
+  const salesPapers = confirmed.filter((i) => !BUYING[i.kind ?? '']);
+  const buyingPapers = (kind: 'vendor_po' | 'purchase_invoice') => {
+    return can(ctx, BUYING[kind], 'view') ? confirmed.filter((i) => i.kind === kind) : [];
+  };
+
   const lots = f.lots.map((l) => {
     const need = checklistFor(str(l.market));
     const mine = lotDocs.filter((d) => d.shipmentId === l.id);
@@ -265,7 +273,7 @@ async function orderFile(tx: Tx, ctx: RequestContext, id: string) {
         const d = mine.find((x) => x.kind === k);
         return { kind: k, label: intakeKind(k).label, required: need.includes(k), status: d?.status ?? 'PENDING', fileId: d?.fileId ?? null, refNo: d?.refNo ?? null, docDate: d?.docDate ?? null };
       }),
-      files: inbox.filter((i) => i.shipmentId === l.id && i.status === 'CONFIRMED').map((i) => ({ ...i, label: intakeKind(i.kind).label })),
+      files: salesPapers.filter((i) => i.shipmentId === l.id),
       documents: made.filter((m) => m.shipmentId === l.id),
     };
   });
@@ -276,7 +284,9 @@ async function orderFile(tx: Tx, ctx: RequestContext, id: string) {
     /** Order-level folders; files of a lot are inside that lot. */
     folders: {
       toReview: inbox.filter((i) => OPEN_INBOX.includes(i.status)).map((i) => ({ ...i, label: i.kind ? intakeKind(i.kind).label : 'Being read' })),
-      orderPapers: inbox.filter((i) => i.status === 'CONFIRMED' && !i.shipmentId).map((i) => ({ ...i, label: intakeKind(i.kind).label })),
+      orderPapers: salesPapers.filter((i) => !i.shipmentId),
+      purchaseOrders: buyingPapers('vendor_po'),
+      purchaseInvoices: buyingPapers('purchase_invoice'),
       documents: made.filter((m) => !m.shipmentId),
     },
     vendorPos: pos.map((p) => ({ id: p.id, number: p.number, poDate: p.poDate, status: p.status, category: p.category, totalAmount: p.totalAmount, billedAmount: billed.get(p.id) ?? '0', items: p.lines.length, supplierName: suppliers.find((s) => s.id === p.supplierId)?.name ?? null })),

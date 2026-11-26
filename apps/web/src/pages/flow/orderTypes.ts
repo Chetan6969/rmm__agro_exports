@@ -106,7 +106,7 @@ export interface OrderFile {
   order: Omit<OrderRow, 'progress'>;
   progress: Progress;
   lots: OrderLot[];
-  folders: { toReview: FileRef[]; orderPapers: FileRef[]; documents: MadeDoc[] };
+  folders: { toReview: FileRef[]; orderPapers: FileRef[]; purchaseOrders: FileRef[]; purchaseInvoices: FileRef[]; documents: MadeDoc[] };
   vendorPos: { id: string; number: string; poDate: string; status: string; category: PurchaseCategory; totalAmount: string; billedAmount: string; items: number; supplierName: string | null }[];
   purchaseInvoices: PurchaseInvoiceRow[];
   freight: { id: string; number: string; status: string; date: string; portOfLoading: string; portOfDischarge: string; containerCount: number; shipmentId: string | null; awardedTo: string | null }[];
