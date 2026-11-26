@@ -2,10 +2,10 @@
  * Generic master-data engine. Works for every EntityDef in the shared registry, so
  * adding a master needs no new service code.
  */
-import { buildEntitySchema, getEntity, type EntityDef } from '@rmm/shared';
+import { buildEntitySchema, DOC_LIST, ENTITY_LIST, getEntity, type EntityDef } from '@rmm/shared';
 import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { Tx } from '../../db/client.js';
-import { files, masterTables, type AnyTable } from '../../db/schema/index.js';
+import { docTables, files, masterTables, type AnyTable } from '../../db/schema/index.js';
 import { companiesForUser } from '../../core/access.js';
 import { audit } from '../../core/audit.js';
 import { requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
@@ -223,6 +223,71 @@ export async function deleteRecord(tx: Tx, ctx: RequestContext, key: string, id:
     .where(eq(table.id, id));
   await audit(tx, ctx, { entity: def.key, recordId: id, action: 'delete', meta: { reason: reason.trim() } });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------- reference counting (delete warning)
+interface RefSource {
+  kind: 'table' | 'line';
+  /** Table to count rows in: the header/master table for 'table', the line table for 'line'. */
+  table: AnyTable;
+  /** Parent header table (for 'line' sources), so soft-deleted parents are excluded. */
+  header?: AnyTable;
+  /** FK column (field name) pointing at the master. */
+  col: string;
+  /** Human label for the breakdown. */
+  label: string;
+}
+
+let _refSources: Map<string, RefSource[]> | null = null;
+/** Build, once, a map of masterKey → every live table/column that references it. */
+function refSourcesFor(entityKey: string): RefSource[] {
+  if (!_refSources) {
+    const m = new Map<string, RefSource[]>();
+    const add = (target: string, s: RefSource) => {
+      const list = m.get(target) ?? [];
+      list.push(s);
+      m.set(target, list);
+    };
+    for (const e of ENTITY_LIST) {
+      for (const f of e.fields) if (f.type === 'ref' && f.ref) add(f.ref, { kind: 'table', table: masterTables[e.key], col: f.name, label: e.plural });
+    }
+    for (const d of DOC_LIST) {
+      const dt = docTables[d.key];
+      for (const f of d.header) if (f.type === 'ref' && f.ref) add(f.ref, { kind: 'table', table: dt.header, col: f.name, label: d.plural });
+      if (dt.lines) for (const f of d.lines) if (f.type === 'ref' && f.ref) add(f.ref, { kind: 'line', table: dt.lines, header: dt.header, col: f.name, label: d.plural });
+    }
+    _refSources = m;
+  }
+  return _refSources.get(entityKey) ?? [];
+}
+
+/** Count live records that still reference this master — shown as a warning before a (soft) delete. */
+export async function countReferences(tx: Tx, ctx: RequestContext, key: string, id: string) {
+  const { def } = resolveEntity(key);
+  requirePerm(ctx, moduleKey(def), 'view');
+  const breakdown: { label: string; count: number }[] = [];
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { total: 0, breakdown };
+  let total = 0;
+  for (const s of refSourcesFor(key)) {
+    const col = s.table[s.col];
+    if (!col) continue;
+    const [{ c }] =
+      s.kind === 'table'
+        ? await tx.select({ c: sql<number>`count(*)::int` }).from(s.table).where(and(eq(col, id), isNull(s.table.deletedAt)))
+        : await tx
+            .select({ c: sql<number>`count(*)::int` })
+            .from(s.table)
+            .innerJoin(s.header!, eq(s.table.documentId, s.header!.id))
+            .where(and(eq(col, id), isNull(s.header!.deletedAt)));
+    if (c > 0) {
+      total += c;
+      const ex = breakdown.find((b) => b.label === s.label);
+      if (ex) ex.count += c;
+      else breakdown.push({ label: s.label, count: c });
+    }
+  }
+  breakdown.sort((a, b) => b.count - a.count);
+  return { total, breakdown };
 }
 
 /** Compact id/label list for dropdowns. Any signed-in member may look up labels. */

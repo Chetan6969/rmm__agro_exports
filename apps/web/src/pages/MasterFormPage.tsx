@@ -1,6 +1,6 @@
 import { getEntity, type EntityDef } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, History, Save } from 'lucide-react';
+import { ArrowLeft, History, Save, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
@@ -38,6 +38,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const record = useQuery({
@@ -49,6 +50,11 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
     queryKey: ['defaults', def.key],
     queryFn: () => api.get<{ values: Values }>(`/defaults/${def.key}`),
     enabled: isNew,
+  });
+  const usage = useQuery({
+    queryKey: ['masters', def.key, 'usage', id],
+    queryFn: () => api.get<{ total: number; breakdown: { label: string; count: number }[] }>(`/masters/${def.key}/${id}/usage`),
+    enabled: confirmDelete && !isNew,
   });
 
   useEffect(() => {
@@ -173,6 +179,11 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
               </Button>
             )}
             {!readOnly && <UndoRedo cache={cache} />}
+            {!isNew && can(mod, 'delete') && (
+              <Button variant="danger" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmDelete(true)} title={`Delete this ${def.label.toLowerCase()}`}>
+                Delete
+              </Button>
+            )}
             <Button onClick={() => (dirty ? setConfirmLeave(true) : back())} shortcut="esc">
               Cancel
             </Button>
@@ -222,6 +233,33 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
         danger
         onClose={() => setConfirmLeave(false)}
         onConfirm={() => back()}
+      />
+      <ConfirmDialog
+        open={confirmDelete}
+        title={`Delete ${def.label.toLowerCase()}`}
+        confirmLabel="Delete"
+        danger
+        requireReason
+        message={
+          <>
+            Delete <b>{title}</b>? It is hidden everywhere but kept — you can restore it from the Recycle bin.
+            {usage.data && usage.data.total > 0 && (
+              <span className="mt-2 block rounded bg-amber-50 px-2 py-1.5 text-[12.5px] text-amber-800">
+                Still used by {usage.data.total} live record{usage.data.total === 1 ? '' : 's'}
+                {usage.data.breakdown.length ? ` (${usage.data.breakdown.map((b) => `${b.count} ${b.label.toLowerCase()}`).join(', ')})` : ''}. Those keep pointing at it and
+                will show a blank reference until you restore it.
+              </span>
+            )}
+          </>
+        }
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={async (reason) => {
+          await api.del(`/masters/${def.key}/${id}`, { reason });
+          toast.success(`${def.label} deleted`);
+          qc.invalidateQueries({ queryKey: ['masters', def.key] });
+          qc.invalidateQueries({ queryKey: ['lookup', def.key] });
+          back();
+        }}
       />
     </div>
   );
