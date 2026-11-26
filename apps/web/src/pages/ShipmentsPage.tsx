@@ -175,7 +175,7 @@ function LotTile({ r, onOpen }: { r: Shipment; onOpen: () => void }) {
       </div>
       <CheckpointSummary p={r.pipeline} />
     </button>
-      {can('sales.freight', 'create') && r.status !== 'SHIPPED' && r.status !== 'CANCELLED' && (
+      {can('freight.quotations', 'create') && r.status !== 'SHIPPED' && r.status !== 'CANCELLED' && (
         <Link to={`/freight/new?shipment=${r.id}`} className="flex items-center gap-1 border-t border-slate-100 px-3 py-1.5 text-[12px] font-medium text-brand-700 hover:bg-brand-50">
           <Ship className="size-3.5" /> Get freight quotes
         </Link>

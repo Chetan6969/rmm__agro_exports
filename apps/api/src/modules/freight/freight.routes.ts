@@ -1,7 +1,7 @@
 /**
  * Freight quotations by email.
  *  /mail-account               the signed-in user's own mailbox (any user; the password is never returned)
- *  /freight/enquiries...       rate requests, conversations, quotes, comparison and award (sales.freight)
+ *  /freight/enquiries...       rate requests, conversations, quotes, comparison and award (freight.quotations)
  */
 import { businessDate, DEFAULT_MAIL_PROVIDER, DEFAULT_MAIL_TEMPLATES, detectMailProvider, isDecimal, isPositive, MAIL_PROVIDER_KEYS, MAIL_PROVIDERS, MAIL_TEMPLATE_KINDS, mailProvider, renderTemplate, type MailProviderKey } from '@rmm/shared';
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
@@ -34,7 +34,7 @@ import {
 } from './freight.service.js';
 import { mailDriver } from './mail.js';
 
-const MOD = 'sales.freight';
+const MOD = 'freight.quotations';
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-12-31');
 const money = (msg: string) => z.string().trim().refine((v) => isDecimal(v) && isPositive(v), msg);
 

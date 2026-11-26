@@ -108,7 +108,7 @@ const sources: Source[] = [
     type: 'freightEnquiries',
     label: 'Freight enquiry',
     group: 'Sales documents',
-    module: 'sales.freight',
+    module: 'freight.quotations',
     table: freightEnquiries,
     title: sql`${freightEnquiries.number}`,
     sub: sql`${freightEnquiries.portOfLoading} || ' → ' || ${freightEnquiries.portOfDischarge} || ' · ' || ${freightEnquiries.containerCount} || ' × ' || ${freightEnquiries.containerType}`,

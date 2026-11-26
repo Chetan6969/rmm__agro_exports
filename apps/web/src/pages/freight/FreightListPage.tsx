@@ -56,7 +56,7 @@ export function FreightListPage() {
             <Link to="/freight/mailbox" className="text-[13px] text-brand-700 hover:underline">
               My mailbox
             </Link>
-            {can('sales.freight', 'create') && (
+            {can('freight.quotations', 'create') && (
               <Link to="/freight/new">
                 <Button variant="primary" icon={<Plus className="size-3.5" />}>
                   New enquiry
@@ -97,7 +97,7 @@ export function FreightListPage() {
           <ErrorBox error={q.error} />
         ) : !q.data?.length ? (
           <Card className="p-6 text-center text-[13px] text-slate-500">
-            No enquiries here yet. {can('sales.freight', 'create') && <Link className="text-brand-700 underline" to="/freight/new">Create one</Link>} — or press "Get freight quotes" on a shipment lot.
+            No enquiries here yet. {can('freight.quotations', 'create') && <Link className="text-brand-700 underline" to="/freight/new">Create one</Link>} — or press "Get freight quotes" on a shipment lot.
           </Card>
         ) : (
           <Card className="overflow-x-auto">

@@ -51,7 +51,7 @@ export function FreightDetailPage() {
   if (q.error || !q.data) return <div className="p-6"><ErrorBox error={q.error} /></div>;
   const e = q.data;
   const open = e.status === 'OPEN';
-  const canEdit = can('sales.freight', 'edit');
+  const canEdit = can('freight.quotations', 'edit');
   const notReplied = e.threads.filter((t) => t.status === 'SENT').length;
 
   const act = async (key: string, fn: () => Promise<void>) => {
@@ -87,7 +87,7 @@ export function FreightDetailPage() {
             <Button icon={<RefreshCw className="size-3.5" />} loading={busy === 'sync'} onClick={() => act('sync', async () => { const r = await api.post<{ matched: number; quotes: number }>('/mail-account/sync'); toast.success(r.matched ? `${r.matched} new reply(ies), ${r.quotes} quote(s) read` : 'No new replies yet'); })}>
               Check mail
             </Button>
-            {open && can('sales.freight', 'create') && (
+            {open && can('freight.quotations', 'create') && (
               <Button variant={e.threads.length ? 'secondary' : 'primary'} icon={<UserPlus className="size-3.5" />} onClick={() => setSendOpen(true)}>
                 {e.threads.length ? 'Ask more contacts' : 'Send rate request'}
               </Button>
@@ -110,7 +110,7 @@ export function FreightDetailPage() {
                 )}
               </select>
             )}
-            {can('sales.freight', 'delete') && <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDel(true)} aria-label="Delete enquiry" />}
+            {can('freight.quotations', 'delete') && <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDel(true)} aria-label="Delete enquiry" />}
           </>
         }
       />
