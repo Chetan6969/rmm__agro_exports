@@ -126,7 +126,12 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     if (!record) return;
     if (loaded && (dirty || source.dataUpdatedAt === seededStamp.current)) return;
     const h: Values = {};
-    for (const f of def.header) h[f.name] = record[f.name] ?? (f.type === 'boolean' ? false : null);
+    for (const f of def.header) {
+      const raw = record[f.name];
+      // A stored select value that is no longer one of the options (e.g. an old free-text pre-carriage)
+      // would fail validation on save — show it blank so the user re-picks instead of being blocked.
+      h[f.name] = f.type === 'select' && raw != null && !f.options?.includes(raw as string) ? null : raw ?? (f.type === 'boolean' ? false : null);
+    }
     setHeader(h);
     setLabels(labelsOf(def.header, record));
     setLines(withGroups(def, record.lines));
