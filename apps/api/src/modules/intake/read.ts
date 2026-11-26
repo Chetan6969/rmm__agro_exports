@@ -3,12 +3,11 @@
  *  - PDF: the text layer of each page; a page without one (a scan) is rendered and read by OCR
  *  - photos / scans (JPG, PNG, WEBP, TIFF): OCR
  *  - Excel (.xlsx/.xls), Word (.docx), plain text: their own text
- * OCR is Tesseract (tesseract.js, WebAssembly) with the English and Hindi models shipped in
- * node_modules — nothing is downloaded at run time. A page that reads poorly as English is read a
- * second time as Hindi + English, and the surer of the two is kept.
+ * OCR is Tesseract (tesseract.js, WebAssembly) with the English model shipped in
+ * node_modules — nothing is downloaded at run time.
  */
 import { createRequire } from 'node:module';
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import * as mupdf from 'mupdf';
 import mammoth from 'mammoth';
@@ -57,7 +56,6 @@ export function detectKind(buf: Buffer, name: string): { kind: FileKind; mime: s
 // ------------------------------------------------------------------ OCR worker (one, reused)
 
 let worker: Promise<Worker> | null = null;
-let hindi: Promise<Worker> | null = null;
 let queue: Promise<unknown> = Promise.resolve();
 
 function langDir(pkg: string, sub: string) {
@@ -79,51 +77,21 @@ async function ocrWorker(): Promise<Worker> {
   return worker;
 }
 
-/** Hindi + English, started only when a page needs it. Tesseract wants both models in one folder. */
-async function hindiWorker(): Promise<Worker> {
-  if (!hindi) {
-    const cachePath = path.join(config.storageDir, 'ocr-cache');
-    const models = path.join(config.storageDir, 'ocr-models');
-    mkdirSync(cachePath, { recursive: true });
-    mkdirSync(models, { recursive: true });
-    for (const lang of ['eng', 'hin']) {
-      const to = path.join(models, `${lang}.traineddata.gz`);
-      if (!existsSync(to)) copyFileSync(path.join(langDir(`@tesseract.js-data/${lang}`, '4.0.0_best_int'), `${lang}.traineddata.gz`), to);
-    }
-    hindi = (async () => {
-      const w = await createWorker(['hin', 'eng'], OEM.LSTM_ONLY, { langPath: models, gzip: true, cachePath });
-      await w.setParameters({ tessedit_pageseg_mode: PSM.AUTO, preserve_interword_spaces: '1' });
-      return w;
-    })();
-    hindi.catch(() => (hindi = null));
-  }
-  return hindi;
-}
-
-/** Below this English confidence (out of 100) a page is also read as Hindi. */
-const TRY_HINDI_BELOW = 65;
-
 /** OCR one image; calls are serialised so one big scan cannot starve the server. */
 function ocr(png: Buffer): Promise<{ text: string; confidence: number }> {
   const run = queue.then(async () => {
-    const read = async (w: Worker) => {
-      const { data } = await w.recognize(png);
-      return { text: data.text, confidence: data.confidence };
-    };
-    const english = await read(await ocrWorker());
-    if (english.confidence >= TRY_HINDI_BELOW) return english;
-    const both = await read(await hindiWorker());
-    // Hindi is kept only when it is surer and actually found Hindi writing
-    return both.confidence > english.confidence && /[\u0900-\u097F]{3}/.test(both.text) ? both : english;
+    const w = await ocrWorker();
+    const { data } = await w.recognize(png);
+    return { text: data.text, confidence: data.confidence };
   });
   queue = run.catch(() => undefined);
   return run;
 }
 
 export async function stopOcr() {
-  const running = [worker, hindi];
-  worker = hindi = null;
-  for (const w of running) if (w) await (await w).terminate().catch(() => undefined);
+  const w = worker;
+  worker = null;
+  if (w) await (await w).terminate().catch(() => undefined);
 }
 
 // ------------------------------------------------------------------ readers

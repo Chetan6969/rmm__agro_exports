@@ -189,9 +189,6 @@ importers:
       '@tesseract.js-data/eng':
         specifier: 1.0.0
         version: 1.0.0
-      '@tesseract.js-data/hin':
-        specifier: 1.0.0
-        version: 1.0.0
       argon2:
         specifier: 0.45.2
         version: 0.45.2
@@ -1241,9 +1238,6 @@ packages:
 
   '@tesseract.js-data/eng@1.0.0':
     resolution: {integrity: sha512-mbTumm6KQPUHyzTPQaF3ObXYnx0SqqfV2nabqFVQBwD6Kl7PhGSLSzOlfFTWy0P3BjghaSKA2W9GB19Jk+ZcTg==}
-
-  '@tesseract.js-data/hin@1.0.0':
-    resolution: {integrity: sha512-MB6WY6g4SAtrs+Xuyz5JDDsLFCykCwIESV7M9KkyxF71bxBqhLa8e7GJi5yGa/Wl6V4nuC7LWX/EMdSyTINTvg==}
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -3229,8 +3223,6 @@ snapshots:
       '@types/react': 19.3.0
 
   '@tesseract.js-data/eng@1.0.0': {}
-
-  '@tesseract.js-data/hin@1.0.0': {}
 
   '@types/chai@5.2.3':
     dependencies:

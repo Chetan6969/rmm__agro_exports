@@ -226,8 +226,7 @@ destination port, the dispatch date (days 1–15 = P1, 16–end = P2) and the bu
 **2. Document inbox** (Export flow → Document inbox). Drop any file — PDF, scan or phone photo,
 Excel (.xlsx/.xls), Word (.docx/.doc), text:
 - PDFs with a text layer are read directly; scans and photos go through **offline OCR**
-  (Tesseract, English and Hindi models bundled in `node_modules`, nothing downloaded at run time;
-  a page that reads poorly as English is read again as Hindi + English).
+  (Tesseract, English model bundled in `node_modules`, nothing downloaded at run time).
 - The type is recognised (buyer PO / contract, PI, LC, booking, BL, shipping bill, export invoice,
   packing list, COO, phyto, fumigation, health certificate, COC, test report, APEDA/COI, bill of exchange,
   EIA intimation, traceability, our purchase order to a supplier, a supplier's purchase invoice) and its fields are read with the words they came from.
