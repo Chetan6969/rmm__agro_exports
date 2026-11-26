@@ -56,7 +56,7 @@ export async function misFinancial(tx: Tx, f: MisFilter) {
                 ci.document_number as number,
                 ci.lc_number,
                 to_char(ci.lc_date, 'YYYY-MM-DD') as lc_date,
-                coalesce(cust.name, '-') as buyer,
+                coalesce(cust.name, ci.buyer_id_text, '-') as buyer,
                 coalesce(cur.code, '') as currency,
                 ci.invoice_total::text as value
          from commercial_invoices ci

@@ -48,6 +48,8 @@ export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>, deps
       if (!opts.inModal && document.body.dataset.modalOpen) return;
       // an open dropdown owns Enter/Escape/arrows
       if ((e.target as HTMLElement | null)?.dataset?.comboboxOpen && ['Enter', 'Escape', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+      // an open "used before" list closes on Esc instead of the page going back
+      if ((e.target as HTMLElement | null)?.dataset?.suggestOpen && e.key === 'Escape') return;
       for (const [combo, fn] of Object.entries(ref.current)) {
         for (const c of combo.split(',').map((x) => x.trim())) {
           if (!matches(e, c)) continue;

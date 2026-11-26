@@ -215,6 +215,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
             labels={labels}
             errors={errors}
             readOnly={readOnly}
+            suggestFrom={{ key: def.key }}
             onChange={(name, v, l) => {
               setValues((s) => ({ ...s, [name]: v }));
               if (l !== undefined) setLabels((s) => ({ ...s, [name]: l }));

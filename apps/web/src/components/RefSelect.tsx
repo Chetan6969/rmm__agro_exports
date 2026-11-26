@@ -1,11 +1,12 @@
 import { getEntity } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, Plus, X } from 'lucide-react';
-import { useEffect, useId, useRef, useState } from 'react';
+import { ChevronDown, History, PenLine, Plus, X } from 'lucide-react';
+import { Fragment, useEffect, useId, useRef, useState } from 'react';
 import { api, ApiError, qs } from '../lib/api';
 import { showError } from '../lib/notify';
 import { EntityForm, type Values } from './EntityForm';
 import { Modal } from './Modal';
+import { useSuggestions, type SuggestSource } from './SuggestInput';
 import { Button } from './ui';
 
 interface Option {
@@ -14,9 +15,20 @@ interface Option {
   sub?: string;
 }
 
+/** Free text typed instead of a master record (kept in the document's "<field>Text" column). */
+export interface FreeText {
+  value: string | null;
+  onChange: (text: string | null) => void;
+  /** Where earlier free text for this field is stored, offered as "typed before". */
+  suggest?: SuggestSource;
+}
+
+type Entry = { kind: 'same' } | { kind: 'opt'; o: Option } | { kind: 'prev'; t: string } | { kind: 'text'; t: string };
+
 /**
  * Searchable lookup for "ref" fields.
  * Type to search · ↑↓ choose · Enter select (and move on) · Esc close · F2 / Alt+↓ open · Backspace on empty clears.
+ * With `freeText`, a value that is not in the list can be used as typed — only on this document.
  */
 export function RefSelect({
   entity,
@@ -31,6 +43,7 @@ export function RefSelect({
   source = 'master',
   allowCreate = false,
   sameAs,
+  freeText,
 }: {
   /** master entity key, or a document key when source is 'document' */
   entity: string;
@@ -46,8 +59,9 @@ export function RefSelect({
   onCommit?: () => void;
   /** Allow creating a new master record straight from the picker. */
   allowCreate?: boolean;
-  /** Offer "— same as <label> —" at the top of the list (copies another field's value). */
-  sameAs?: { label: string; id: string; idLabel: string | null };
+  /** Offer "— same as <label> —" at the top of the list (copies another field's value or free text). */
+  sameAs?: { label: string; id: string | null; idLabel: string | null; text?: string | null };
+  freeText?: FreeText;
 }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState('');
@@ -58,6 +72,8 @@ export function RefSelect({
   const base = source === 'document' ? `/documents/${entity}/lookup` : `/masters/${entity}/lookup`;
   const canCreate = allowCreate && source === 'master' && !disabled && !!getEntity(entity);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** Free text currently stored (only when no master record is picked). */
+  const typedValue = !value ? (freeText?.value ?? null) : null;
 
   // Resolve a label for an existing value (e.g. defaults applied by id).
   const resolve = useQuery({
@@ -82,24 +98,50 @@ export function RefSelect({
     staleTime: 30_000,
   });
   const options = search.data ?? [];
+  const term = text.trim();
+  const known = new Set(options.map((o) => o.label.toLowerCase()));
+  // Free text typed on earlier documents for this field ("typed before"), minus what the master already has.
+  const prev = useSuggestions(freeText?.suggest, open && !!freeText, text);
+  const prevTexts = (prev.data ?? []).filter((t) => !known.has(t.toLowerCase()) && t !== typedValue).slice(0, 5);
+  const useText = !!freeText && !!term && !known.has(term.toLowerCase()) && !prevTexts.some((t) => t.toLowerCase() === term.toLowerCase());
   // "— same as X —" sits at the top of the list and is navigable with the arrows too (index 0).
-  const samePresent = !!(sameAs && sameAs.id !== value);
-  const offset = samePresent ? 1 : 0;
-  const navLen = offset + options.length;
-  useEffect(() => setHi(samePresent && !text ? 0 : offset), [text, open, samePresent, offset]);
+  const samePresent = !!sameAs && (sameAs.id ? sameAs.id !== value : !!freeText && !!sameAs.text && sameAs.text !== typedValue);
 
-  const pick = (idx: number) => {
-    if (samePresent && idx === 0) return choose({ id: sameAs!.id, label: sameAs!.idLabel ?? sameAs!.label }, true);
-    const o = options[idx - offset];
-    if (o) choose(o, true);
-  };
+  const entries: Entry[] = [
+    ...(samePresent ? [{ kind: 'same' } as const] : []),
+    ...options.map((o) => ({ kind: 'opt', o }) as const),
+    ...prevTexts.map((t) => ({ kind: 'prev', t }) as const),
+    ...(useText ? [{ kind: 'text', t: term } as const] : []),
+  ];
+  const offset = samePresent ? 1 : 0;
+  const firstPrev = offset + options.length;
+  useEffect(() => setHi(samePresent && !text ? 0 : offset), [text, open, samePresent, offset]);
 
   const choose = (o: Option | null, commit = false) => {
     onChange(o?.id ?? null, o?.label ?? null);
     setLabel(o?.label ?? null);
+    if (freeText?.value) freeText.onChange(null); // a picked record replaces typed text (and clearing clears both)
     setText('');
     setOpen(false);
     if (commit) onCommit?.();
+  };
+
+  const chooseText = (t: string, commit = false) => {
+    if (value) onChange(null, null);
+    setLabel(null);
+    freeText?.onChange(t);
+    setText('');
+    setOpen(false);
+    if (commit) onCommit?.();
+  };
+
+  const pickEntry = (en: Entry | undefined, commit: boolean) => {
+    if (!en) return;
+    // While the search is still loading, don't turn a half-typed search into free text.
+    if ((en.kind === 'text' || en.kind === 'prev') && search.isFetching) return;
+    if (en.kind === 'same') return sameAs!.id ? choose({ id: sameAs!.id, label: sameAs!.idLabel ?? sameAs!.label }, commit) : chooseText(sameAs!.text!, commit);
+    if (en.kind === 'opt') return choose(en.o, commit);
+    chooseText(en.t, commit);
   };
 
   return (
@@ -114,12 +156,13 @@ export function RefSelect({
           aria-controls={listId}
           aria-autocomplete="list"
           aria-invalid={invalid || undefined}
-          aria-activedescendant={open && hi < navLen ? `${listId}-${hi}` : undefined}
+          aria-activedescendant={open && hi < entries.length ? `${listId}-${hi}` : undefined}
           data-combobox-open={open ? '1' : undefined}
           disabled={disabled}
-          className="field-input pr-12"
-          placeholder={label ? undefined : placeholder}
-          value={open ? text : (label ?? '')}
+          className={`field-input ${typedValue ? 'pr-[4.75rem]' : 'pr-12'}`}
+          placeholder={label || typedValue ? undefined : freeText ? 'Search, or type your own…' : placeholder}
+          title={typedValue ? 'Typed on this document only (not in the master list)' : undefined}
+          value={open ? text : (label ?? typedValue ?? '')}
           onChange={(e) => {
             setText(e.target.value);
             setOpen(true);
@@ -138,7 +181,7 @@ export function RefSelect({
                 e.preventDefault();
                 setText('');
                 setOpen(true);
-              } else if ((e.key === 'Backspace' || e.key === 'Delete') && value) {
+              } else if ((e.key === 'Backspace' || e.key === 'Delete') && (value || typedValue)) {
                 e.preventDefault();
                 choose(null);
               }
@@ -146,27 +189,31 @@ export function RefSelect({
             }
             if (e.key === 'ArrowDown') {
               e.preventDefault();
-              setHi((h) => Math.min(h + 1, navLen - 1));
+              setHi((h) => Math.min(h + 1, entries.length - 1));
             } else if (e.key === 'ArrowUp') {
               e.preventDefault();
               setHi((h) => Math.max(h - 1, 0));
             } else if (e.key === 'Enter') {
               e.preventDefault();
               e.stopPropagation();
-              pick(hi);
+              pickEntry(entries[hi], true);
             } else if (e.key === 'Escape') {
               e.preventDefault();
               e.stopPropagation();
               setOpen(false);
               setText('');
             } else if (e.key === 'Tab' && text) {
-              const o = options[hi - offset];
-              if (o) choose(o);
+              pickEntry(entries[hi], false);
             }
           }}
         />
         <div className="absolute inset-y-0 right-1 flex items-center gap-0.5 text-slate-400">
-          {value && !disabled && (
+          {typedValue && !open && (
+            <span className="rounded bg-amber-50 px-1 text-[10px] font-medium text-amber-700" title="Typed on this document only (not in the master list)">
+              typed
+            </span>
+          )}
+          {(value || typedValue) && !disabled && (
             <button type="button" tabIndex={-1} aria-label="Clear" onMouseDown={(e) => e.preventDefault()} onClick={() => choose(null)} className="rounded p-0.5 hover:bg-slate-100">
               <X className="size-3.5" />
             </button>
@@ -189,37 +236,56 @@ export function RefSelect({
       </div>
       {open && (
         <ul id={listId} role="listbox" className="absolute z-30 mt-1 max-h-64 w-full min-w-56 overflow-auto rounded border border-slate-200 bg-white py-1 shadow-lg">
-          {samePresent && (
-            <li
-              id={`${listId}-0`}
-              role="option"
-              aria-selected={hi === 0}
-              onMouseDown={(e) => e.preventDefault()}
-              onMouseEnter={() => setHi(0)}
-              onClick={() => choose({ id: sameAs!.id, label: sameAs!.idLabel ?? sameAs!.label }, true)}
-              className={`cursor-pointer px-3 py-1.5 font-medium text-brand-700 italic ${hi === 0 ? 'bg-brand-50' : 'hover:bg-brand-50'}`}
-            >
-              — same as {sameAs!.label.toLowerCase()} —
-            </li>
-          )}
+          {entries.map((en, i) => {
+            const item = (body: React.ReactNode, cls = '') => (
+              <li
+                id={`${listId}-${i}`}
+                role="option"
+                aria-selected={i === hi}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setHi(i)}
+                onClick={() => pickEntry(en, true)}
+                className={`flex cursor-pointer items-center justify-between gap-3 px-3 py-1.5 ${i === hi ? 'bg-brand-50 text-brand-900' : 'hover:bg-brand-50'} ${cls}`}
+              >
+                {body}
+              </li>
+            );
+            return (
+              <Fragment key={en.kind === 'opt' ? en.o.id : `${en.kind}-${i}`}>
+                {/* status line sits right above the master results */}
+                {i === offset && en.kind !== 'opt' && !search.isLoading && (
+                  <li className="px-3 py-1.5 text-slate-400">{options.length === 0 ? (freeText && term ? 'Not in the list' : 'No matches') : null}</li>
+                )}
+                {i === firstPrev && en.kind === 'prev' && (
+                  <li className="flex items-center gap-1 border-t border-slate-100 px-3 pt-1.5 pb-0.5 text-[11px] font-medium tracking-wide text-slate-400 uppercase">
+                    <History className="size-3" /> Typed before
+                  </li>
+                )}
+                {en.kind === 'same' && item(<span>— same as {sameAs!.label.toLowerCase()} —</span>, 'font-medium text-brand-700 italic')}
+                {en.kind === 'opt' &&
+                  item(
+                    <>
+                      <span className="truncate">{en.o.label}</span>
+                      {en.o.sub && <span className="shrink-0 font-mono text-[11.5px] text-slate-400">{en.o.sub}</span>}
+                    </>,
+                    en.o.id === value ? 'font-medium' : '',
+                  )}
+                {en.kind === 'prev' && item(<span className="truncate">{en.t}</span>)}
+                {en.kind === 'text' &&
+                  item(
+                    <span className="flex min-w-0 items-center gap-1.5 text-amber-800">
+                      <PenLine className="size-3.5 shrink-0" />
+                      <span className="truncate">
+                        Use “{en.t}” <span className="text-slate-400">— only on this document</span>
+                      </span>
+                    </span>,
+                    'border-t border-slate-100',
+                  )}
+              </Fragment>
+            );
+          })}
           {search.isLoading && <li className="px-3 py-1.5 text-slate-400">Searching…</li>}
-          {!search.isLoading && options.length === 0 && !canCreate && <li className="px-3 py-1.5 text-slate-400">No matches</li>}
-          {!search.isLoading && options.length === 0 && canCreate && <li className="px-3 py-1.5 text-slate-400">No matches — add a new one below</li>}
-          {options.map((o, i) => (
-            <li
-              key={o.id}
-              id={`${listId}-${i + offset}`}
-              role="option"
-              aria-selected={i + offset === hi}
-              onMouseDown={(e) => e.preventDefault()}
-              onMouseEnter={() => setHi(i + offset)}
-              onClick={() => choose(o, true)}
-              className={`flex cursor-pointer justify-between gap-3 px-3 py-1.5 ${i + offset === hi ? 'bg-brand-50 text-brand-900' : ''} ${o.id === value ? 'font-medium' : ''}`}
-            >
-              <span className="truncate">{o.label}</span>
-              {o.sub && <span className="shrink-0 font-mono text-[11.5px] text-slate-400">{o.sub}</span>}
-            </li>
-          ))}
+          {!search.isLoading && entries.length === offset && <li className="px-3 py-1.5 text-slate-400">{canCreate ? 'No matches — add a new one below' : 'No matches'}</li>}
           {canCreate && (
             <li className="sticky bottom-0 border-t border-slate-100 bg-white">
               <button
@@ -306,6 +372,7 @@ function CreateMaster({ entity, initialName, onClose, onCreated }: { entity: str
           values={values}
           labels={labelMap}
           errors={errors}
+          suggestFrom={{ key: entity }}
           onChange={(n, v, l) => {
             setValues((s) => ({ ...s, [n]: v }));
             if (l !== undefined) setLabelMap((s) => ({ ...s, [n]: l }));

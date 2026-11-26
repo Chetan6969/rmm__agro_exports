@@ -105,7 +105,7 @@ export async function misReport(tx: Tx, report: string, f: MisFilter): Promise<{
     data = await rows(
       tx,
       sql`select ci.document_number as number, to_char(ci.document_date,'YYYY-MM-DD') as date,
-                  coalesce(cust.name,'-') as buyer, coalesce(co.name,'') as country, coalesce(cur.code,'') as currency,
+                  coalesce(cust.name, ci.buyer_id_text, '-') as buyer, coalesce(co.name,'') as country, coalesce(cur.code,'') as currency,
                   coalesce(ci.incoterm,'') as incoterm,
                   coalesce((select sum(l.quantity_mt) from commercial_invoice_lines l where l.document_id=ci.id),0)::text as qty_mt,
                   ci.invoice_total::text as total, coalesce(pp.paid,0)::text as received,
@@ -121,7 +121,7 @@ export async function misReport(tx: Tx, report: string, f: MisFilter): Promise<{
     data = await rows(
       tx,
       sql`select ci.document_number as number, to_char(ci.document_date,'YYYY-MM-DD') as date,
-                  coalesce(cust.name,'-') as buyer, coalesce(p.name,'') as product, coalesce(p.variety,'') as variety,
+                  coalesce(cust.name, ci.buyer_id_text, '-') as buyer, coalesce(p.name, l.product_id_text, '') as product, coalesce(p.variety,'') as variety,
                   coalesce(l.hs_code,'') as hs_code, coalesce(l.no_of_bags,0)::text as bags,
                   l.quantity_mt::text as qty_mt, l.rate_per_mt::text as rate, l.amount::text as amount, coalesce(cur.code,'') as currency
            from commercial_invoice_lines l
@@ -135,7 +135,7 @@ export async function misReport(tx: Tx, report: string, f: MisFilter): Promise<{
     data = await rows(
       tx,
       sql`select pi.document_number as number, to_char(pi.document_date,'YYYY-MM-DD') as date,
-                  coalesce(cust.name,'-') as buyer, coalesce(co.name,'') as country, coalesce(cur.code,'') as currency,
+                  coalesce(cust.name, pi.buyer_id_text, '-') as buyer, coalesce(co.name,'') as country, coalesce(cur.code,'') as currency,
                   pi.total_quantity_mt::text as qty_mt, pi.grand_total::text as total, pi.status
            from proforma_invoices pi
            left join customers cust on cust.id=pi.buyer_id
@@ -147,7 +147,7 @@ export async function misReport(tx: Tx, report: string, f: MisFilter): Promise<{
     data = await rows(
       tx,
       sql`select to_char(p.payment_date,'YYYY-MM-DD') as date, ci.document_number as number,
-                  coalesce(cust.name,'-') as buyer, p.amount::text as amount, coalesce(cur.code,'') as currency,
+                  coalesce(cust.name, ci.buyer_id_text, '-') as buyer, p.amount::text as amount, coalesce(cur.code,'') as currency,
                   coalesce(p.mode,'') as mode, coalesce(p.reference,'') as reference
            from payments p
            join commercial_invoices ci on ci.id=p.commercial_invoice_id
@@ -158,7 +158,7 @@ export async function misReport(tx: Tx, report: string, f: MisFilter): Promise<{
   } else if (def.key === 'shipments') {
     data = await rows(
       tx,
-      sql`select pi.document_number as order_no, coalesce(cust.name,'-') as buyer, s.market, s.status,
+      sql`select pi.document_number as order_no, coalesce(cust.name, pi.buyer_id_text, '-') as buyer, s.market, s.status,
                   s.quantity_mt::text as qty_mt, s.container_count::text as containers,
                   to_char(s.target_ship_date,'YYYY-MM-DD') as target_date,
                   coalesce(ob.vessel_name,'') as vessel_name, coalesce(ob.bl_number,'') as bl_number

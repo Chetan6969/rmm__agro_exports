@@ -62,6 +62,16 @@ export interface FieldDef {
   sameAs?: string;
   /** On a reference field: allow creating a new master record from the picker. */
   allowCreate?: boolean;
+  /**
+   * On a document 'ref' field: do NOT offer free text — the value must come from the master
+   * (currency drives money/fx, templates and signatures drive the printed body / image).
+   */
+  noFreeText?: boolean;
+  /**
+   * Set on the auto-added hidden companion of a document 'ref' field ("<ref>Text"): text typed
+   * instead of picking a master record. Stored only on that document; never creates master data.
+   */
+  freeTextOf?: string;
   /** Grid columns the input spans in the form (1–3). */
   span?: 1 | 2 | 3;
   /** Default value for new records when the company has not configured one. */

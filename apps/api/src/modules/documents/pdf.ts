@@ -88,6 +88,13 @@ async function partyOf(tx: Tx, id: unknown): Promise<Party | null> {
   };
 }
 
+/** A party typed as free text on the document (no customer record): print the text as the name. */
+function textParty(text: unknown): Party | null {
+  if (typeof text !== 'string' || !text.trim()) return null;
+  const [name, ...rest] = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  return { name, lines: rest };
+}
+
 async function nameOf(tx: Tx, entity: string, id: unknown): Promise<string | null> {
   if (typeof id !== 'string') return null;
   const t = masterTables[entity];
@@ -116,6 +123,8 @@ export async function loadPrintData(tx: Tx, ctx: RequestContext, key: string, id
   if (typeof doc.bankAccountId === 'string') {
     const b = masterTables.bankAccounts;
     [bank] = (await tx.select().from(b).where(and(eq(b.id, doc.bankAccountId), isNull(b.deletedAt)))) as Row[];
+  } else if (typeof doc.bankAccountIdText === 'string' && doc.bankAccountIdText.trim()) {
+    bank = { freeText: doc.bankAccountIdText.trim() }; // typed on the document, not a bank-account record
   }
   const cur = masterTables.currencies;
   const [currency] = typeof doc.currencyId === 'string' ? await tx.select({ code: cur.code, symbol: cur.symbol }).from(cur).where(eq(cur.id, doc.currencyId)) : [];
@@ -127,9 +136,9 @@ export async function loadPrintData(tx: Tx, ctx: RequestContext, key: string, id
     companyCountry,
     images: { logo, letterhead, footer, signature, seal },
     parties: {
-      buyer: await partyOf(tx, doc.buyerId),
-      consignee: await partyOf(tx, doc.consigneeId),
-      notify: await partyOf(tx, doc.notifyPartyId),
+      buyer: (await partyOf(tx, doc.buyerId)) ?? textParty(doc.buyerIdText),
+      consignee: (await partyOf(tx, doc.consigneeId)) ?? textParty(doc.consigneeIdText),
+      notify: (await partyOf(tx, doc.notifyPartyId)) ?? textParty(doc.notifyPartyIdText),
     },
     bank: bank ?? null,
     currency: { code: str(currency?.code) || '', symbol: str(currency?.symbol) || str(currency?.code) },
@@ -490,6 +499,7 @@ function words(w: Writer, text: unknown) {
 function bankBlock(w: Writer, bank: Row | null, x: number, width: number, y: number): number {
   const by = w.heading('BANK DETAILS (FOR REMITTANCE)', x, width, y);
   if (!bank) return w.kv([['Bank', '-']], x, width, by, 80);
+  if (bank.freeText) return w.kv([['Bank', bank.freeText]], x, width, by, 80);
   return w.kv(
     [
       ['Beneficiary', bank.accountName],

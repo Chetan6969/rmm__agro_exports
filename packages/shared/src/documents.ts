@@ -58,7 +58,7 @@ const docNumber = (label: string): FieldDef => ({
   list: true,
   search: true,
   section: 'Document',
-  help: 'Leave blank to take the next number from Document numbering',
+  help: 'The series part is fixed; type only the number, or leave it blank for the next one',
 });
 const docDate: FieldDef = { name: 'documentDate', label: 'Date', type: 'date', required: true, list: true };
 const status = (options: readonly string[], dflt: string): FieldDef => ({
@@ -71,9 +71,10 @@ const status = (options: readonly string[], dflt: string): FieldDef => ({
   list: true,
 });
 
+// Order on the form follows the printed invoice: Consignee, then Buyer, then Notify party.
 const parties = (buyerRequired: boolean): FieldDef[] => [
-  { name: 'buyerId', label: 'Buyer', type: 'ref', ref: 'customers', required: buyerRequired, list: true, section: 'Parties', span: 2, allowCreate: true },
-  { name: 'consigneeId', label: 'Consignee (if not the buyer)', type: 'ref', ref: 'customers', span: 1, allowCreate: true, sameAs: 'buyerId' },
+  { name: 'consigneeId', label: 'Consignee', type: 'ref', ref: 'customers', section: 'Parties', allowCreate: true, sameAs: 'buyerId', help: 'Leave blank if the consignee is the buyer' },
+  { name: 'buyerId', label: 'Buyer', type: 'ref', ref: 'customers', required: buyerRequired, list: true, allowCreate: true, sameAs: 'consigneeId' },
   { name: 'notifyPartyId', label: 'Notify party', type: 'ref', ref: 'customers', allowCreate: true, sameAs: 'buyerId' },
 ];
 
@@ -86,7 +87,7 @@ const buyerRefs: FieldDef[] = [
 
 const commercial: FieldDef[] = [
   { name: 'incoterm', label: 'Incoterm', type: 'select', options: INCOTERMS, required: true, default: 'FOB', list: true, section: 'Commercial terms' },
-  { name: 'currencyId', label: 'Currency', type: 'ref', ref: 'currencies', required: true, list: true },
+  { name: 'currencyId', label: 'Currency', type: 'ref', ref: 'currencies', required: true, list: true, noFreeText: true },
   {
     name: 'exchangeRate',
     label: 'Exchange rate (₹ per unit)',
@@ -416,8 +417,10 @@ export const DOC_LIST: DocDef[] = [
       status(['ISSUED', CANCELLED], 'ISSUED'),
       { name: 'commercialInvoiceId', label: 'Against commercial invoice', type: 'doc', ref: 'commercialInvoices', required: true, list: true },
       { name: 'oceanBillId', label: 'Ocean bill of lading', type: 'doc', ref: 'oceanBills', list: true, help: 'Vessel / BL / agent details are read from this OBL' },
-      { name: 'certificateTemplateId', label: 'Certificate template', type: 'ref', ref: 'certificateTemplates', required: true, allowCreate: true, list: true, span: 2 },
-      { name: 'signatureId', label: 'Signature', type: 'ref', ref: 'signatures', allowCreate: true, help: 'Signature block at the bottom (company logo prints top-right, like the invoice)' },
+      { name: 'certificateTemplateId', label: 'Certificate template', type: 'ref', ref: 'certificateTemplates', required: true, allowCreate: true, list: true, span: 2, noFreeText: true },
+      // Retired: certificates now print the company logo like the invoice. Kept hidden so the column (and old data) stays.
+      { name: 'letterheadId', label: 'Letterhead', type: 'ref', ref: 'letterheads', hidden: true, noFreeText: true },
+      { name: 'signatureId', label: 'Signature', type: 'ref', ref: 'signatures', allowCreate: true, noFreeText: true, help: 'Signature block at the bottom (company logo prints top-right, like the invoice)' },
       ...parties(true),
       { name: 'remark', label: 'Remark (printed under the body)', type: 'textarea', span: 2 },
     ],
@@ -425,6 +428,28 @@ export const DOC_LIST: DocDef[] = [
     totals: [],
   },
 ];
+
+/** Name of the hidden free-text companion of a document 'ref' field ("buyerId" → "buyerIdText"). */
+export const freeTextName = (refField: string) => `${refField}Text`;
+
+/**
+ * Every document 'ref' field (unless `noFreeText` or hidden) gets a hidden text companion so the user
+ * can type a value that is not in the dropdown. It is stored only on that document (no master record).
+ */
+function withFreeText(fields: FieldDef[]): FieldDef[] {
+  const out: FieldDef[] = [];
+  for (const f of fields) {
+    out.push(f);
+    if (f.type === 'ref' && !f.noFreeText && !f.hidden) {
+      out.push({ name: freeTextName(f.name), label: f.label, type: 'text', maxLength: 300, hidden: true, freeTextOf: f.name });
+    }
+  }
+  return out;
+}
+for (const d of DOC_LIST) {
+  d.header = withFreeText(d.header);
+  d.lines = withFreeText(d.lines);
+}
 
 export const DOCS: Record<DocKey, DocDef> = Object.fromEntries(DOC_LIST.map((d) => [d.key, d])) as Record<DocKey, DocDef>;
 

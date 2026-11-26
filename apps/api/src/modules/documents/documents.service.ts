@@ -17,6 +17,7 @@ import {
   CONTAINER_FIELDS,
   DOC_LIST,
   documentValue,
+  freeTextName,
   getDoc,
   getEntity,
   inheritedFields,
@@ -39,7 +40,7 @@ import { audit } from '../../core/audit.js';
 import { can, requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
 import { badRequest, conflict, forbidden, notFound } from '../../core/errors.js';
 import { shipments } from '../../db/schema/shipments.js';
-import { allocateNumber } from '../numbering.js';
+import { allocateNumber, noteTypedNumber } from '../numbering.js';
 
 type Row = Record<string, unknown>;
 type Action = 'view' | 'create' | 'edit' | 'delete' | 'print' | 'export';
@@ -64,11 +65,31 @@ const asEntity = (key: string, fields: FieldDef[]) => ({ key, fields }) as unkno
 const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f-]{36}$/i.test(v);
 
 // ------------------------------------------------------------------ validation
+/**
+ * A required 'ref' that has a free-text companion is satisfied by either the picked record or the
+ * typed text. Returns the fields with those refs relaxed, plus a refinement that enforces "one of".
+ */
+function freeTextRequired(fields: FieldDef[]) {
+  const withText = new Set(fields.filter((f) => f.freeTextOf).map((f) => f.freeTextOf!));
+  const needed = fields.filter((f) => f.required && withText.has(f.name));
+  const relaxed = fields.map((f) => (f.required && withText.has(f.name) ? { ...f, required: false } : f));
+  const refine = (v: Record<string, unknown>, rc: z.RefinementCtx) => {
+    for (const f of needed) {
+      if (!v[f.name] && !v[freeTextName(f.name)]) rc.addIssue({ code: 'custom', path: [f.name], message: `${f.label} is required` });
+    }
+  };
+  return { relaxed, refine };
+}
+
 function payloadSchema(def: DocDef) {
-  const header = buildEntitySchema(asEntity(def.key, def.header), 'create');
-  const line = buildEntitySchema(asEntity(`${def.key}.lines`, def.lines), 'create').extend({
-    sourceLineId: z.uuid().nullable().optional(),
-  });
+  const h = freeTextRequired(def.header);
+  const l = freeTextRequired(def.lines);
+  const header = buildEntitySchema(asEntity(def.key, h.relaxed), 'create').superRefine(h.refine);
+  const line = buildEntitySchema(asEntity(`${def.key}.lines`, l.relaxed), 'create')
+    .extend({
+      sourceLineId: z.uuid().nullable().optional(),
+    })
+    .superRefine(l.refine);
   const term = z.object({
     tcTemplateId: z.uuid().nullable().optional(),
     content: z.string().trim().min(1, 'Term text is empty').max(4000),
@@ -95,6 +116,12 @@ function parsePayload(def: DocDef, body: unknown) {
   for (const l of parsed.lines as Row[]) {
     for (const f of def.lines) if ((l[f.name] === undefined || l[f.name] === null) && f.default !== undefined) l[f.name] = f.default;
   }
+  // A picked master record wins over typed free text: never store both.
+  const clearText = (fields: FieldDef[], row: Row) => {
+    for (const f of fields) if (f.freeTextOf && row[f.freeTextOf]) row[f.name] = null;
+  };
+  clearText(def.header, parsed.header as Row);
+  for (const l of parsed.lines as Row[]) clearText(def.lines, l);
   if (!def.containers) parsed.containers = [];
   return parsed as { header: Row; lines: Row[]; terms: { tcTemplateId?: string | null; content: string }[]; containers: Row[]; version?: number };
 }
@@ -132,6 +159,12 @@ async function refLabels(tx: Tx, fields: FieldDef[], rows: Row[]) {
     }
     const map = new Map(pairs.map((p) => [p.id as string, p.label as string]));
     for (const r of rows) if (r[f.name]) r[`${f.name}Label`] = map.get(r[f.name] as string) ?? '(not accessible)';
+  }
+  // Free text typed instead of a master record shows (and prints) as the label.
+  for (const f of fields) {
+    if (f.type !== 'ref') continue;
+    const t = freeTextName(f.name);
+    for (const r of rows) if (!r[f.name] && typeof r[t] === 'string' && r[t]) r[`${f.name}Label`] = r[t];
   }
   return rows;
 }
@@ -305,7 +338,10 @@ export async function createDocument(tx: Tx, ctx: RequestContext, key: string, b
   const companyId = requireCompany(ctx);
   const { p, totals, words } = await prepare(tx, def, body);
   const typed = (p.header.documentNumber as string | null)?.trim();
-  if (typed) await assertNumberFree(tx, def, companyId, typed);
+  if (typed) {
+    await assertNumberFree(tx, def, companyId, typed);
+    await noteTypedNumber(tx, ctx, def.numbering, p.header.documentDate as string, typed);
+  }
   const documentNumber = typed || (await allocateNumber(tx, ctx, def.numbering, p.header.documentDate as string));
   const [row] = (await tx
     .insert(t.header)
@@ -327,7 +363,10 @@ export async function updateDocument(tx: Tx, ctx: RequestContext, key: string, i
   if (version !== before.version) throw conflict(`This ${def.label.toLowerCase()} was changed by another user while you were editing`);
   const { p, totals, words } = await prepare(tx, def, body, id);
   const typed = (p.header.documentNumber as string | null)?.trim() || (before.documentNumber as string);
-  if (typed !== before.documentNumber) await assertNumberFree(tx, def, companyId, typed, id);
+  if (typed !== before.documentNumber) {
+    await assertNumberFree(tx, def, companyId, typed, id);
+    await noteTypedNumber(tx, ctx, def.numbering, p.header.documentDate as string, typed);
+  }
   if (!def.letter) await checkChildrenFit(tx, def, id, totals.totalQuantityMt, p.header.status);
   const [row] = (await tx
     .update(t.header)
@@ -582,7 +621,8 @@ export async function exportDocuments(tx: Tx, ctx: RequestContext, key: string, 
     all.push(...res.rows);
     if (all.length >= res.total || !res.rows.length) break;
   }
-  const fields = def.header.filter((f) => f.type !== 'file' && f.type !== 'textarea' && f.type !== 'boolean');
+  // Hidden fields (retired columns, free-text companions) stay off the CSV; free text shows via the ref's label.
+  const fields = def.header.filter((f) => !f.hidden && f.type !== 'file' && f.type !== 'textarea' && f.type !== 'boolean');
   const header = [...fields.map((f) => f.label), ...def.totals.map((x) => x.label)];
   const out = [header.map(csvCell).join(',')];
   for (const r of all) {

@@ -21,7 +21,15 @@ import {
 } from 'drizzle-orm/pg-core';
 import { CONTAINER_FIELDS } from '@rmm/shared';
 import { id, recordColumns } from './columns.js';
-import { column, masterTables, snake, type AnyTable } from './masters.js';
+import { column as masterColumn, masterTables, snake, type AnyTable } from './masters.js';
+import type { FieldDef } from '@rmm/shared';
+
+/**
+ * A required ref that has a free-text companion may be stored as text only, so its column must
+ * allow NULL; "record or text" is enforced by the document validation instead.
+ */
+const docColumn = (fields: FieldDef[], f: FieldDef) =>
+  masterColumn(f.type === 'ref' && f.required && fields.some((x) => x.freeTextOf === f.name) ? { ...f, required: false } : f);
 
 export interface DocTables {
   header: AnyTable;
@@ -42,7 +50,7 @@ function headerTable(def: DocDef): AnyTable {
   for (const f of def.header) {
     if (f.name === 'documentNumber') cols[f.name] = text('document_number').notNull();
     else if (f.type === 'doc') cols[f.name] = uuid(snake(f.name)).references((): AnyPgColumn => docTables[f.ref as DocKey].header.id, { onDelete: 'restrict' });
-    else cols[f.name] = column(f);
+    else cols[f.name] = docColumn(def.header, f);
   }
   for (const t of def.totals) {
     if (!cols[t.name]) cols[t.name] = numeric(snake(t.name), { precision: 18, scale: t.scale }).notNull().default('0');
@@ -84,7 +92,7 @@ for (const def of DOC_LIST) {
   let lines: AnyTable | null = null;
   if (def.linesTable && def.lines.length) {
     const lineCols: Record<string, PgColumnBuilderBase> = {};
-    for (const f of def.lines) lineCols[f.name] = column(f);
+    for (const f of def.lines) lineCols[f.name] = docColumn(def.lines, f);
     lineCols.amount = numeric('amount', { precision: 15, scale: 2 }).notNull().default('0');
     /** The parent document's line this one was generated from (balance tracking). */
     lineCols.sourceLineId = uuid('source_line_id');
@@ -99,7 +107,7 @@ for (const def of DOC_LIST) {
   let containers: AnyTable | null = null;
   if (def.containers) {
     const containerCols: Record<string, PgColumnBuilderBase> = {};
-    for (const f of CONTAINER_FIELDS) containerCols[f.name] = column(f);
+    for (const f of CONTAINER_FIELDS) containerCols[f.name] = masterColumn(f);
     containers = childTable(`${def.table.replace(/s$/, '')}_containers`, header, containerCols);
   }
   docTables[def.key] = { header, lines, terms, containers };

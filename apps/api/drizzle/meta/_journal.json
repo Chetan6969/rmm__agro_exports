@@ -127,6 +127,13 @@
       "when": 1795599080825,
       "tag": "0017_freight_quotations",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795690165876,
+      "tag": "0018_free_text_refs",
+      "breakpoints": true
     }
   ]
 }

@@ -22,8 +22,10 @@ import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Lock, Package, Pencil
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
+import { DocNumberInput } from '../components/DocNumberInput';
 import { EntityForm, type Values } from '../components/EntityForm';
 import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
+import { SuggestInput, type SuggestSource } from '../components/SuggestInput';
 import { ReceiptsPanel } from '../components/ReceiptsPanel';
 import { RefSelect } from '../components/RefSelect';
 import { ConfirmDialog, Modal, UnsavedDialog } from '../components/Modal';
@@ -467,7 +469,28 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           <DraftBanner cache={cache} />
           {!isNew && record?.children && <ChildrenPanel def={def} id={id} items={record.children} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           {!isNew && !!record?.letterChildren?.length && <LetterChildrenPanel id={id} items={record.letterChildren} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
-          <EntityForm def={asEntity(def.key, def.header)} values={header} labels={labels} errors={errors} readOnly={readOnly} onChange={onHeaderChange} />
+          <EntityForm
+            def={asEntity(def.key, def.header)}
+            values={header}
+            labels={labels}
+            errors={errors}
+            readOnly={readOnly}
+            onChange={onHeaderChange}
+            suggestFrom={{ key: def.key, part: 'header' }}
+            renderField={(f) =>
+              f.name === 'documentNumber' ? (
+                <DocNumberInput
+                  docKey={def.key}
+                  date={(header.documentDate as string) ?? null}
+                  value={(header.documentNumber as string) ?? null}
+                  onChange={(v) => onHeaderChange('documentNumber', v)}
+                  readOnly={readOnly}
+                  isNew={isNew}
+                  invalid={!!errors.documentNumber}
+                />
+              ) : undefined
+            }
+          />
           {rateNote && <div className="-mt-2 text-[12px] text-slate-500">{rateNote}</div>}
 
           {!!def.lines.length && (
@@ -568,7 +591,7 @@ function blankLine(def: DocDef): Line {
 // ---------------------------------------------------------------- packing groups
 // Packing rows that belong to the same product card share a `packGroup` number.
 // Fields that describe the product (not the packing) are the same across the group.
-const SHARED_LINE_FIELDS = ['productId', 'brand', 'cropYear', 'specifications'];
+const SHARED_LINE_FIELDS = ['productId', 'productIdText', 'brand', 'cropYear', 'specifications'];
 
 /** Give loaded lines stable client group numbers (existing single lines stay separate). */
 function withGroups(def: DocDef, rows: Values[]): Line[] {
@@ -758,8 +781,16 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
   const showRate = def.lines.some((f) => f.name === 'ratePerMt');
   const rateRequired = def.lines.find((f) => f.name === 'ratePerMt')?.required ?? false;
   const base = rows[0] ?? blankLine(def);
-  const [shared, setShared] = useState<Values>(() => ({ productId: base.productId ?? null, brand: base.brand ?? null, cropYear: base.cropYear ?? null, specifications: base.specifications ?? null }));
-  const [productLabel, setProductLabel] = useState<string | null>(base._labels?.productId ?? null);
+  const [shared, setShared] = useState<Values>(() => ({
+    productId: base.productId ?? null,
+    productIdText: base.productIdText ?? null,
+    brand: base.brand ?? null,
+    cropYear: base.cropYear ?? null,
+    specifications: base.specifications ?? null,
+  }));
+  const [productLabel, setProductLabel] = useState<string | null>(base._labels?.productId ?? (base.productIdText as string | null) ?? null);
+  /** "Used before" source for a product-line box. */
+  const ls = (field: string): SuggestSource => ({ key: def.key, part: 'lines', field });
   const [packs, setPacks] = useState<Line[]>(() => (rows.length ? rows.map((r) => ({ ...r, _labels: { ...r._labels } })) : [blankLine(def)]));
   const [error, setError] = useState<string | null>(null);
 
@@ -848,8 +879,8 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
   };
 
   const submit = (again: boolean) => {
-    if (!shared.productId) {
-      setError('Pick a product.');
+    if (!shared.productId && !shared.productIdText) {
+      setError('Pick a product, or type one.');
       return;
     }
     for (const [i, p] of packs.entries()) {
@@ -896,19 +927,40 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <div className="sm:col-span-2">
             <FieldLabel>Variety *</FieldLabel>
-            <RefSelect entity="products" value={(shared.productId as string) ?? null} label={productLabel} allowCreate onChange={(v, l) => void onProduct(v, l)} />
+            <RefSelect
+              entity="products"
+              value={(shared.productId as string) ?? null}
+              label={shared.productId ? productLabel : null}
+              allowCreate
+              onChange={(v, l) => void onProduct(v, l)}
+              freeText={{
+                value: (shared.productIdText as string | null) ?? null,
+                onChange: (t) => {
+                  setShared((s) => ({ ...s, productIdText: t }));
+                  if (t) setProductLabel(t);
+                },
+                suggest: ls('productIdText'),
+              }}
+            />
           </div>
           <div>
             <FieldLabel>Brand</FieldLabel>
-            <input className="field-input" value={(shared.brand as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, brand: e.target.value }))} placeholder="e.g. AL WALIMAH" />
+            <SuggestInput className="field-input" source={ls('brand')} value={(shared.brand as string) ?? ''} onValue={(v) => setShared((s) => ({ ...s, brand: v }))} placeholder="e.g. AL WALIMAH" />
           </div>
           <div>
             <FieldLabel>Crop year</FieldLabel>
-            <input className="field-input" value={(shared.cropYear as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, cropYear: e.target.value }))} />
+            <SuggestInput className="field-input" source={ls('cropYear')} value={(shared.cropYear as string) ?? ''} onValue={(v) => setShared((s) => ({ ...s, cropYear: v }))} />
           </div>
           <div className="sm:col-span-4">
             <FieldLabel>Description / specification</FieldLabel>
-            <textarea className="field-input resize-y" rows={2} value={(shared.specifications as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, specifications: e.target.value }))} />
+            <SuggestInput
+              multiline
+              rows={2}
+              className="field-input resize-y"
+              source={ls('specifications')}
+              value={(shared.specifications as string) ?? ''}
+              onValue={(v) => setShared((s) => ({ ...s, specifications: v }))}
+            />
           </div>
         </div>
 
@@ -928,7 +980,19 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="col-span-2">
                   <FieldLabel>Packing type</FieldLabel>
-                  <RefSelect entity="packingTypes" value={(p.packingTypeId as string) ?? null} label={(p._labels?.packingTypeId as string) ?? null} allowCreate onChange={(v, l) => void onPacking(i, v, l)} />
+                  <RefSelect
+                    entity="packingTypes"
+                    value={(p.packingTypeId as string) ?? null}
+                    label={p.packingTypeId ? ((p._labels?.packingTypeId as string) ?? null) : null}
+                    allowCreate
+                    onChange={(v, l) => void onPacking(i, v, l)}
+                    freeText={{
+                      value: (p.packingTypeIdText as string | null) ?? null,
+                      // clearing the text (a record was picked) must not wipe the picked record's label
+                      onChange: (t) => setPack(i, { packingTypeIdText: t }, t ? { packingTypeId: t } : undefined),
+                      suggest: ls('packingTypeIdText'),
+                    }}
+                  />
                   {(p as Values)._packing ? (
                     <p className="mt-0.5 text-[11px] text-slate-400">
                       Bag: {String((p._packing as Values).netWeightKg)} kg net · {Math.round(Number((p._packing as Values).tareWeightKg ?? 0) * 1000)} g empty · bags &amp; gross auto
@@ -937,15 +1001,15 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
                 </div>
                 <div className="col-span-2">
                   <FieldLabel>Packing details (printed)</FieldLabel>
-                  <input className="field-input" value={(p.packingText as string) ?? ''} onChange={(e) => setPack(i, { packingText: e.target.value })} placeholder="e.g. 30 KG BOPP bags" />
+                  <SuggestInput className="field-input" source={ls('packingText')} value={(p.packingText as string) ?? ''} onValue={(v) => setPack(i, { packingText: v })} placeholder="e.g. 30 KG BOPP bags" />
                 </div>
                 <div className="col-span-2 sm:col-span-4">
                   <FieldLabel>Extra printed note (optional)</FieldLabel>
-                  <input className="field-input" value={(p.packingNote as string) ?? ''} onChange={(e) => setPack(i, { packingNote: e.target.value })} placeholder="extra line printed under this packing" />
+                  <SuggestInput className="field-input" source={ls('packingNote')} value={(p.packingNote as string) ?? ''} onValue={(v) => setPack(i, { packingNote: v })} placeholder="extra line printed under this packing" />
                 </div>
                 <div>
                   <FieldLabel>HS code</FieldLabel>
-                  <input className="field-input" value={(p.hsCode as string) ?? ''} onChange={(e) => setPack(i, { hsCode: e.target.value })} />
+                  <SuggestInput className="field-input" source={ls('hsCode')} value={(p.hsCode as string) ?? ''} onValue={(v) => setPack(i, { hsCode: v })} />
                 </div>
                 <div>
                   <FieldLabel>Bags</FieldLabel>
@@ -977,7 +1041,13 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
                 {showRate && (
                   <div>
                     <FieldLabel>Rate per MT{rateRequired ? ' *' : ''}</FieldLabel>
-                    <input className="field-input text-right tabular-nums" inputMode="decimal" value={String(p.ratePerMt ?? '')} onChange={(e) => setPack(i, { ratePerMt: e.target.value })} />
+                    <SuggestInput
+                      className="field-input text-right tabular-nums"
+                      inputMode="decimal"
+                      source={ls('ratePerMt')}
+                      value={String(p.ratePerMt ?? '')}
+                      onValue={(v) => setPack(i, { ratePerMt: v })}
+                    />
                   </div>
                 )}
                 <div className="flex items-end justify-between gap-2 sm:col-span-3">
