@@ -126,10 +126,16 @@ function parsePayload(def: DocDef, body: unknown) {
   return parsed as { header: Row; lines: Row[]; terms: { tcTemplateId?: string | null; content: string }[]; containers: Row[]; version?: number };
 }
 
-/** Every referenced master must exist and be visible to this company (RLS applies). */
-async function checkRefs(tx: Tx, fields: FieldDef[], rows: Row[], where: string) {
+type KeptRefs = Map<string, Set<string>>;
+
+/**
+ * Every NEWLY chosen master must exist and be visible to this company (RLS applies). Records the
+ * document already pointed at (`kept`) stay valid even if that master was deleted later — deleting a
+ * master never locks the documents that used it.
+ */
+async function checkRefs(tx: Tx, fields: FieldDef[], rows: Row[], where: string, kept?: KeptRefs) {
   for (const f of fields.filter((x) => x.type === 'ref')) {
-    const ids = [...new Set(rows.map((r) => r[f.name]).filter(isUuid))];
+    const ids = [...new Set(rows.map((r) => r[f.name]).filter(isUuid))].filter((id) => !kept?.get(f.name)?.has(id));
     if (!ids.length) continue;
     const target = masterTables[f.ref!];
     const hits = await tx.select({ id: target.id }).from(target).where(and(inArray(target.id, ids), isNull(target.deletedAt)));
@@ -302,10 +308,24 @@ function checkContainers(p: ReturnType<typeof parsePayload>) {
   }
 }
 
+/** Master ids this saved document already references, per field (header and lines separately). */
+async function savedRefs(tx: Tx, def: DocDef, id: string): Promise<{ header: KeptRefs; lines: KeptRefs }> {
+  const t = docTables[def.key];
+  const collect = (fields: FieldDef[], rows: Row[]) => {
+    const m: KeptRefs = new Map();
+    for (const f of fields.filter((x) => x.type === 'ref')) m.set(f.name, new Set(rows.map((r) => r[f.name]).filter(isUuid)));
+    return m;
+  };
+  const head = (await tx.select().from(t.header).where(eq(t.header.id, id))) as Row[];
+  const lines = t.lines ? ((await tx.select().from(t.lines).where(eq(t.lines.documentId, id))) as Row[]) : [];
+  return { header: collect(def.header, head), lines: collect(def.lines, lines) };
+}
+
 async function prepare(tx: Tx, def: DocDef, body: unknown, selfId?: string) {
   const p = parsePayload(def, body);
-  await checkRefs(tx, def.header, [p.header], '');
-  await checkRefs(tx, def.lines, p.lines, 'Line: ');
+  const kept = selfId ? await savedRefs(tx, def, selfId) : undefined;
+  await checkRefs(tx, def.header, [p.header], '', kept?.header);
+  await checkRefs(tx, def.lines, p.lines, 'Line: ', kept?.lines);
   for (const l of p.lines) {
     if (!isPositive(l.quantityMt as string)) throw badRequest('Every line needs a net weight above zero', { fields: { quantityMt: 'Must be above 0' } });
   }
