@@ -996,11 +996,20 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
                       suggest: ls('packingTypeIdText'),
                     }}
                   />
-                  {(p as Values)._packing ? (
-                    <p className="mt-0.5 text-[11px] text-slate-400">
-                      Bag: {String((p._packing as Values).netWeightKg)} kg net · {Math.round(Number((p._packing as Values).tareWeightKg ?? 0) * 1000)} g empty · bags &amp; gross auto
-                    </p>
-                  ) : null}
+                  {(p as Values)._packing
+                    ? (() => {
+                        const pk = p._packing as Values;
+                        const rice = Number(pk.netWeightKg ?? 0);
+                        const bag = Number(pk.tareWeightKg ?? 0);
+                        const kg = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 3 });
+                        return (
+                          <p className="mt-0.5 text-[11px] text-slate-400">
+                            1 bag = {kg(rice)} kg rice + {kg(bag)} kg bag = <b className="text-slate-500">{kg(rice + bag)} kg gross</b>
+                            {pk.containerCapacityMt ? ` · ${kg(Number(pk.containerCapacityMt))} MT per container` : ''} · bags, gross &amp; containers auto
+                          </p>
+                        );
+                      })()
+                    : null}
                 </div>
                 <div className="col-span-2">
                   <FieldLabel>Packing details (printed)</FieldLabel>
