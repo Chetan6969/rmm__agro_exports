@@ -100,19 +100,20 @@ export function Sidebar({
 
   const link = (i: NavItem, nested: boolean) => {
     const Icon = i.icon;
+    // our own rule (most specific screen wins), not NavLink's prefix match: on /freight/new only "New enquiry" lights up
+    const a = isActive(i, pathname);
     return (
       <NavLink
         key={i.id}
         to={i.path}
         end={i.path === '/'}
         onClick={onCloseDrawer}
-        className={({ isActive: a }) =>
-          `group/link relative flex items-center gap-2.5 rounded-md py-1.5 pr-2 text-[13px] transition-colors ${nested ? 'pl-8' : 'pl-2.5'} ${
-            a ? 'bg-white/10 font-medium text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
-          }`
-        }
+        aria-current={a ? 'page' : 'false'}
+        className={`group/link relative flex items-center gap-2.5 rounded-md py-1.5 pr-2 text-[13px] transition-colors ${nested ? 'pl-8' : 'pl-2.5'} ${
+          a ? 'bg-white/10 font-medium text-white' : 'text-slate-400 hover:bg-white/5 hover:text-slate-100'
+        }`}
       >
-        {({ isActive: a }) => (
+        {() => (
           <>
             {a && <span className={`absolute top-1.5 bottom-1.5 left-0 w-[3px] rounded-r ${companyTone(session.activeCompany?.code).accent}`} aria-hidden />}
             {Icon && !nested && <Icon className="size-4 shrink-0" />}
