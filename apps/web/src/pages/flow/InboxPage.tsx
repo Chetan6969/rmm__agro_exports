@@ -4,6 +4,7 @@ import { FileUp, Inbox, Search } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
+import { Chip, OrderGroups } from '../../components/OrderGroups';
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../components/ui';
 import { api, qs } from '../../lib/api';
 import { useHotkeys } from '../../lib/hotkeys';
@@ -44,10 +45,10 @@ export const STATUS_LABEL: Record<string, string> = { QUEUED: 'Waiting', READING
 const METHOD: Record<string, string> = { text: 'Text', ocr: 'OCR', mixed: 'Text + OCR', none: '—' };
 
 /** Upload any number of files to the inbox; they are read on the server in the background. */
-export async function uploadToInbox(list: FileList | File[]) {
+export async function uploadToInbox(list: FileList | File[], into: { orderId?: string; shipmentId?: string } = {}) {
   const fd = new FormData();
   for (const f of Array.from(list)) fd.append('file', f, f.name);
-  const r = await api.post<{ id: string; fileName: string; duplicateOf: string | null; error?: string }[]>('/intake/upload', fd);
+  const r = await api.post<{ id: string; fileName: string; duplicateOf: string | null; error?: string }[]>(`/intake/upload${qs(into)}`, fd);
   const bad = r.filter((x) => x.error);
   const dup = r.filter((x) => x.duplicateOf);
   const ok = r.length - bad.length - dup.length;
@@ -57,37 +58,112 @@ export async function uploadToInbox(list: FileList | File[]) {
   return r;
 }
 
+/** The documents of one order folder (loaded when the folder is opened). */
+function FolderDocs({ orderId, status, kind, search }: { orderId: string | null; status: string; kind: string; search: string }) {
+  const navigate = useNavigate();
+  const q = useQuery({
+    queryKey: ['inbox', 'folder', orderId, status, kind],
+    queryFn: () => api.get<{ rows: InboxRow[] }>(`/intake${qs({ orderId: orderId ?? 'none', status, kind })}`),
+    refetchInterval: (query) => (query.state.data?.rows.some((r) => r.status === 'QUEUED' || r.status === 'READING') ? 2500 : false),
+  });
+  if (q.isLoading) return <Spinner />;
+  if (q.error) return <div className="p-3"><ErrorBox error={q.error} /></div>;
+  const all = q.data?.rows ?? [];
+  const term = search.trim().toLowerCase();
+  // a file-name search narrows the folder; an order / buyer search shows all its documents
+  const hits = term ? all.filter((r) => `${r.fileName} ${r.sourcePath ?? ''} ${r.kind ? intakeKind(r.kind).label : ''}`.toLowerCase().includes(term)) : all;
+  const rows = hits.length ? hits : all;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[13px]">
+        <thead className="text-left text-[12px] text-slate-500">
+          <tr>
+            {['Document', 'Recognised as', 'Read by', 'Lot', 'Status', 'Added'].map((h) => (
+              <th key={h} className="px-3 py-1.5 font-medium">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} onClick={() => navigate(`/inbox/${r.id}`)} className="cursor-pointer border-t border-slate-100 hover:bg-brand-50">
+              <td className="max-w-[360px] px-3 py-2">
+                <Link to={`/inbox/${r.id}`} className="block truncate font-medium text-brand-700 hover:underline" title={r.sourcePath ?? r.fileName}>
+                  {r.fileName}
+                </Link>
+                {r.sourcePath && <span className="block truncate text-[11.5px] text-slate-400">{r.sourcePath}</span>}
+              </td>
+              <td className="px-3 py-2">
+                {r.kind ? intakeKind(r.kind).label : '—'}
+                {r.kindConfidence && r.status !== 'CONFIRMED' && <span className="ml-1 text-[11px] text-slate-400">{Math.round(Number(r.kindConfidence) * 100)}%</span>}
+              </td>
+              <td className="px-3 py-2 text-slate-600">
+                {r.readMethod ? METHOD[r.readMethod] : '—'}
+                {r.ocrConfidence != null && <span className="ml-1 text-[11px] text-slate-400">{r.ocrConfidence}%</span>}
+              </td>
+              <td className="px-3 py-2 text-slate-600">{r.lotNo != null ? `Lot ${r.lotNo}` : '—'}</td>
+              <td className="px-3 py-2">
+                <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status] ?? r.status}</Badge>
+                {r.error && (
+                  <span className="block max-w-56 truncate text-[11.5px] text-red-600" title={r.error}>
+                    {r.error}
+                  </span>
+                )}
+              </td>
+              <td className="px-3 py-2 whitespace-nowrap text-slate-500">{new Date(r.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+interface Folder {
+  orderId: string | null;
+  orderNumber: string | null;
+  buyer: string | null;
+  buyerPoRef: string | null;
+  orderSource: string | null;
+  total: number;
+  toReview: number;
+}
+
 export function InboxPage() {
   const { session, can } = useSession();
   const qc = useQueryClient();
-  const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const status = params.get('status') ?? 'OPEN';
   const kind = params.get('kind') ?? '';
+  const source = params.get('source') ?? '';
   const [search, setSearch] = useState(params.get('search') ?? '');
   const debounced = useDebounced(search);
-  const [sel, setSel] = useState(0);
+  const [page, setPage] = useState(1);
   const [drag, setDrag] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const q = useQuery({
-    queryKey: ['inbox', status, kind, debounced],
-    queryFn: () => api.get<{ rows: InboxRow[]; total: number; counts: Record<string, number> }>(`/intake${qs({ status, kind, search: debounced })}`),
+    queryKey: ['inbox', 'groups', status, kind, source, debounced, page],
+    queryFn: () => api.get<{ groups: Folder[]; total: number; pageSize: number; counts: Record<string, number> }>(`/intake/groups${qs({ status, kind, source, search: debounced, page })}`),
     placeholderData: keepPreviousData,
     enabled: !!session?.activeCompany,
-    refetchInterval: (query) => (query.state.data?.rows.some((r) => r.status === 'QUEUED' || r.status === 'READING') ? 2500 : false),
+    // new uploads appear, and move into their order, while they are being read
+    refetchInterval: (query) => ((query.state.data?.counts.QUEUED ?? 0) + (query.state.data?.counts.READING ?? 0) > 0 ? 2500 : false),
   });
-  const rows = q.data?.rows ?? [];
+  const groups = q.data?.groups ?? [];
   const counts = q.data?.counts ?? {};
   const set = (k: string, v: string) => {
     const n = new URLSearchParams(params);
     if (v) n.set(k, v);
     else n.delete(k);
     setParams(n, { replace: true });
-    setSel(0);
+    setPage(1);
   };
-  useEffect(() => set('search', debounced), [debounced]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (debounced !== (params.get('search') ?? '')) set('search', debounced);
+  }, [debounced]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const upload = async (list: FileList | File[]) => {
     if (!list.length) return;
@@ -105,13 +181,10 @@ export function InboxPage() {
   useHotkeys(
     {
       '/': () => searchRef.current?.focus(),
-      arrowdown: () => setSel((i) => Math.min(i + 1, rows.length - 1)),
-      arrowup: () => setSel((i) => Math.max(i - 1, 0)),
-      enter: () => rows[sel] && navigate(`/inbox/${rows[sel].id}`),
       'alt+u': () => fileRef.current?.click(),
       ...Object.fromEntries(TABS.map((t, i) => [`alt+${i + 1}`, () => set('status', t.key || 'ALL')])),
     },
-    [rows, sel, params],
+    [params],
   );
 
   return (
@@ -130,7 +203,7 @@ export function InboxPage() {
     >
       <PageHeader
         title="Document inbox"
-        subtitle="Drop any document — buyer PO, contract, LC, booking, BL, shipping bill, certificates, test reports. It is read on this server (offline OCR for scans), recognised and matched; you check and confirm."
+        subtitle="New documents land here and are sorted into their order. Open a folder, check each one and confirm."
         actions={
           can('sales.intake', 'create') && (
             <Button variant="primary" icon={<FileUp className="size-3.5" />} loading={uploading} onClick={() => fileRef.current?.click()} shortcut="alt+u">
@@ -146,7 +219,7 @@ export function InboxPage() {
           <input
             ref={searchRef}
             className="field-input pl-7"
-            placeholder="File, PO, invoice, BL no.…  ( / )"
+            placeholder="Order, buyer, file, PO, BL no.…  ( / )"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
@@ -189,71 +262,32 @@ export function InboxPage() {
           <Spinner />
         ) : q.error ? (
           <ErrorBox error={q.error} />
-        ) : !rows.length ? (
+        ) : !groups.length && !source ? (
           <Card className="flex flex-col items-center gap-2 p-10 text-center text-[13px] text-slate-500">
             <Inbox className="size-8 text-slate-300" />
             Nothing here. Drag and drop documents onto this page, or press <b>Upload documents</b> (Alt+U).
           </Card>
         ) : (
-          <Card className="overflow-x-auto">
-            <table className="w-full text-[13px]">
-              <thead className="bg-slate-50 text-left text-[12px] text-slate-500">
-                <tr>
-                  {['Document', 'Recognised as', 'Read by', 'Belongs to', 'Status', 'Added'].map((h) => (
-                    <th key={h} className="px-3 py-2 font-medium">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr
-                    key={r.id}
-                    aria-selected={i === sel}
-                    onClick={() => setSel(i)}
-                    onDoubleClick={() => navigate(`/inbox/${r.id}`)}
-                    ref={(el) => {
-                      if (i === sel) el?.scrollIntoView({ block: 'nearest' });
-                    }}
-                    className={`border-t border-slate-100 ${i === sel ? 'bg-brand-50 outline-2 -outline-offset-2 outline-brand-600/40' : 'hover:bg-slate-50'}`}
-                  >
-                    <td className="max-w-[340px] px-3 py-2">
-                      <Link to={`/inbox/${r.id}`} className="block truncate font-medium text-brand-700 hover:underline" title={r.sourcePath ?? r.fileName}>
-                        {r.fileName}
-                      </Link>
-                      {r.sourcePath && <span className="block truncate text-[11.5px] text-slate-400">{r.sourcePath}</span>}
-                    </td>
-                    <td className="px-3 py-2">
-                      {r.kind ? intakeKind(r.kind).label : '—'}
-                      {r.kindConfidence && r.status !== 'CONFIRMED' && <span className="ml-1 text-[11px] text-slate-400">{Math.round(Number(r.kindConfidence) * 100)}%</span>}
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">
-                      {r.readMethod ? METHOD[r.readMethod] : '—'}
-                      {r.ocrConfidence != null && <span className="ml-1 text-[11px] text-slate-400">{r.ocrConfidence}%</span>}
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">
-                      {r.orderNumber ? (
-                        <>
-                          {r.orderNumber}
-                          {r.lotNo != null && ` · lot ${r.lotNo}`}
-                        </>
-                      ) : (
-                        <span className="text-slate-400">not matched</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge tone={STATUS_TONE[r.status]}>{STATUS_LABEL[r.status] ?? r.status}</Badge>
-                      {r.error && <span className="block max-w-56 truncate text-[11.5px] text-red-600" title={r.error}>{r.error}</span>}
-                    </td>
-                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{new Date(r.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <OrderGroups
+            groups={groups}
+            total={q.data!.total}
+            pageSize={q.data!.pageSize}
+            page={page}
+            onPage={setPage}
+            source={source}
+            onSource={(v) => set('source', v)}
+            noOrderLabel="Not matched to an order yet — open, check and confirm"
+            summary={(g) => (
+              <>
+                <Chip>{g.total} document(s)</Chip>
+                {g.toReview > 0 && <Chip tone="amber">{g.toReview} to check</Chip>}
+              </>
+            )}
+          >
+            {(g) => <FolderDocs orderId={g.orderId} status={status} kind={kind} search={debounced} />}
+          </OrderGroups>
         )}
-        <div className="mt-2 text-[12px] text-slate-400 max-md:hidden">/ search · ↑ ↓ choose · Enter open · Alt+U upload · Alt+1–6 tabs · drop files anywhere on the page</div>
+        <div className="mt-2 text-[12px] text-slate-400 max-md:hidden">/ search · Alt+U upload · Alt+1–6 tabs · drop files anywhere on the page</div>
       </div>
     </div>
   );

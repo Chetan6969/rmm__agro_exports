@@ -295,6 +295,7 @@ export async function listShipments(tx: Tx, ctx: RequestContext) {
       piId: shipments.proformaInvoiceId,
       proformaInvoiceId: shipments.proformaInvoiceId,
       piNumber: pi.documentNumber,
+      orderSource: pi.orderSource,
       buyer: cust.name,
       currency: cur.code,
       productionOrderId: shipments.productionOrderId,

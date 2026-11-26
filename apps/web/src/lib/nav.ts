@@ -19,9 +19,11 @@ import {
   Contact,
   Inbox,
   Radar,
+  ReceiptText,
   ShoppingCart,
   Workflow,
   FilePlus2,
+  FolderOpen,
   Mail,
   MailSearch,
   type LucideIcon,
@@ -53,6 +55,7 @@ const entities = ENTITY_LIST as readonly EntityDef[];
 /** The freight quotation section and the masters that live in it (not under Masters). */
 export const FREIGHT = 'Freight quotations';
 export const FLOW = 'Export flow';
+export const PURCHASE = 'Purchases';
 const FREIGHT_MASTERS = ['freightContacts', 'mailTemplates'];
 
 const DOC_ICONS: Record<string, LucideIcon> = { proformaInvoices: FileSignature, productionOrders: Factory, commercialInvoices: Receipt };
@@ -81,9 +84,12 @@ export const NAV: NavItem[] = [
   { id: 'shipments', label: 'Shipments', path: '/shipments', group: 'Sales', perm: ['sales.shipments', 'view'], keywords: 'lots order planning shipment charges gulf eu staging stage board checkpoints overdue', icon: Ship },
   { id: 'pi-reports', label: 'PI reports', path: '/reports/proforma', group: 'Sales', perm: ['sales.proformaInvoices', 'view'], keywords: 'proforma analysis field usage terms', icon: BarChart3 },
   // Export flow: documents in, lots tracked, packaging bought
+  { id: 'orders', label: 'Orders (PO / PI files)', path: '/orders', group: FLOW, perm: ['sales.proformaInvoices', 'view'], keywords: 'order file po pi purchase contract buyer lots documents folder status everything about one order', icon: FolderOpen },
   { id: 'inbox', label: 'Document inbox', path: '/inbox', group: FLOW, perm: ['sales.intake', 'view'], keywords: 'upload scan ocr read po contract bl lading shipping bill phyto fumigation coo certificate invoice pdf excel extract', icon: Inbox },
   { id: 'tracker', label: 'Shipment tracker', path: '/tracker', group: FLOW, perm: ['sales.shipments', 'view'], keywords: 'track sheet bl status eta vessel booking lc payment documents checklist lots', icon: Radar },
-  { id: 'vendor-pos', label: 'Packaging POs', path: '/vendor-pos', group: FLOW, perm: ['sales.vendorPos', 'view'], keywords: 'purchase order packaging bags jute tags strips seals supplier vendor', icon: ShoppingCart },
+  // Buying side, apart from sales: what we order from suppliers and the bills they send
+  { id: 'purchase-orders', label: 'Purchase orders', path: '/purchase-orders', group: PURCHASE, perm: ['sales.vendorPos', 'view'], keywords: 'purchase order supplier vendor miller packaging bags jute tags strips seals paddy rice buy', icon: ShoppingCart },
+  { id: 'purchase-invoices', label: 'Purchase invoices', path: '/purchase-invoices', group: PURCHASE, perm: ['sales.purchaseInvoices', 'view'], keywords: 'purchase invoice supplier bill vendor payable gst mandi paddy packaging pay due', icon: ReceiptText },
   // Freight quotations: everything for asking, comparing and booking ocean freight, in one section
   { id: 'freight', label: 'Enquiries', path: '/freight', group: FREIGHT, perm: ['sales.freight', 'view'], keywords: 'freight rate quote quotation shipping line email mail negotiation booking ocean carrier compare best enquiry', icon: MailSearch },
   { id: 'freight-new', label: 'New enquiry', path: '/freight/new', group: FREIGHT, perm: ['sales.freight', 'create'], keywords: 'freight rate request quotation new ask shipping lines', icon: FilePlus2 },
@@ -119,6 +125,7 @@ export const GROUP_ICONS: Record<string, LucideIcon> = {
   MIS: LayoutDashboard,
   Sales: Receipt,
   [FLOW]: Workflow,
+  [PURCHASE]: ShoppingCart,
   [FREIGHT]: MailSearch,
   'Masters · Company': Building2,
   'Masters · Parties': Users,

@@ -3,6 +3,9 @@ import {
   classify,
   extract,
   extractLines,
+  findSupplierHints,
+  matchSupplier,
+  parseSupplierHintText,
   fixCode,
   innerPacks,
   learnTemplate,
@@ -25,13 +28,47 @@ const PO_TEXT = `Purchase Order
 PO No
 4200009999
 Supplier Our Company Private Limited
-Delivery Terms and conditions A006 LC at Sight
+Delivery Terms and conditions LC at Sight
 Please supply the following Goods/ Services:
 Item Material Description Quantity Unit Unit rate Total (USD)
 10 9000000011 Sunrise 40 Kg FOB Mundra F10 DC Riyadh 46.080 MT 1000.00 / 1 MT 46080.00
 20 9000000012 Sunrise 4X10 Kg FOB Mundra F20 DC Jeddah 23.040 MT 1020.00 / 1 MT 23500.80
 Crop year 2026
 `;
+// a PO whose delivery schedule splits "10 Kg" items into 4 × 10 KG bags over two weeks
+const SCHEDULE_PO = `Purchase Order
+PO No
+9000005555
+Delivery schedule: As per the attached
+Item Material Description Quantity Unit Unit rate Total (USD)
+10 9000000011 Sunrise 10 Kg FOB Mundra F10 DC Riyadh 230.000 MT 1000.00 / 1 MT 230000.00
+20 9000000011 Sunrise 10 Kg FOB Mundra F20 DC Jeddah 92.000 MT 1000.00 / 1 MT 92000.00
+Kindly procure the Jute Bags from Unity Packaging, and seal from Kamal Enterprices
+Delivery Schedule
+SKU
+Riyadh
+Jeddah
+Total
+Tons
+Month of Dispatch
+SUNRISE RICE
+4X10KG
+115
+46
+161
+Jan-27
+P1
+P3
+SUNRISE RICE
+4X10KG
+115
+46
+161
+Jan-27
+P2
+P3
+`;
+
 const SB_TEXT = `MUNDRA SEZ PORT, MUNDRA, GUJARAT Port Code SB No SB Date INMUN1 7299001 29-SEP-26 AAAAA0000A
 INDIAN CUSTOMS EDI SYSTEM LET EXPORT COPY SHIPPING BILL SUMMARY
 1 TESTCO/EX/26-27/7 123456 USD 9.LEO 30-SEP-26 14:18`;
@@ -73,6 +110,26 @@ describe('reading documents (pure rules)', () => {
     expect(packKg('Sunrise 4X10 Kg')).toBe(40);
     expect(innerPacks('8 x 5 kg')).toBe(8);
     expect(extractLines('Basmati rice 1121 sella 400 MT 850 USD PMT 340000')[0]).toMatchObject({ quantityMt: '400', rate: '850', amount: '340000' });
+  });
+
+  it("splits PO lines by the delivery schedule and reads whom to buy packaging from", () => {
+    const x = extract(SCHEDULE_PO, 'buyer_po');
+    expect(x.lines.map((l) => [l.port, l.quantityMt, l.packKg, l.packing, l.dispatchBy])).toEqual([
+      ['Riyadh', '115', 40, '4 × 10 KG', '2027-01-15'],
+      ['Riyadh', '115', 40, '4 × 10 KG', '2027-01-31'],
+      ['Jeddah', '46', 40, '4 × 10 KG', '2027-01-15'],
+      ['Jeddah', '46', 40, '4 × 10 KG', '2027-01-31'],
+    ]);
+    expect(x.fields.totalQuantityMt.value).toBe('322');
+    expect(x.fields.totalAmount.value).toBe('322000');
+    expect(parseSupplierHintText(x.fields.packagingSuppliers.value)).toEqual([
+      { item: 'Jute Bags', supplier: 'Unity Packaging' },
+      { item: 'seal', supplier: 'Kamal Enterprices' },
+    ]);
+    expect(findSupplierHints('Please procure rice from certified mills.')).toEqual([]);
+    const masters = [{ name: 'KAMEL ENTERPRISES (CITY)' }, { name: 'Unity Packaging' }, { name: 'Other Traders' }];
+    expect(matchSupplier('Kamal Enterprices', masters)?.name).toBe('KAMEL ENTERPRISES (CITY)');
+    expect(matchSupplier('Nobody Packaging', masters)).toBeNull();
   });
 
   it('reads invoice totals printed under their labels, not the quantity as money', () => {
@@ -137,14 +194,14 @@ beforeAll(async () => {
   await root.ok('POST', '/auth/switch-company', { companyId: ids.co });
   await root.post('/masters/currencies', { code: 'USD', name: 'US Dollar', exchangeRate: 84 });
   ids.usd = ((await root.ok('GET', '/masters/currencies/lookup?q=USD')) as { id: string; label: string }[]).find((c) => c.label === 'USD')!.id;
-  ids.buyer = (await root.ok('POST', '/masters/customers', { code: 'MAYR', name: 'Gulf Foods Co' })).id;
+  ids.buyer = (await root.ok('POST', '/masters/customers', { code: 'GFC1', name: 'Gulf Foods Co' })).id;
   ids.product = (await root.ok('POST', '/masters/products', { name: 'Sunrise basmati' })).id;
   ids.pack = (await root.ok('POST', '/masters/packingTypes', { code: 'J40', name: '40 KG jute bag', netWeightKg: 40, containerCapacityMt: 23.04 })).id;
   const country = (await root.ok('GET', '/masters/countries/lookup?q=Saudi')) as { id: string }[];
   const countryId = country[0]?.id ?? (await root.ok('POST', '/masters/countries', { code: 'SA', name: 'Saudi Arabia' })).id;
   ids.riyadh = (await root.ok('POST', '/masters/ports', { code: 'SARUH', name: 'Riyadh', countryId })).id;
   ids.jeddah = (await root.ok('POST', '/masters/ports', { code: 'SAJEX', name: 'Jeddah test', countryId })).id;
-  ids.supplier = (await root.ok('POST', '/masters/suppliers', { code: 'UPK', name: 'Unique Packaging', supplierType: 'Packing material' })).id;
+  ids.supplier = (await root.ok('POST', '/masters/suppliers', { code: 'UPK', name: 'Unity Packaging', supplierType: 'Packing material' })).id;
 });
 
 afterAll(async () => {
@@ -214,7 +271,7 @@ describe('document inbox → order → plan → packaging → tracker', () => {
     const po = await root.ok('POST', `/planning/${ids.order}/vendor-pos`, { deliveryBy: '2026-12-01' });
     expect(po.created).toHaveLength(1);
     const list = await root.ok('GET', `/vendor-pos?orderId=${ids.order}`);
-    expect(list[0]).toMatchObject({ supplierName: 'Unique Packaging', status: 'DRAFT' });
+    expect(list[0]).toMatchObject({ supplierName: 'Unity Packaging', status: 'DRAFT' });
     expect(Number(list[0].totalAmount)).toBeGreaterThan(70000);
     const pdf = await app.inject({ method: 'GET', url: `/api/vendor-pos/${list[0].id}/pdf`, headers: { cookie: root.cookie } });
     expect(pdf.statusCode).toBe(200);
@@ -238,6 +295,127 @@ describe('document inbox → order → plan → packaging → tracker', () => {
     const row = tracker.find((r: { id: string }) => r.id === ids.lot1);
     expect(row).toMatchObject({ invoiceNumber: 'TESTCO/EX/26-27/7', sbNumber: '7299001', docsDone: 2, docsNeeded: 11, payment: 'PENDING' });
     expect(row.alerts).toEqual(expect.arrayContaining(['Vessel arrived, BL not received', 'LEO done, BL missing']));
+  });
+
+  it('turns a scheduled PO into dated lots and pre-fills the packaging suppliers', async () => {
+    const pack = (await root.ok('POST', '/masters/packingTypes', { code: 'J4X10', name: '4 × 10 KG jute bag', netWeightKg: 40, containerCapacityMt: 23 })).id;
+    const sealMaker = (await root.ok('POST', '/masters/suppliers', { code: 'KAM', name: 'Kamal Enterprises', supplierType: 'Packing material' })).id;
+    const [up] = await upload([{ name: '9000005555.txt', body: SCHEDULE_PO }]);
+    const item = await root.ok('GET', `/intake/${up.id}`);
+    expect(item.suggest.lines[0].packing).toMatchObject({ id: pack });
+    const r = await root.ok('POST', `/intake/${up.id}/confirm`, {
+      kind: 'buyer_po',
+      fields: { buyerPoRef: '9000005555', poDate: '2026-12-01', packagingSuppliers: item.fields.packagingSuppliers.value },
+      order: {
+        buyerId: ids.buyer,
+        currencyId: ids.usd,
+        exchangeRate: '84',
+        lines: item.lines.map((l: { port: string; quantityMt: string; rate: string; dispatchBy: string }) => ({ productId: ids.product, packingTypeId: pack, destinationPortId: l.port === 'Riyadh' ? ids.riyadh : ids.jeddah, quantityMt: l.quantityMt, ratePerMt: l.rate, dispatchBy: l.dispatchBy })),
+      },
+    });
+    const order = r.result.slice(6);
+    const planned = await root.ok('POST', `/planning/${order}/apply`, { market: 'GULF' });
+    expect(planned.lots.map((l: { period: string }) => l.period)).toEqual(['Jan 2027 · P1', 'Jan 2027 · P2']);
+    const items = await root.ok('POST', `/planning/${order}/packaging`, {});
+    const of = (c: string) => items.find((i: { component: string }) => i.component === c);
+    expect(of('outer')).toMatchObject({ supplierId: ids.supplier, bags: 8050 });
+    expect(of('inner')).toMatchObject({ perBag: '4.000' });
+    expect(of('seal')).toMatchObject({ supplierId: sealMaker });
+    expect(of('tag').supplierId).toBeNull();
+    const view = await root.ok('GET', `/planning/${order}`);
+    expect(view.supplierHints.map((h: { supplierName: string }) => h.supplierName)).toEqual(['Unity Packaging', 'Kamal Enterprises']);
+  });
+
+  it('keeps each order in its own file: lots, folders and documents never mix', async () => {
+    const list = await root.ok('GET', '/order-files?state=all');
+    expect(list.total).toBe(2);
+    expect(list.rows.map((r: { buyerPoRef: string }) => r.buyerPoRef).sort()).toEqual(['9000005555', '4200009999'].sort());
+    const found = await root.ok('GET', '/order-files?search=9000005555');
+    expect(found.rows).toHaveLength(1);
+    const other = found.rows[0].id;
+    // a file uploaded into a lot folder stays in that order, whatever its text mentions
+    const m = multipart([{ name: 'lot-note.txt', body: 'Phytosanitary certificate. Plant quarantine treatment 778899' }]);
+    const res = await app.inject({ method: 'POST', url: `/api/intake/upload?shipmentId=${ids.lot1}`, headers: { cookie: root.cookie, ...m.headers }, payload: m.payload });
+    expect(res.statusCode).toBe(201);
+    await whenIdle();
+    const [added] = res.json() as { id: string }[];
+    expect(await root.ok('GET', `/intake/${added.id}`)).toMatchObject({ orderId: ids.order, shipmentId: ids.lot1 });
+
+    const file = await root.ok('GET', `/order-files/${ids.order}`);
+    expect(file.order.buyerPoRef).toBe('4200009999');
+    expect(file.lots).toHaveLength(2);
+    expect(file.folders.toReview.map((f: { fileName: string }) => f.fileName)).toContain('lot-note.txt');
+    const lot1 = file.lots.find((l: { id: string }) => l.id === ids.lot1);
+    expect(lot1.files.map((f: { label: string }) => f.label)).toContain('Shipping bill');
+    expect(file.vendorPos).toHaveLength(1);
+    expect(file.progress).toMatchObject({ lots: 2, shipped: 0, next: 'SHIP', toReview: 1 });
+
+    const second = await root.ok('GET', `/order-files/${other}`);
+    expect(second.lots.every((l: { files: unknown[] }) => l.files.length === 0)).toBe(true);
+    expect(second.folders.toReview).toHaveLength(0);
+    expect(second.vendorPos).toHaveLength(0);
+
+    const groups = await root.ok('GET', '/intake/groups?status=ALL');
+    expect(groups.groups.find((g: { orderId: string }) => g.orderId === ids.order).total).toBeGreaterThanOrEqual(3);
+    const only = await root.ok('GET', `/intake?orderId=${other}&status=ALL`);
+    expect(only.rows.map((r: { fileName: string }) => r.fileName)).toEqual(['9000005555.txt']);
+    expect((await root.get('/order-files/00000000-0000-4000-8000-000000000000')).status).toBe(404);
+  });
+
+  it('keeps buying apart: supplier purchase orders and purchase invoices, per order', async () => {
+    const BILL = ['TAX INVOICE', 'Unity Packaging', 'GSTIN: 24ABCDE1234F1Z5', 'Invoice No: UP/881', 'Invoice Date: 05-12-2026', 'Buyer: Test Exports Pvt Ltd', 'HSN 6305 Jute bags 40 Kg 1763 Nos 42.50 74927.50', 'Taxable Value 74927.50', 'IGST 3746.38', 'Grand Total 78673.88'];
+    const [packPo] = await root.ok('GET', `/vendor-pos?orderId=${ids.order}`);
+    BILL.push(`Against our order ${packPo.number}`);
+    const m = multipart([{ name: 'unity-bill.txt', body: BILL.join(String.fromCharCode(10)) }]);
+    const res = await app.inject({ method: 'POST', url: `/api/intake/upload?orderId=${ids.order}`, headers: { cookie: root.cookie, ...m.headers }, payload: m.payload });
+    expect(res.statusCode).toBe(201);
+    await whenIdle();
+    const [up] = res.json() as { id: string }[];
+    const item = await root.ok('GET', `/intake/${up.id}`);
+    expect(item).toMatchObject({ kind: 'purchase_invoice', orderId: ids.order });
+    expect(item.fields).toMatchObject({ invoiceNo: { value: 'UP/881' }, invoiceDate: { value: '2026-12-05' }, totalAmount: { value: '78673.88' } });
+    expect(item.suggestBuy.supplier).toMatchObject({ id: ids.supplier });
+    expect(item.suggestBuy.vendorPo).toMatchObject({ id: packPo.id });
+    const body = { kind: 'purchase_invoice', fields: { invoiceNo: 'UP/881', invoiceDate: '2026-12-05', taxableAmount: '74927.50', gstAmount: '3746.38', totalAmount: '78673.88' }, orderId: ids.order, purchase: { supplierId: ids.supplier, category: 'PACKAGING', vendorPoId: packPo.id } };
+    const done = await root.ok('POST', `/intake/${up.id}/confirm`, body);
+    expect(done.result).toMatch(/^purchase-invoice:/);
+    const billId = done.result.split(':')[1];
+    const [bill] = await root.ok('GET', `/purchase-invoices?orderId=${ids.order}`);
+    expect(bill).toMatchObject({ id: billId, invoiceNo: 'UP/881', supplierName: 'Unity Packaging', vendorPoNumber: packPo.number, orderSource: 'Buyer PO / contract', paymentStatus: 'UNPAID' });
+    expect(bill.fileId).toBeTruthy();
+
+    // the same bill cannot be entered twice, and a purchase order of another supplier cannot be linked
+    const again = { invoiceNo: 'up/881', invoiceDate: '2026-12-05', supplierId: ids.supplier, totalAmount: '10' };
+    expect((await root.post('/purchase-invoices', again)).status).toBe(409);
+    const other = (await root.ok('POST', '/masters/suppliers', { code: 'MIL', name: 'Sunrise Mills', supplierType: 'Miller' })).id;
+    expect((await root.post('/purchase-invoices', { ...again, invoiceNo: 'SM/1', supplierId: other, vendorPoId: packPo.id })).status).toBe(400);
+
+    // a typed purchase order (not packaging) sits in the same order, listed by category
+    const paddy = await root.ok('POST', '/vendor-pos', { poDate: '2026-12-02', supplierId: other, category: 'PADDY_RICE', proformaInvoiceId: ids.order, lines: [{ description: 'Paddy 1121', quantity: 10, unit: 'MT', rate: '30000' }] });
+    expect(paddy).toMatchObject({ category: 'PADDY_RICE', totalAmount: '300000.00' });
+    const onlyPaddy = await root.ok('GET', '/vendor-pos?category=PADDY_RICE');
+    expect(onlyPaddy.map((p: { id: string }) => p.id)).toEqual([paddy.id]);
+
+    const file = await root.ok('GET', `/order-files/${ids.order}`);
+    expect(file.vendorPos).toHaveLength(2);
+    expect(file.purchaseInvoices.map((b: { invoiceNo: string }) => b.invoiceNo)).toEqual(['UP/881']);
+    expect(Number(file.vendorPos.find((p: { id: string }) => p.id === packPo.id).billedAmount)).toBeCloseTo(78673.88, 2);
+
+    // buyer PO orders and our PIs can be listed apart
+    expect((await root.ok('GET', '/order-files?state=all&source=po')).total).toBe(2);
+    expect((await root.ok('GET', '/order-files?state=all&source=pi')).total).toBe(0);
+    expect((await root.ok('GET', '/intake/groups?status=ALL&source=pi')).groups.filter((g: { orderId: string | null }) => g.orderId)).toHaveLength(0);
+
+    const paid = await root.ok('PUT', `/purchase-invoices/${billId}`, { ...bill, vendorPoId: packPo.id, proformaInvoiceId: ids.order, paidAmount: '1000' });
+    expect(Number(paid.paidAmount)).toBe(1000);
+    expect((await root.ok('GET', '/purchase-invoices?status=PART')).map((b: { id: string }) => b.id)).toEqual([billId]);
+    expect((await root.put(`/purchase-invoices/${billId}`, { ...bill, proformaInvoiceId: ids.order, paidAmount: '1' })).status).toBe(409);
+
+    await root.ok('DELETE', `/purchase-invoices/${billId}`, { reason: 'Entered by mistake' });
+    expect(await root.ok('GET', '/purchase-invoices')).toHaveLength(0);
+    expect((await root.ok('GET', '/recycle-bin?type=purchaseInvoices')).rows[0]).toMatchObject({ reason: 'Entered by mistake' });
+    await root.ok('POST', `/recycle-bin/purchaseInvoices/${billId}/restore`);
+    expect(await root.ok('GET', '/purchase-invoices')).toHaveLength(1);
   });
 
   it('remembers corrections for the same layout', async () => {
@@ -267,5 +445,7 @@ describe('document inbox → order → plan → packaging → tracker', () => {
     await u.login('no-inbox');
     expect((await u.get('/intake')).status).toBe(403);
     expect((await u.get('/tracker')).status).toBe(403);
+    expect((await u.get('/purchase-invoices')).status).toBe(403);
+    expect((await u.post('/vendor-pos', {})).status).toBe(403);
   });
 });

@@ -396,6 +396,9 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
                 <History className="size-3.5" /> History
               </Link>
             )}
+            {!isNew && def.key === 'proformaInvoices' && (
+              <Button onClick={() => navigate(`/orders/${id}`)}>Order file</Button>
+            )}
             {!isNew && def.key === 'proformaInvoices' && can('sales.shipments', 'view') && (
               <Button icon={<Ship className="size-3.5" />} onClick={() => navigate(`/plan/${id}`)}>
                 Plan shipments

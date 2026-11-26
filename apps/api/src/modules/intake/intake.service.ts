@@ -10,9 +10,12 @@ import {
   BUYER_PO,
   classify,
   extract,
+  innerPacks,
   intakeKind,
   layoutFingerprint,
   learnTemplate,
+  matchSupplier,
+  PURCHASE_CATEGORY_KEYS,
   packKg,
   type Extracted,
   type ExtractedLine,
@@ -24,8 +27,9 @@ import { audit } from '../../core/audit.js';
 import { inCompanyTx, type RequestContext } from '../../core/context.js';
 import { badRequest, notFound } from '../../core/errors.js';
 import { db, type Tx } from '../../db/client.js';
-import { companies, docTables, extractionTemplates, files, inboxItems, masterTables, shipmentDocuments, shipments } from '../../db/schema/index.js';
+import { companies, docTables, extractionTemplates, files, inboxItems, masterTables, shipmentDocuments, shipments, vendorPos } from '../../db/schema/index.js';
 import { createDocument } from '../documents/documents.service.js';
+import { createPurchaseInvoice, createPurchaseOrder } from '../purchases/purchases.service.js';
 import { detectKind, readDocument, type FileKind } from './read.js';
 
 type Item = typeof inboxItems.$inferSelect;
@@ -42,7 +46,15 @@ export interface StoredItem {
 }
 
 /** Save one file into the inbox (or point at the same file already there). */
-export async function storeUpload(companyId: string, userId: string | null, buf: Buffer, name: string, sourcePath: string | null = null): Promise<StoredItem> {
+export async function storeUpload(
+  companyId: string,
+  userId: string | null,
+  buf: Buffer,
+  name: string,
+  sourcePath: string | null = null,
+  /** The order / lot folder the file was uploaded into (it stays there whatever the text says). */
+  into: { orderId?: string | null; shipmentId?: string | null } = {},
+): Promise<StoredItem> {
   const kind = detectKind(buf, name);
   if (!kind) {
     throw badRequest(`"${name}" is not a document the inbox can read`, 'Upload a PDF, a photo or scan (JPG, PNG, TIFF), Excel (.xlsx / .xls), Word (.docx / .doc) or a text file.');
@@ -50,8 +62,12 @@ export async function storeUpload(companyId: string, userId: string | null, buf:
   if (buf.length > MAX_INTAKE_BYTES) throw badRequest(`"${name}" is larger than ${MAX_INTAKE_BYTES / 1024 / 1024} MB`, 'Split or compress the scan and upload it again.');
   const sha256 = createHash('sha256').update(buf).digest('hex');
   const stored = await inCompanyTx(companyId, async (tx): Promise<StoredItem> => {
-    const [dupe] = await tx.select({ id: inboxItems.id }).from(inboxItems).where(and(eq(inboxItems.sha256, sha256), isNull(inboxItems.deletedAt))).limit(1);
-    if (dupe) return { id: dupe.id, fileName: name, duplicateOf: dupe.id };
+    const [dupe] = await tx.select({ id: inboxItems.id, orderId: inboxItems.orderId, status: inboxItems.status }).from(inboxItems).where(and(eq(inboxItems.sha256, sha256), isNull(inboxItems.deletedAt))).limit(1);
+    if (dupe) {
+      // the same file, not yet filed anywhere: put it in the folder it was just uploaded into
+      if (into.orderId && !dupe.orderId && dupe.status !== 'CONFIRMED') await tx.update(inboxItems).set({ orderId: into.orderId, shipmentId: into.shipmentId ?? null, updatedAt: new Date() }).where(eq(inboxItems.id, dupe.id));
+      return { id: dupe.id, fileName: name, duplicateOf: dupe.id };
+    }
     const fileId = randomUUID();
     const ext = (path.extname(name).replace(/[^a-z0-9.]/gi, '').toLowerCase() || '.bin').slice(0, 6);
     const rel = path.join(new Date().toISOString().slice(0, 7), `${fileId}${ext}`);
@@ -61,7 +77,7 @@ export async function storeUpload(companyId: string, userId: string | null, buf:
     await tx.insert(files).values({ id: fileId, companyId, originalName: name.slice(0, 200), mimeType: kind.mime, sizeBytes: buf.length, sha256, storagePath: rel, createdBy: userId });
     const [item] = await tx
       .insert(inboxItems)
-      .values({ companyId, fileId, fileName: name.slice(0, 250), fileKind: kind.kind, sha256, sourcePath, status: 'QUEUED', createdBy: userId, updatedBy: userId })
+      .values({ companyId, fileId, fileName: name.slice(0, 250), fileKind: kind.kind, sha256, sourcePath, status: 'QUEUED', orderId: into.orderId ?? null, shipmentId: into.shipmentId ?? null, createdBy: userId, updatedBy: userId })
       .returning({ id: inboxItems.id });
     await audit(tx, { userId, companyId, ip: null }, { entity: 'inbox', recordId: item.id, action: 'upload', meta: { name, kind: kind.kind, size: buf.length, sourcePath } });
     return { id: item.id, fileName: name, duplicateOf: null };
@@ -154,8 +170,9 @@ export async function processItem(companyId: string, id: string, forceKind?: str
           fields: x.fields,
           lines: x.lines,
           refs: x.refs,
-          orderId: m.orderId,
-          shipmentId: m.shipmentId,
+          // an order / lot chosen at upload (or earlier) is kept; the numbers in the text fill what is missing
+          orderId: item.row.orderId ?? m.orderId,
+          shipmentId: item.row.shipmentId ?? (!item.row.orderId || item.row.orderId === m.orderId ? m.shipmentId : null),
           readMs: Date.now() - t0,
           updatedAt: new Date(),
         })
@@ -174,6 +191,16 @@ export async function processItem(companyId: string, id: string, forceKind?: str
 // ------------------------------------------------------------------ matching
 
 const norm = (s: string) => s.replace(/\s+/g, '').toUpperCase();
+/** Is this number written in the text, whole (…/001 is not found inside …/0012)? Short numbers are ignored. */
+function mentions(text: string, number: string) {
+  const n = norm(number);
+  const t = text.toUpperCase();
+  if (n.length < 6) return false;
+  for (let at = t.indexOf(n); at >= 0; at = t.indexOf(n, at + 1)) {
+    if (!/[A-Z0-9]/.test(t.charAt(at - 1)) && !/[A-Z0-9]/.test(t.charAt(at + n.length))) return true;
+  }
+  return false;
+}
 
 /** Find the order and lot a document belongs to from the numbers in it. */
 export async function matchRefs(tx: Tx, refs: Record<string, string[]>, fields: Record<string, Extracted>) {
@@ -214,6 +241,11 @@ export async function matchRefs(tx: Tx, refs: Record<string, string[]>, fields: 
     const [o] = (await tx.select({ id: pi.id }).from(pi).where(and(isNull(pi.deletedAt), or(...conds))).orderBy(desc(pi.documentDate)).limit(1)) as { id: string }[];
     if (o) orderId = o.id;
   }
+  const poNo = fields.vendorPoNo?.value;
+  if (!orderId && poNo) {
+    const [v] = await tx.select({ orderId: vendorPos.proformaInvoiceId }).from(vendorPos).where(and(sql`upper(replace(${vendorPos.number}, ' ', '')) = ${norm(poNo)}`, isNull(vendorPos.deletedAt))).limit(1);
+    if (v?.orderId) orderId = v.orderId;
+  }
   return { orderId, shipmentId };
 }
 
@@ -245,7 +277,9 @@ export async function suggestFor(tx: Tx, item: Item) {
   const lines = await Promise.all(
     (item.lines ?? []).map(async (l: ExtractedLine) => {
       const kg = l.packKg ?? packKg(l.description);
-      const pack = kg ? (packs.filter((p) => Number(p.kg) === kg).sort((a, b) => Number(/x|×/i.test(b.label) && kg !== 40) - Number(/x|×/i.test(a.label) && kg !== 40))[0] ?? null) : null;
+      // same bag weight and the same number of inner packs: never offer a plain 40 kg bag for "4 × 10 kg"
+      const inner = innerPacks(l.packing ?? l.description);
+      const pack = kg ? (packs.find((p) => Number(p.kg) === kg && innerPacks(p.label) === inner) ?? null) : null;
       return { port: await findByName(tx, 'ports', l.port), packing: pack ? { id: pack.id, label: pack.label } : null, product: await findByName(tx, 'products', l.description) };
     }),
   );
@@ -258,6 +292,23 @@ export async function suggestFor(tx: Tx, item: Item) {
   };
 }
 
+/** For a supplier bill or our purchase order: which supplier and which purchase order it is. */
+export async function suggestPurchase(tx: Tx, item: Item) {
+  const fields = item.fields ?? {};
+  const su = masterTables.suppliers;
+  const all = (await tx.select({ id: su.id, name: su.name, gstin: su.gstin }).from(su).where(and(isNull(su.deletedAt), eq(su.isActive, true)))) as { id: string; name: string; gstin: string | null }[];
+  const gstins = (item.text ?? '').toUpperCase();
+  const written = fields.supplierName?.value ?? fields.vendorName?.value;
+  // a GSTIN printed on the document identifies the supplier for certain; else the written name
+  const found = all.find((s) => s.gstin && gstins.includes(s.gstin.toUpperCase())) ?? (written ? matchSupplier(written, all) : null);
+  const poNo = fields.vendorPoNo?.value;
+  const pos = await tx.select({ id: vendorPos.id, label: vendorPos.number, supplierId: vendorPos.supplierId }).from(vendorPos).where(isNull(vendorPos.deletedAt)).orderBy(desc(vendorPos.createdAt)).limit(2000);
+  // the number read under a "PO no." label; else any of our own PO numbers printed anywhere on the bill
+  const po = (poNo ? pos.find((p) => norm(p.label) === norm(poNo)) : undefined) ?? pos.find((p) => (!found || p.supplierId === found.id) && mentions(item.text ?? '', p.label));
+  const supplier = found ?? (po ? (all.find((s) => s.id === po.supplierId) ?? null) : null);
+  return { supplier: supplier ? { id: supplier.id, label: supplier.name } : null, vendorPo: po && (!supplier || po.supplierId === supplier.id) ? { id: po.id, label: po.label } : null };
+}
+
 // ------------------------------------------------------------------ confirm
 
 export interface ConfirmBody {
@@ -266,6 +317,8 @@ export interface ConfirmBody {
   orderId?: string | null;
   shipmentId?: string | null;
   order?: Record<string, unknown> & { lines?: Record<string, unknown>[] };
+  /** Buying side: which supplier, what for, against which purchase order. */
+  purchase?: { supplierId?: string | null; category?: (typeof PURCHASE_CATEGORY_KEYS)[number]; vendorPoId?: string | null; description?: string | null };
 }
 
 const blank = (v: string | null | undefined) => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
@@ -293,6 +346,8 @@ export async function confirmItem(tx: Tx, ctx: RequestContext, item: Item, body:
   const kind = intakeKind(body.kind);
   const v = body.fields ?? {};
   let result = 'filed';
+  /** Order the document ends up under, when confirming works it out (from the purchase order). */
+  let linkedOrder: string | null = null;
   switch (kind.action) {
     case 'order': {
       const o = body.order ?? {};
@@ -357,9 +412,56 @@ export async function confirmItem(tx: Tx, ctx: RequestContext, item: Item, body:
       result = `lot:${s.id as string}`;
       break;
     }
-    case 'order-doc':
-      result = body.orderId ? `order:${body.orderId}` : 'filed';
+    case 'purchase': {
+      const p = body.purchase ?? {};
+      if (!p.supplierId) throw badRequest('Choose the supplier of this bill', { fields: { supplierId: 'Required' } });
+      if (!dateOrNull(v.invoiceDate)) throw badRequest('Enter the invoice date', { fields: { invoiceDate: 'Required' } });
+      const bill = await createPurchaseInvoice(tx, ctx, {
+        invoiceNo: blank(v.invoiceNo) ?? '',
+        invoiceDate: v.invoiceDate,
+        supplierId: p.supplierId,
+        category: p.category ?? 'PACKAGING',
+        vendorPoId: p.vendorPoId ?? null,
+        proformaInvoiceId: body.orderId ?? null,
+        shipmentId: body.shipmentId ?? null,
+        description: p.description ?? null,
+        quantity: blank(v.quantity),
+        taxableAmount: blank(v.taxableAmount),
+        gstAmount: blank(v.gstAmount),
+        totalAmount: blank(v.totalAmount) ?? '',
+        fileId: item.fileId,
+        inboxItemId: item.id,
+      });
+      linkedOrder = bill.proformaInvoiceId;
+      result = `purchase-invoice:${bill.id}`;
       break;
+    }
+    case 'vendor-po': {
+      const p = body.purchase ?? {};
+      const number = blank(v.vendorPoNo);
+      const [existing] = number ? await tx.select({ id: vendorPos.id, orderId: vendorPos.proformaInvoiceId }).from(vendorPos).where(and(sql`upper(replace(${vendorPos.number}, ' ', '')) = ${norm(number)}`, isNull(vendorPos.deletedAt))).limit(1) : [];
+      if (existing) {
+        // the same purchase order is already in the ERP: file the document with it
+        linkedOrder = existing.orderId ?? body.orderId ?? null;
+        result = `purchase-order:${existing.id}`;
+        break;
+      }
+      if (!p.supplierId) throw badRequest('Choose the supplier of this purchase order', { fields: { supplierId: 'Required' } });
+      const total = blank(v.totalAmount);
+      const po = await createPurchaseOrder(tx, ctx, {
+        number,
+        poDate: dateOrNull(v.poDate) ?? new Date().toISOString().slice(0, 10),
+        supplierId: p.supplierId,
+        category: p.category ?? 'PACKAGING',
+        proformaInvoiceId: body.orderId ?? null,
+        status: 'SENT',
+        notes: `From the uploaded document ${item.fileName}`,
+        lines: [{ description: p.description || 'As per the attached purchase order', quantity: 1, unit: 'Lot', rate: total ?? '' }],
+      });
+      linkedOrder = po.proformaInvoiceId;
+      result = `purchase-order:${po.id}`;
+      break;
+    }
     default:
       result = 'filed';
   }
@@ -390,7 +492,8 @@ export async function confirmItem(tx: Tx, ctx: RequestContext, item: Item, body:
   );
   await tx
     .update(inboxItems)
-    .set({ status: 'CONFIRMED', kind: kind.key, fields: confirmedFields, result, orderId: body.orderId ?? (result.startsWith('order:') ? result.slice(6) : item.orderId), shipmentId: body.shipmentId ?? item.shipmentId, confirmedAt: new Date(), confirmedBy: ctx.userId, updatedAt: new Date(), updatedBy: ctx.userId, version: sql`${inboxItems.version} + 1` })
+    .set({ status: 'CONFIRMED', kind: kind.key, fields: confirmedFields, result, // a PO confirmed into a new order belongs to that order, whatever was suggested before
+      orderId: result.startsWith('order:') ? result.slice(6) : (linkedOrder ?? body.orderId ?? item.orderId), shipmentId: body.shipmentId ?? item.shipmentId, confirmedAt: new Date(), confirmedBy: ctx.userId, updatedAt: new Date(), updatedBy: ctx.userId, version: sql`${inboxItems.version} + 1` })
     .where(eq(inboxItems.id, item.id));
   await audit(tx, ctx, { entity: 'inbox', recordId: item.id, action: 'confirm', meta: { kind: kind.key, result, learned } });
   return { result, learned };

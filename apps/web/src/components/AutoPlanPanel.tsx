@@ -48,6 +48,7 @@ interface Planning {
   lots: { id: string; lotNo: number; status: string; lines: unknown[] }[];
   packaging: PackItem[];
   vendorPos: VendorPo[];
+  supplierHints: { item: string; written: string; supplierName: string | null }[];
 }
 
 const fmt = (n: number, d = 0) => n.toLocaleString('en-IN', { maximumFractionDigits: d });
@@ -237,6 +238,18 @@ export function AutoPlanPanel({ piId, onChanged }: { piId: string; onChanged: ()
               )}
             </div>
           </div>
+          {d.supplierHints.length > 0 && (
+            <div className="mb-3 rounded border border-sky-200 bg-sky-50 px-2.5 py-1.5 text-[12.5px] text-sky-800">
+              The buyer's PO names:{' '}
+              {d.supplierHints.map((h, i) => (
+                <span key={i}>
+                  {i > 0 && ' · '}
+                  <b>{h.item}</b> from {h.written}
+                  {h.supplierName ? ` → ${h.supplierName}` : ' (add this supplier in Masters → Suppliers, then Recalculate)'}
+                </span>
+              ))}
+            </div>
+          )}
           {d.packaging.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-[12.5px]">

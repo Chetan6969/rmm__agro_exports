@@ -3,7 +3,7 @@
  * Every value shows how sure the reader is and the words it came from; the person fixes what is
  * wrong, picks the order / lot, and confirms. Corrections are remembered for this document layout.
  */
-import { INTAKE_KINDS, intakeKind, type Extracted, type ExtractedLine } from '@rmm/shared';
+import { INTAKE_KINDS, intakeKind, PURCHASE_CATEGORIES, PURCHASE_CATEGORY_KEYS, type Extracted, type ExtractedLine, type PurchaseCategory } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Check, ChevronRight, EyeOff, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -56,6 +56,7 @@ interface Item {
   action: string;
   order: { id: string; number: string; buyerPoRef: string | null; buyer: string | null } | null;
   lots: Lot[];
+  suggestBuy: { supplier: Ref | null; vendorPo: Ref | null } | null;
   suggest: {
     buyer: Ref | null;
     currency: (Ref & { rate: string }) | null;
@@ -107,6 +108,9 @@ export function InboxReviewPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [del, setDel] = useState(false);
+  const [supplier, setSupplier] = useState<Ref | null>(null);
+  const [category, setCategory] = useState<PurchaseCategory>('PACKAGING');
+  const [poId, setPoId] = useState('');
   const [view, setView] = useState<'original' | 'text'>('original');
   const formRef = useRef<HTMLDivElement>(null);
   const loadedFor = useRef<string | null>(null);
@@ -125,6 +129,8 @@ export function InboxReviewPage() {
     setCurrency(item.suggest?.currency ?? null);
     setRate(item.suggest?.currency?.rate ? String(Number(item.suggest.currency.rate)) : '');
     setPol(item.suggest?.portOfLoading ?? null);
+    setSupplier(item.suggestBuy?.supplier ?? null);
+    setPoId(item.suggestBuy?.vendorPo?.id ?? '');
     setLines(
       (item.lines ?? []).map((l, i) => {
         const s = item.suggest?.lines[i];
@@ -149,6 +155,12 @@ export function InboxReviewPage() {
   const lots = useQuery({ queryKey: ['inbox', 'lots', order?.id], queryFn: () => api.get<Lot[]>(`/intake/lots${qs({ orderId: order?.id })}`), enabled: !!order?.id });
   const def = intakeKind(kind);
   const action = def.action;
+  const buying = action === 'purchase' || action === 'vendor-po';
+  const supplierPos = useQuery({
+    queryKey: ['vendor-pos', 'for-bill', supplier?.label ?? ''],
+    queryFn: () => api.get<{ id: string; number: string; supplierName: string | null; totalAmount: string }[]>(`/vendor-pos${qs({ search: supplier?.label })}`),
+    enabled: action === 'purchase' && !!supplier && can('sales.vendorPos', 'view'),
+  });
   const done = item?.status === 'CONFIRMED';
   const nextId = useMemo(() => next.data?.rows.find((r) => r.id !== id)?.id ?? null, [next.data, id]);
 
@@ -158,6 +170,7 @@ export function InboxReviewPage() {
     setError(null);
     try {
       const body: Record<string, unknown> = { kind, fields: values, orderId: order?.id ?? null, shipmentId: lotId };
+      if (buying) body.purchase = { supplierId: supplier?.id ?? null, category, vendorPoId: action === 'purchase' ? poId || null : null };
       if (action === 'order') {
         body.order = {
           buyerId: buyer?.id ?? null,
@@ -177,9 +190,9 @@ export function InboxReviewPage() {
         };
       }
       const r = await api.post<{ result: string; learned: number }>(`/intake/${id}/confirm`, body);
-      toast.success('Confirmed', { description: `${r.result.startsWith('order:') ? 'Order saved.' : r.result.startsWith('lot:') ? 'Lot updated.' : 'Filed.'}${r.learned ? ` ${r.learned} correction(s) remembered for this layout.` : ''}` });
+      toast.success('Confirmed', { description: `${r.result.startsWith('order:') ? 'Order saved.' : r.result.startsWith('lot:') ? 'Lot updated.' : r.result.startsWith('purchase-invoice:') ? 'Purchase invoice entered.' : r.result.startsWith('purchase-order:') ? 'Filed with the purchase order.' : 'Filed.'}${r.learned ? ` ${r.learned} correction(s) remembered for this layout.` : ''}` });
       qc.invalidateQueries({ queryKey: ['inbox'] });
-      if (r.result.startsWith('order:') && action === 'order') navigate(`/d/proformaInvoices/${r.result.slice(6)}`);
+      if (r.result.startsWith('order:') && action === 'order') navigate(`/orders/${r.result.slice(6)}`);
       else if (nextId) navigate(`/inbox/${nextId}`);
       else navigate('/inbox');
     } catch (e) {
@@ -223,7 +236,7 @@ export function InboxReviewPage() {
       'alt+t': () => setView((v) => (v === 'text' ? 'original' : 'text')),
       esc: () => navigate('/inbox'),
     },
-    [values, kind, order, lotId, buyer, currency, rate, pol, lines, nextId, item],
+    [values, kind, order, lotId, buyer, currency, rate, pol, lines, nextId, item, supplier, category, poId],
     { inInputs: true },
   );
 
@@ -302,13 +315,23 @@ export function InboxReviewPage() {
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-[13px] text-emerald-800">
                   Confirmed.{' '}
                   {item.result?.startsWith('order:') && (
-                    <Link className="font-medium underline" to={`/d/proformaInvoices/${item.result.slice(6)}`}>
-                      Open the order
+                    <Link className="font-medium underline" to={`/orders/${item.result.slice(6)}`}>
+                      Open the order file
+                    </Link>
+                  )}
+                  {item.result?.startsWith('purchase-invoice:') && (
+                    <Link className="font-medium underline" to={item.orderId ? `/orders/${item.orderId}?tab=purchases` : '/purchase-invoices'}>
+                      Open the purchase invoice
+                    </Link>
+                  )}
+                  {item.result?.startsWith('purchase-order:') && (
+                    <Link className="font-medium underline" to={item.orderId ? `/orders/${item.orderId}?tab=purchases` : '/purchase-orders'}>
+                      Open the purchase order
                     </Link>
                   )}
                   {item.result?.startsWith('lot:') && item.orderId && (
-                    <Link className="font-medium underline" to={`/plan/${item.orderId}`}>
-                      Open the order's lots
+                    <Link className="font-medium underline" to={`/orders/${item.orderId}?tab=documents`}>
+                      Open the order file
                     </Link>
                   )}
                 </div>
@@ -364,6 +387,51 @@ export function InboxReviewPage() {
                         .join(', ')}
                     </p>
                   )}
+                </section>
+              )}
+
+              {buying && (
+                <section className="space-y-2 rounded-lg border border-violet-200 bg-white p-3">
+                  <h2 className="text-[13px] font-semibold text-slate-800">{action === 'purchase' ? 'Purchase invoice — supplier’s bill to us' : 'Our purchase order to a supplier'}</h2>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Field label="Supplier" hint={values.supplierName || values.vendorName ? `read: ${values.supplierName || values.vendorName}` : undefined}>
+                      <RefSelect
+                        entity="suppliers"
+                        value={supplier?.id ?? null}
+                        label={supplier?.label ?? null}
+                        allowCreate
+                        disabled={done}
+                        onChange={(sid, l) => {
+                          setSupplier(sid ? { id: sid, label: l ?? '' } : null);
+                          setPoId('');
+                        }}
+                      />
+                    </Field>
+                    <Field label="For">
+                      <select data-nav="1" className="field-input" value={category} disabled={done} onChange={(e) => setCategory(e.target.value as PurchaseCategory)}>
+                        {PURCHASE_CATEGORY_KEYS.map((k) => (
+                          <option key={k} value={k}>
+                            {PURCHASE_CATEGORIES[k]}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    {action === 'purchase' && (
+                      <Field label="Against purchase order">
+                        <select data-nav="1" className="field-input" value={poId} disabled={done || !supplier} onChange={(e) => setPoId(e.target.value)}>
+                          <option value="">— none —</option>
+                          {item.suggestBuy?.vendorPo && !(supplierPos.data ?? []).some((p) => p.id === item.suggestBuy!.vendorPo!.id) && <option value={item.suggestBuy.vendorPo.id}>{item.suggestBuy.vendorPo.label}</option>}
+                          {(supplierPos.data ?? [])
+                            .filter((p) => p.supplierName === supplier?.label)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.number} · ₹{Number(p.totalAmount).toLocaleString('en-IN')}
+                              </option>
+                            ))}
+                        </select>
+                      </Field>
+                    )}
+                  </div>
                 </section>
               )}
 
@@ -498,7 +566,7 @@ export function InboxReviewPage() {
               {!done && can('sales.intake', 'edit') && (
                 <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-white/95 py-3">
                   <Button variant="primary" icon={<Check className="size-3.5" />} loading={busy === 'confirm'} onClick={confirm} shortcut="mod+enter" data-nav-end>
-                    {action === 'order' ? 'Create the order' : action === 'lot' ? 'Update the lot' : action === 'lot-doc' ? 'Tick on the lot checklist' : action === 'order-lc' ? 'Add LC to the order' : 'Confirm and file'}
+                    {action === 'order' ? 'Create the order' : action === 'lot' ? 'Update the lot' : action === 'lot-doc' ? 'Tick on the lot checklist' : action === 'order-lc' ? 'Add LC to the order' : action === 'purchase' ? 'Enter the purchase invoice' : action === 'vendor-po' ? 'Save the purchase order' : 'Confirm and file'}
                   </Button>
                   <span className="text-[12px] text-slate-500">Enter next field · Ctrl+Enter confirm · Alt+I ignore · Alt+N next · Esc back</span>
                 </div>

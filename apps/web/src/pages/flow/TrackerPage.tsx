@@ -11,6 +11,7 @@ import { Link, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 import { enterNavigation } from '../../components/EntityForm';
 import { Modal } from '../../components/Modal';
+import { Chip, groupByOrder, OrderGroups } from '../../components/OrderGroups';
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../components/ui';
 import { api, qs } from '../../lib/api';
 import { useHotkeys } from '../../lib/hotkeys';
@@ -45,6 +46,7 @@ interface TrackRow {
   buyerPoRef: string | null;
   lcNumber: string | null;
   buyer: string | null;
+  orderSource: string | null;
   docsDone: number;
   docsNeeded: number;
   received: string;
@@ -63,7 +65,6 @@ export function TrackerPage() {
   const market = params.get('market') ?? '';
   const [search, setSearch] = useState(params.get('search') ?? '');
   const debounced = useDebounced(search);
-  const [sel, setSel] = useState(0);
   const [open, setOpen] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const q = useQuery({
@@ -78,25 +79,21 @@ export function TrackerPage() {
     if (v) n.set(k, v);
     else n.delete(k);
     setParams(n, { replace: true });
-    setSel(0);
   };
   useEffect(() => set('search', debounced), [debounced]); // eslint-disable-line react-hooks/exhaustive-deps
   useHotkeys(
     {
       '/': () => searchRef.current?.focus(),
-      arrowdown: () => setSel((i) => Math.min(i + 1, rows.length - 1)),
-      arrowup: () => setSel((i) => Math.max(i - 1, 0)),
-      enter: () => rows[sel] && setOpen(rows[sel].id),
       'alt+1': () => set('status', 'open'),
       'alt+2': () => set('status', 'all'),
     },
-    [rows, sel, params],
+    [params],
   );
   const alerts = rows.filter((r) => r.alerts.length).length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader title="Shipment tracker" subtitle="Every lot with booking, invoice, BL, shipping bill, LC, ETA, documents and payment — filled from confirmed inbox documents or by hand." />
+      <PageHeader title="Shipment tracker" subtitle="Click an order to see its lots: booking, invoice, BL, ETA, documents and payment — filled from confirmed documents or by hand." />
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5 sm:px-5">
         <div className="relative w-full max-w-xs">
           <Search className="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-slate-400" />
@@ -137,86 +134,99 @@ export function TrackerPage() {
         ) : !rows.length ? (
           <Card className="p-8 text-center text-[13px] text-slate-500">No lots. Plan an order's lots first (open the order → Plan shipments → Automatic plan).</Card>
         ) : (
-          <Card className="overflow-x-auto">
-            <table className="w-full text-[12.5px]">
-              <thead className="bg-slate-50 text-left text-[11.5px] text-slate-500">
-                <tr>
-                  {['Order / lot', 'Buyer', 'Size', 'Line · booking', 'Invoice', 'BL', 'LC', 'Vessel · ETA', 'Docs', 'Payment', ''].map((h) => (
-                    <th key={h} className="px-2.5 py-2 font-medium whitespace-nowrap">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr
-                    key={r.id}
-                    aria-selected={i === sel}
-                    onClick={() => setSel(i)}
-                    onDoubleClick={() => setOpen(r.id)}
-                    ref={(el) => {
-                      if (i === sel) el?.scrollIntoView({ block: 'nearest' });
-                    }}
-                    className={`border-t border-slate-100 align-top ${i === sel ? 'bg-brand-50 outline-2 -outline-offset-2 outline-brand-600/40' : 'hover:bg-slate-50'}`}
-                  >
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      <button type="button" className="font-medium text-brand-700 hover:underline" onClick={() => setOpen(r.id)}>
-                        {r.orderNumber} · Lot {r.lotNo}
-                      </button>
-                      <div className="text-[11.5px] text-slate-500">
-                        {r.period ?? d(r.targetShipDate)} · {r.market}
-                      </div>
-                    </td>
-                    <td className="px-2.5 py-2">
-                      {r.buyer ?? '—'}
-                      {r.buyerPoRef && <div className="text-[11.5px] text-slate-500">PO {r.buyerPoRef}</div>}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap tabular-nums">
-                      {formatAmount(r.quantityMt, 3)} MT
-                      <div className="text-[11.5px] text-slate-500">{r.containerCount} × 20'</div>
-                    </td>
-                    <td className="px-2.5 py-2">
-                      {r.shippingLine ?? '—'}
-                      {r.bookingNo && <div className="font-mono text-[11.5px] text-slate-500">{r.bookingNo}</div>}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      {r.invoiceNumber ?? '—'}
-                      {r.invoiceAmount && <div className="text-[11.5px] text-slate-500 tabular-nums">{formatAmount(r.invoiceAmount, 0)}</div>}
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      <Badge tone={BL_TONE[r.blStatus]}>{r.blStatus.toLowerCase()}</Badge>
-                      {r.blNumber && <div className="font-mono text-[11.5px] text-slate-500">{r.blNumber}</div>}
-                    </td>
-                    <td className="px-2.5 py-2 font-mono text-[11.5px]">{r.lcNumber ?? '—'}</td>
-                    <td className="px-2.5 py-2">
-                      {r.vessel ?? '—'}
-                      <div className="text-[11.5px] text-slate-500">ETA {d(r.eta)}</div>
-                    </td>
-                    <td className="px-2.5 py-2 whitespace-nowrap">
-                      <span className={r.docsDone === r.docsNeeded ? 'text-emerald-700' : 'text-slate-600'}>
-                        {r.docsDone}/{r.docsNeeded}
-                      </span>
-                    </td>
-                    <td className="px-2.5 py-2">
-                      <Badge tone={PAY_TONE[r.payment]}>{r.payment === 'PART' ? 'part' : r.payment.toLowerCase()}</Badge>
-                    </td>
-                    <td className="px-2.5 py-2">
-                      {r.alerts.map((a) => (
-                        <div key={a} className="flex items-center gap-1 text-[11.5px] whitespace-nowrap text-amber-700">
-                          <AlertTriangle className="size-3" /> {a}
-                        </div>
-                      ))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <OrderGroups
+            groups={groupByOrder(rows, (r) => ({ orderId: r.orderId, orderNumber: r.orderNumber, buyer: r.buyer, buyerPoRef: r.buyerPoRef, orderSource: r.orderSource }))}
+            summary={(g) => {
+              const done = g.items.reduce((a, r) => a + r.docsDone, 0);
+              const need = g.items.reduce((a, r) => a + r.docsNeeded, 0);
+              const warn = g.items.reduce((a, r) => a + r.alerts.length, 0);
+              return (
+                <>
+                  <Chip>{g.items.length} lot(s)</Chip>
+                  <Chip tone="blue">{g.items.filter((r) => r.blStatus === 'RECEIVED' || r.blStatus === 'RELEASED').length} BL in</Chip>
+                  <Chip tone={done === need ? 'green' : 'slate'}>
+                    documents {done}/{need}
+                  </Chip>
+                  {warn > 0 && <Chip tone="amber">{warn} alert(s)</Chip>}
+                </>
+              );
+            }}
+          >
+            {(g) => <LotTable rows={g.items} onOpen={setOpen} />}
+          </OrderGroups>
         )}
-        <div className="mt-2 text-[12px] text-slate-400 max-md:hidden">/ search · ↑ ↓ choose · Enter open the lot · Alt+1 open lots · Alt+2 all</div>
       </div>
       {open && <LotModal id={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+/** The lots of one order. */
+function LotTable({ rows, onOpen }: { rows: TrackRow[]; onOpen: (id: string) => void }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-[12.5px]">
+        <thead className="text-left text-[11.5px] text-slate-500">
+          <tr>
+            {['Lot', 'Size', 'Line · booking', 'Invoice', 'BL', 'Vessel · ETA', 'Docs', 'Payment', ''].map((h) => (
+              <th key={h} className="px-2.5 py-1.5 font-medium whitespace-nowrap">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {[...rows]
+            .sort((a, b) => a.lotNo - b.lotNo)
+            .map((r) => (
+              <tr key={r.id} onClick={() => onOpen(r.id)} className="cursor-pointer border-t border-slate-100 align-top hover:bg-brand-50">
+                <td className="px-2.5 py-2 whitespace-nowrap">
+                  <button type="button" className="font-medium text-brand-700 hover:underline">
+                    Lot {r.lotNo}
+                  </button>
+                  <div className="text-[11.5px] text-slate-500">
+                    {r.period ?? d(r.targetShipDate)} · {r.market}
+                  </div>
+                </td>
+                <td className="px-2.5 py-2 whitespace-nowrap tabular-nums">
+                  {formatAmount(r.quantityMt, 3)} MT
+                  <div className="text-[11.5px] text-slate-500">{r.containerCount} × 20'</div>
+                </td>
+                <td className="px-2.5 py-2">
+                  {r.shippingLine ?? '—'}
+                  {r.bookingNo && <div className="font-mono text-[11.5px] text-slate-500">{r.bookingNo}</div>}
+                </td>
+                <td className="px-2.5 py-2 whitespace-nowrap">
+                  {r.invoiceNumber ?? '—'}
+                  {r.invoiceAmount && <div className="text-[11.5px] text-slate-500 tabular-nums">{formatAmount(r.invoiceAmount, 0)}</div>}
+                </td>
+                <td className="px-2.5 py-2 whitespace-nowrap">
+                  <Badge tone={BL_TONE[r.blStatus]}>{r.blStatus.toLowerCase()}</Badge>
+                  {r.blNumber && <div className="font-mono text-[11.5px] text-slate-500">{r.blNumber}</div>}
+                </td>
+                <td className="px-2.5 py-2">
+                  {r.vessel ?? '—'}
+                  <div className="text-[11.5px] text-slate-500">ETA {d(r.eta)}</div>
+                </td>
+                <td className="px-2.5 py-2 whitespace-nowrap">
+                  <span className={r.docsDone === r.docsNeeded ? 'text-emerald-700' : 'text-slate-600'}>
+                    {r.docsDone}/{r.docsNeeded}
+                  </span>
+                </td>
+                <td className="px-2.5 py-2">
+                  <Badge tone={PAY_TONE[r.payment]}>{r.payment === 'PART' ? 'part' : r.payment.toLowerCase()}</Badge>
+                </td>
+                <td className="px-2.5 py-2">
+                  {r.alerts.map((a) => (
+                    <div key={a} className="flex items-center gap-1 text-[11.5px] whitespace-nowrap text-amber-700">
+                      <AlertTriangle className="size-3" /> {a}
+                    </div>
+                  ))}
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -253,7 +263,7 @@ const TRACK_FIELDS: { key: string; label: string; type?: 'date' | 'select' }[] =
   { key: 'blStatus', label: 'BL status', type: 'select' },
 ];
 
-function LotModal({ id, onClose }: { id: string; onClose: () => void }) {
+export function LotModal({ id, onClose }: { id: string; onClose: () => void }) {
   const qc = useQueryClient();
   const { can } = useSession();
   const q = useQuery({ queryKey: ['lot-docs', id], queryFn: () => api.get<LotDetail>(`/shipments/${id}/documents`) });

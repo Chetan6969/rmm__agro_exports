@@ -6,6 +6,7 @@
  * Nothing here is final: every value is a suggestion with the text it came from (evidence); a person
  * checks it on the review screen and confirms. Corrections teach per-layout templates (see learn/apply).
  */
+import { applySchedule, findSupplierHints, parseDeliverySchedule, supplierHintText } from './po-extras.js';
 
 // ------------------------------------------------------------------ kinds
 
@@ -21,7 +22,7 @@ export interface IntakeKind {
   key: string;
   label: string;
   /** What confirming it does in the ERP. */
-  action: 'order' | 'order-lc' | 'lot' | 'lot-doc' | 'order-doc' | 'none';
+  action: 'order' | 'order-lc' | 'lot' | 'lot-doc' | 'vendor-po' | 'purchase' | 'none';
   /** Words that point to this kind (title words weigh most). */
   title: RegExp[];
   words: RegExp[];
@@ -55,6 +56,7 @@ export const INTAKE_KINDS: IntakeKind[] = [
       f('deliveryDate', 'Delivery / shipment by', 'date'),
       f('cropYear', 'Crop year'),
       f('brand', 'Brand'),
+      f('packagingSuppliers', 'Packaging suppliers named in the PO'),
       f('totalQuantityMt', 'Total quantity (MT)', 'number'),
       f('totalAmount', 'Total amount', 'money'),
     ],
@@ -214,12 +216,31 @@ export const INTAKE_KINDS: IntakeKind[] = [
   },
   {
     key: 'vendor_po',
-    label: 'Our purchase order (packaging / vendor)',
-    action: 'order-doc',
+    label: 'Our purchase order (to a supplier)',
+    action: 'vendor-po',
     title: [/purchase\s+order/i],
     words: [/supplier\s+\(bill\s+from\)/i, /voucher\s+no/i, /strips|bags|seal|tags|liner/i, /invoice\s+to/i],
     file: /(vendor po|purchase order_)/i,
     fields: [f('vendorPoNo', 'PO no.'), f('vendorName', 'Supplier'), f('poDate', 'Date', 'date'), f('totalAmount', 'Amount', 'money')],
+  },
+  {
+    key: 'purchase_invoice',
+    label: 'Purchase invoice (supplier bill)',
+    action: 'purchase',
+    title: [/tax\s+invoice/i, /purchase\s+invoice/i, /bill\s+of\s+supply/i, /mandi\s+(bill|parchi)/i],
+    words: [/\bGSTIN\b/i, /\b(HSN|SAC)\b/i, /\b[CSI]GST\b/i, /\btaxable\b/i, /invoice\s+no/i],
+    file: /(purchase (invoice|bill)|tax invoice|mandi bill|supplier bill)/i,
+    fields: [
+      f('supplierName', 'Supplier'),
+      f('supplierGstin', 'Supplier GSTIN'),
+      f('invoiceNo', "Supplier's invoice no."),
+      f('invoiceDate', 'Invoice date', 'date'),
+      f('quantity', 'Quantity', 'number'),
+      f('taxableAmount', 'Taxable amount', 'money'),
+      f('gstAmount', 'GST amount', 'money'),
+      f('totalAmount', 'Invoice total', 'money'),
+      f('vendorPoNo', 'Our purchase order no.'),
+    ],
   },
   {
     key: 'other',
@@ -270,6 +291,9 @@ export function classify(text: string, fileName = ''): Classification {
     scores.find((s) => s.kind === 'proforma')!.score -= 6;
   }
   OWN_INVOICE_RX.lastIndex = 0;
+  // our export invoice carries GSTIN / HSN too: it is never a supplier's bill
+  if (/export\s+invoice|custom\s+invoice|invoice\s+cum\s+packing/i.test(body) || OWN_INVOICE_RX.test(body)) scores.find((s) => s.kind === 'purchase_invoice')!.score -= 14;
+  OWN_INVOICE_RX.lastIndex = 0;
   scores.sort((a, b) => b.score - a.score);
   const [top, next] = scores;
   if (!top || top.score < 4) return { kind: 'other', confidence: 0, scores };
@@ -297,6 +321,8 @@ export interface ExtractedLine {
   rate: string | null;
   amount: string | null;
   dispatchBy: string | null;
+  /** Packing from the delivery schedule ("4 × 10 KG"); packKg is then the outer bag. */
+  packing?: string | null;
 }
 
 export interface ExtractionResult {
@@ -622,6 +648,41 @@ const RULES: Record<string, Rule> = {
     put(o, 'totalAmount', valueAfter(t, /\bTotal\b/i, MONEY_RX), 0.5, 'money');
   },
 };
+export const GSTIN_RX = /\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z0-9]Z[A-Z0-9]\b/g;
+
+RULES.purchase_invoice = (t, o) => {
+  put(o, 'invoiceNo', valueAfter(t, /\b(Invoice\s+(No|Number)|Bill\s+(No|Number))\b\.?/i, /(?=[A-Z/-]*\d)[A-Z0-9][A-Z0-9/\-]{0,30}/i), 0.75);
+  put(o, 'invoiceDate', valueAfter(t, /\b(Invoice\s+Date|Bill\s+Date)\b/i, DATE_RX), 0.8, 'date');
+  put(o, 'invoiceDate', valueAfter(t, /\b(Dated?)\b/i, DATE_RX, DATE_SKIP), 0.55, 'date');
+  put(o, 'supplierName', valueAfter(t, /\b(Supplier|Seller|Sold\s+by|Consignor)\b\s*(\(Bill\s+from\))?/i, /[A-Z][A-Za-z0-9&.,()' -]{3,60}/), 0.6);
+  // many bills just head the page with the supplier's name
+  const head = lines(t)
+    .slice(0, 8)
+    .find((l) => /\b(Industries|Enterprises?|Traders|Packaging|Packers|Mills?|Agrotech|Agro|Pvt|Private|Limited|LLP|Corporation|Company)\b/i.test(l) && !/invoice|bill\s+to|buyer|consignee/i.test(l));
+  if (head) o.supplierName ??= { value: head.slice(0, 80), confidence: 0.45, evidence: head, source: 'rule' };
+  const gst = (t.match(GSTIN_RX) ?? [])[0];
+  if (gst) o.supplierGstin ??= { value: gst, confidence: 0.6, evidence: gst, source: 'rule' };
+  put(o, 'taxableAmount', valueAfter(t, /\bTaxable\s+(Value|Amount)\b/i, TOTAL_RX), 0.7, 'money');
+  let tax = 0;
+  const taxLines: string[] = [];
+  for (const l of lines(t)) {
+    if (!/\b(CGST|SGST|IGST|UTGST)\b/i.test(l) || /total/i.test(l)) continue;
+    const nums = l.match(/\d[\d,]*\.\d{2}\b/g);
+    if (!nums) continue;
+    tax += Number(nums[nums.length - 1].replace(/,/g, ''));
+    taxLines.push(l);
+  }
+  if (tax > 0) o.gstAmount ??= { value: String(Math.round(tax * 100) / 100), confidence: 0.6, evidence: taxLines.join(' / ').slice(0, 200), source: 'rule' };
+  // the invoice total is the largest amount printed next to a "total" label
+  const totals = lines(t)
+    .map((l, i, all) => (/\b(grand\s+total|total\s+(invoice\s+)?(amount|value)|invoice\s+value|net\s+(amount|payable)|total)\b/i.test(l) ? { l, n: [...`${l} ${/\d/.test(l) ? '' : (all[i + 1] ?? '')}`.matchAll(new RegExp(TOTAL_RX.source, 'g'))].map((m) => Number(parseAmount(m[0]) ?? 0)) } : null))
+    .filter((x): x is { l: string; n: number[] } => !!x && x.n.length > 0);
+  const best = totals.flatMap((x) => x.n.map((n) => ({ n, l: x.l }))).sort((a, b) => b.n - a.n)[0];
+  if (best) o.totalAmount ??= { value: String(best.n), confidence: 0.7, evidence: best.l.slice(0, 200), source: 'rule' };
+  put(o, 'quantity', valueAfter(t, /\b(Total\s+)?(Qty|Quantity)\b/i, MONEY_RX), 0.4, 'number');
+  put(o, 'vendorPoNo', valueAfter(t, /\b(Buyer'?s\s+Order\s+No|P\.?\s?O\.?\s+No|Order\s+No)\b\.?/i, /(?=[A-Z/-]*\d)[A-Z0-9][A-Z0-9/\-]{0,24}/i), 0.6);
+};
+
 const certRule: Rule = (t, o) => {
   put(o, 'certificateNo', valueAfter(t, /\b(Certificate\s+(No|Number)|Cert\.?\s*No|Ref(erence)?\s*No|Serial\s+No)\b\.?/i, REF_RX), 0.65);
   put(o, 'certificateDate', valueAfter(t, /\b(Date\s+of\s+issue|Issue\s+date|Place\s+and\s+date)\b/i, DATE_RX), 0.7, 'date');
@@ -712,11 +773,15 @@ export function extract(text: string, kindKey: string, templates: LayoutTemplate
     if (hit) fields[t.field] = hit;
   }
   RULES[kind.key]?.(text, fields);
+  const hints = kind.key === 'buyer_po' ? findSupplierHints(text) : [];
+  if (hints.length) fields.packagingSuppliers ??= { value: supplierHintText(hints), confidence: 0.75, evidence: hints.map((h) => `${h.item} from ${h.supplier}`).join(' / '), source: 'rule' };
   common(text, fields);
   // keep only fields this kind shows (plus the matching references)
   const keep = new Set([...kind.fields.map((x) => x.key), 'invoiceNumber', 'buyerPoRef', 'batchNo', 'lcNumber']);
   for (const k of Object.keys(fields)) if (!keep.has(k)) delete fields[k];
-  const result: ExtractionResult = { fields, lines: kind.action === 'order' ? extractLines(text) : [], refs: findRefs(text) };
+  // item lines, split by the PO's delivery schedule (pack × city × month) when it has one
+  const items = kind.action === 'order' ? applySchedule(extractLines(text), parseDeliverySchedule(text)) : [];
+  const result: ExtractionResult = { fields, lines: items, refs: findRefs(text) };
   const lineAmount = result.lines.reduce((s, l) => s + Number(l.amount ?? 0), 0);
   if (lineAmount > 0 && (!fields.totalAmount || fields.totalAmount.source === 'rule')) {
     fields.totalAmount = { value: String(Math.round(lineAmount * 100) / 100), confidence: 0.85, evidence: `sum of ${result.lines.length} item lines`, source: 'rule' };

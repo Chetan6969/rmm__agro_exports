@@ -2,6 +2,7 @@ import { formatAmount, type PipelineView } from '@rmm/shared';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Boxes, Check, Container, PackageCheck, Search, Ship } from 'lucide-react';
 import { CheckpointPath, CheckpointSummary } from '../components/Checkpoints';
+import { Chip, groupByOrder, OrderGroups } from '../components/OrderGroups';
 import { useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { ErrorBox, PageHeader, Spinner } from '../components/ui';
@@ -18,6 +19,7 @@ interface Shipment {
   status: string;
   piId: string;
   piNumber: string | null;
+  orderSource: string | null;
   buyer: string | null;
   currency: string | null;
   chargeTotal: string;
@@ -69,16 +71,11 @@ export function ShipmentsPage() {
     };
   }, [rows]);
 
-  // group by order (PI)
-  const groups = useMemo(() => {
-    const m = new Map<string, { piId: string; piNumber: string | null; buyer: string | null; lots: Shipment[] }>();
-    for (const r of rows) {
-      const g = m.get(r.piId) ?? { piId: r.piId, piNumber: r.piNumber, buyer: r.buyer, lots: [] };
-      g.lots.push(r);
-      m.set(r.piId, g);
-    }
-    return [...m.values()].map((g) => ({ ...g, lots: g.lots.sort((a, b) => a.lotNo - b.lotNo) }));
-  }, [rows]);
+  // one folder per order (PO / PI)
+  const groups = useMemo(
+    () => groupByOrder([...rows].sort((a, b) => a.lotNo - b.lotNo), (r) => ({ orderId: r.piId, orderNumber: r.piNumber, buyer: r.buyer, orderSource: r.orderSource })),
+    [rows],
+  );
 
   if (!session?.activeCompany) return <div className="p-6"><ErrorBox error={new Error('Select a company first (Alt+C).')} /></div>;
   if (q.isLoading) return <Spinner />;
@@ -86,7 +83,7 @@ export function ShipmentsPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-slate-50">
-      <PageHeader title="Shipments" subtitle={`${session.activeCompany.name} · lots & live pipeline status`} />
+      <PageHeader title="Shipments" subtitle={`${session.activeCompany.name} · click an order to see its lots`} />
       <div className="flex-1 space-y-4 overflow-y-auto p-4 sm:p-5">
         {/* stats */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
@@ -126,25 +123,38 @@ export function ShipmentsPage() {
 
         {groups.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-white p-10 text-center text-slate-500">
-            No shipments. Open a proforma invoice and use “Plan shipments”.
+            No shipments. Open an order and plan its lots.
           </div>
         ) : (
-          groups.map((g) => {
-            const gMt = g.lots.filter((l) => l.status !== 'CANCELLED').reduce((a, l) => a + num(l.quantityMt), 0);
-            const gPct = g.lots.length ? Math.round(g.lots.reduce((a, l) => a + (l.pipeline?.percent ?? 0), 0) / g.lots.length) : 0;
-            return (
-              <section key={g.piId} className="rounded-xl border border-slate-200 bg-white shadow-sm">
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-2.5">
-                  <button type="button" onClick={() => navigate(`/plan/${g.piId}`)} className="font-mono text-[13px] font-semibold text-brand-700 hover:underline">{g.piNumber ?? '—'}</button>
-                  <span className="text-[13px] text-slate-600">{g.buyer ?? '—'}</span>
-                  <span className="ml-auto text-[12px] text-slate-400">{g.lots.length} lot{g.lots.length === 1 ? '' : 's'} · {formatAmount(String(gMt), 3)} MT · {gPct}% avg</span>
-                </div>
-                <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
-                  {g.lots.map((r) => <LotTile key={r.id} r={r} onOpen={() => navigate(`/plan/${r.piId}`)} />)}
-                </div>
-              </section>
-            );
-          })
+          <OrderGroups
+            groups={groups}
+            summary={(g) => {
+              const live = g.items.filter((l) => l.status !== 'CANCELLED');
+              const mt = live.reduce((a, l) => a + num(l.quantityMt), 0);
+              const shipped = live.filter((l) => l.status === 'SHIPPED').length;
+              const late = live.reduce((a, l) => a + (l.status === 'SHIPPED' ? 0 : l.pipeline.overdue), 0);
+              const pct = live.length ? Math.round(live.reduce((a, l) => a + (l.pipeline?.percent ?? 0), 0) / live.length) : 0;
+              return (
+                <>
+                  <Chip>
+                    {g.items.length} lot{g.items.length === 1 ? '' : 's'} · {formatAmount(String(mt), 3)} MT
+                  </Chip>
+                  <Chip tone={shipped && shipped === live.length ? 'green' : 'blue'}>
+                    {shipped}/{live.length} shipped · {pct}% done
+                  </Chip>
+                  {late > 0 && <Chip tone="red">{late} late</Chip>}
+                </>
+              );
+            }}
+          >
+            {(g) => (
+              <div className="grid gap-3 p-3 md:grid-cols-2 xl:grid-cols-3">
+                {g.items.map((r) => (
+                  <LotTile key={r.id} r={r} onOpen={() => navigate(`/plan/${r.piId}`)} />
+                ))}
+              </div>
+            )}
+          </OrderGroups>
         )}
       </div>
     </div>

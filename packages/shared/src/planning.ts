@@ -150,6 +150,13 @@ export function packagingNeeds(lines: { packingTypeId: string | null; packingNam
   return out;
 }
 
+// ------------------------------------------------------------------ buying side
+
+/** What a purchase order or purchase invoice is for. */
+export const PURCHASE_CATEGORY_KEYS = ['PACKAGING', 'PADDY_RICE', 'SERVICE', 'OTHER'] as const;
+export type PurchaseCategory = (typeof PURCHASE_CATEGORY_KEYS)[number];
+export const PURCHASE_CATEGORIES: Record<PurchaseCategory, string> = { PACKAGING: 'Packaging', PADDY_RICE: 'Paddy / rice', SERVICE: 'Service (CHA, transport, testing…)', OTHER: 'Other' };
+
 // ------------------------------------------------------------------ lot document checklist
 
 /** Documents every lot needs, by market (keys are intake document kinds). */

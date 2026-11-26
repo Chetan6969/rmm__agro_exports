@@ -7,6 +7,7 @@
  *  packaging_items        packaging material an order needs (bags, inner packs, tags, strips, seals)
  *  vendor_pos             our purchase orders for that material, to packaging suppliers
  */
+import { sql } from 'drizzle-orm';
 import { boolean, date, index, integer, jsonb, numeric, pgTable, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { Extracted, ExtractedLine } from '@rmm/shared';
 import { id, recordColumns } from './columns.js';
@@ -156,6 +157,8 @@ export const vendorPos = pgTable(
     proformaInvoiceId: uuid('proforma_invoice_id'),
     /** DRAFT | SENT | RECEIVED | CANCELLED */
     status: text('status').notNull().default('DRAFT'),
+    /** PACKAGING | PADDY_RICE | SERVICE | OTHER */
+    category: text('category').notNull().default('PACKAGING'),
     deliveryBy: date('delivery_by', { mode: 'string' }),
     lines: jsonb('lines').$type<{ description: string; quantity: number; unit: string; rate: string; amount: string }[]>().notNull(),
     totalAmount: numeric('total_amount', { precision: 15, scale: 2 }).notNull().default('0'),
@@ -164,4 +167,39 @@ export const vendorPos = pgTable(
     ...recordColumns(),
   },
   (t) => [uniqueIndex('vendor_pos_number_uq').on(t.companyId, t.number), index('vendor_pos_order_idx').on(t.proformaInvoiceId)],
+);
+
+/** A supplier's bill to us (packaging, paddy / rice, services), kept apart from our export invoices. */
+export const purchaseInvoices = pgTable(
+  'purchase_invoices',
+  {
+    id: id(),
+    companyId: company(),
+    /** The supplier's own invoice number. */
+    invoiceNo: text('invoice_no').notNull(),
+    invoiceDate: date('invoice_date', { mode: 'string' }).notNull(),
+    supplierId: uuid('supplier_id').notNull(),
+    vendorPoId: uuid('vendor_po_id'),
+    proformaInvoiceId: uuid('proforma_invoice_id'),
+    shipmentId: uuid('shipment_id'),
+    category: text('category').notNull().default('PACKAGING'),
+    description: text('description'),
+    quantity: numeric('quantity', { precision: 16, scale: 3 }),
+    unit: text('unit'),
+    taxableAmount: numeric('taxable_amount', { precision: 15, scale: 2 }),
+    gstAmount: numeric('gst_amount', { precision: 15, scale: 2 }),
+    totalAmount: numeric('total_amount', { precision: 15, scale: 2 }).notNull(),
+    paidAmount: numeric('paid_amount', { precision: 15, scale: 2 }).notNull().default('0'),
+    dueDate: date('due_date', { mode: 'string' }),
+    fileId: uuid('file_id'),
+    inboxItemId: uuid('inbox_item_id'),
+    notes: text('notes'),
+    ...recordColumns(),
+  },
+  (t) => [
+    // the same bill cannot be entered twice
+    uniqueIndex('purchase_invoices_supplier_no_uq').on(t.companyId, t.supplierId, sql`lower(${t.invoiceNo})`).where(sql`deleted_at is null`),
+    index('purchase_invoices_order_idx').on(t.proformaInvoiceId),
+    index('purchase_invoices_company_date_idx').on(t.companyId, t.invoiceDate),
+  ],
 );

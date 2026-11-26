@@ -206,6 +206,12 @@ INBOX and is never deleted or marked as read.
 The ERP reads the export paperwork itself and proposes the next step; a person checks and confirms.
 Everything is read **on this server** — no document or text is sent to any cloud or AI service.
 
+**Start here: Export flow → Orders.** Every PO / PI is one file: where it stands and what to do next, its
+lots, its documents (a folder for the order papers and one per lot, with upload buttons), plan and packaging,
+purchases, freight and payments. The Document inbox, Shipments, Shipment tracker, Purchase orders, Purchase
+invoices and Freight lists are also grouped by order: click an order to open what is inside. Orders from a
+buyer's own PO and our PIs carry different tags and can be listed apart (*Buyer PO* / *Our PI*).
+
 **1. Orders without a PI.** An order (Sales → Orders & PIs) now says how it came: *Our PI* or
 *Buyer PO / contract*. When the buyer sends their own PO, no PI is shared: the order is planned,
 produced and shipped straight from it, and prints as an *Order confirmation*. Order lines carry the
@@ -217,12 +223,18 @@ Excel (.xlsx/.xls), Word (.docx/.doc), text:
   (Tesseract, English + Arabic models bundled in `node_modules`, nothing downloaded at run time).
 - The type is recognised (buyer PO / contract, PI, LC, booking, BL, shipping bill, export invoice,
   packing list, COO, phyto, fumigation, health certificate, COC, test report, APEDA/COI, bill of exchange,
-  EIA intimation, traceability, our packaging PO) and its fields are read with the words they came from.
+  EIA intimation, traceability, our purchase order to a supplier, a supplier's purchase invoice) and its fields are read with the words they came from.
 - It is matched to its order and lot by the numbers in it (our invoice no., buyer PO, LC, BL / booking no.).
 - The review screen shows the original beside the values; confirming creates the order (buyer PO),
-  adds the LC, updates the lot (booking, BL, shipping bill / LEO, invoice) or ticks the lot's checklist.
+  adds the LC, updates the lot (booking, BL, shipping bill / LEO, invoice), enters the purchase invoice
+  against its supplier and purchase order, or ticks the lot's checklist.
 - Every correction is remembered for that document layout, so the next document from the same sender
   is read right. Duplicates (same file) are recognised; deleted items go to the recycle bin.
+
+A buyer PO with a **delivery schedule** (pack such as 4 x 10 KG, destination city, month, P1 / P2) has its item
+lines split by it, with dispatch dates and the right packing. Sentences naming packaging suppliers
+("procure the bags from X and seals from Y") are read too and pre-fill the supplier on those packaging lines.
+Check both on the review screen.
 
 **3. Automatic planning** (order → Plan shipments → Automatic plan). Order lines become lots by dispatch
 window, port by port, at most *N* containers a lot; each lot gets bags and 20' containers from the
@@ -230,11 +242,20 @@ packing master (net kg per bag, MT per container). Preview, then create.
 
 **4. Packaging** (same page). Outer bags, inner packs (4 × 10 kg → 4), tags, strips and seals for the
 planned bags plus a spare % (bags shipped free); pick the supplier and rate per line, then
-**Create purchase orders** — one numbered, printable PO per supplier (Export flow → Packaging POs).
+**Create purchase orders** — one numbered, printable PO per supplier (Purchases → Purchase orders).
 
 **5. Shipment tracker** (Export flow → Shipment tracker) — the old Track Sheet: every lot with line,
 booking, invoice, BL status, LC, vessel / ETA, documents done / needed (Gulf and EU checklists) and
 payment, with alerts (ship date passed, vessel arrived without BL, LEO done without BL, documents missing).
+
+**Buying side (Purchases menu), kept apart from sales.**
+- **Purchase orders** — what we order from suppliers: packaging made from an order's plan, or typed in
+  (`Alt+N`) for paddy / rice, services and other things. Each shows how much of it has been billed.
+- **Purchase invoices** — the bills suppliers send: entered by hand or confirmed from a scan in the inbox,
+  linked to the supplier, the purchase order, the order and the lot, with GST, due date and what is paid.
+  The same supplier invoice number cannot be entered twice.
+- Inside an order file the **Purchases** tab (`Alt+4`) shows both, in separate blocks (`Alt+O` new purchase
+  order, `Alt+I` new purchase invoice). Each has its own permission, and deleted ones go to the recycle bin.
 
 **Old folders.** Read a **local copy** of the document share (never the share itself) into the inbox,
 or measure how well documents are read, from the server:

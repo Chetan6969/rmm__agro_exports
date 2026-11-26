@@ -262,6 +262,11 @@ export async function freightRoutes(app: FastifyInstance) {
           readyDate: e.readyDate,
           replyBy: e.replyBy,
           shipmentId: e.shipmentId,
+          orderId: sql<string | null>`coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id))`,
+          orderNumber: sql<string | null>`(select pi.document_number from proforma_invoices pi where pi.id = coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id)))`,
+          orderSource: sql<string | null>`(select pi.order_source from proforma_invoices pi where pi.id = coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id)))`,
+          buyer: sql<string | null>`(select c.name from proforma_invoices pi join customers c on c.id = pi.buyer_id where pi.id = coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id)))`,
+          lotNo: sql<number | null>`(select s.lot_no from shipments s where s.id = freight_enquiries.shipment_id)`,
           sent: sql<number>`(select count(*)::int from freight_threads t where t.enquiry_id = freight_enquiries.id)`,
           replied: sql<number>`(select count(*)::int from freight_threads t where t.enquiry_id = ${e.id} and t.last_inbound_at is not null)`,
           quoted: sql<number>`(select count(distinct q.thread_id)::int from freight_quotes q where q.enquiry_id = freight_enquiries.id)`,
@@ -271,7 +276,7 @@ export async function freightRoutes(app: FastifyInstance) {
         .from(e)
         .where(and(...conds))
         .orderBy(desc(e.enquiryDate), desc(e.number))
-        .limit(500);
+        .limit(2000);
       return rows;
     });
   });

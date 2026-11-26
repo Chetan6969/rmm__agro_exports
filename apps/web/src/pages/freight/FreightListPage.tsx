@@ -3,6 +3,7 @@ import { ArrowRight, BellRing, CalendarDays, Container, Mail, MapPin, Minus, Plu
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { enterNavigation, focusSibling } from '../../components/EntityForm';
+import { Chip, groupByOrder, OrderGroups } from '../../components/OrderGroups';
 import { RefSelect } from '../../components/RefSelect';
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../components/ui';
 import { api, qs } from '../../lib/api';
@@ -50,13 +51,7 @@ export function FreightListPage() {
   });
   const navigate = useNavigate();
   const rows = q.data ?? [];
-  const [sel, setSel] = useState(0);
   const searchRef = useRef<HTMLInputElement>(null);
-  const tableRef = useRef<HTMLTableSectionElement>(null);
-  useEffect(() => setSel(0), [status, debounced]);
-  useEffect(() => {
-    tableRef.current?.querySelector(`[data-row="${sel}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [sel]);
   const setStatus = (s: string) => {
     const n = new URLSearchParams(params);
     n.set('status', s);
@@ -65,14 +60,11 @@ export function FreightListPage() {
   useHotkeys(
     {
       '/': () => searchRef.current?.focus(),
-      arrowdown: () => setSel((i) => Math.min(i + 1, rows.length - 1)),
-      arrowup: () => setSel((i) => Math.max(i - 1, 0)),
-      enter: () => rows[sel] && navigate(`/freight/${rows[sel].id}`),
       'alt+n': () => can('sales.freight', 'create') && navigate('/freight/new'),
       'alt+m': () => navigate('/freight/mailbox'),
       ...Object.fromEntries(STATUSES.map((s, i) => [`alt+${i + 1}`, () => setStatus(s)])),
     },
-    [rows, sel, params],
+    [params],
   );
 
   return (
@@ -108,7 +100,7 @@ export function FreightListPage() {
               if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape') {
                 e.preventDefault();
                 e.currentTarget.blur();
-                if (e.key === 'Enter' && rows[0]) navigate(`/freight/${rows[0].id}`);
+                if (e.key === 'Enter' && rows.length === 1) navigate(`/freight/${rows[0].id}`);
               }
             }}
             aria-label="Search enquiries"
@@ -128,7 +120,7 @@ export function FreightListPage() {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-[12px] text-slate-400 max-md:hidden">/ search · ↑ ↓ choose · Enter open · Alt+N new · Alt+1–5 status</span>
+        <span className="ml-auto text-[12px] text-slate-400 max-md:hidden">/ search · Alt+N new · Alt+1–5 status</span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-5">
         {q.isLoading ? (
@@ -140,53 +132,65 @@ export function FreightListPage() {
             No enquiries here yet. {can('sales.freight', 'create') && <Link className="text-brand-700 underline" to="/freight/new">Create one</Link>} — or press "Get freight quotes" on a shipment lot.
           </Card>
         ) : (
-          <Card className="overflow-x-auto">
-            <table className="w-full text-[13px]">
-              <thead className="bg-slate-50 text-left text-[12px] text-slate-500">
-                <tr>
-                  {['Enquiry', 'Date', 'Route', 'Containers', 'Ready', 'Replies', 'Status'].map((h) => (
-                    <th key={h} className="px-3 py-2 font-medium">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody ref={tableRef}>
-                {q.data.map((r, i) => (
-                  <tr
-                    key={r.id}
-                    data-row={i}
-                    aria-selected={i === sel}
-                    onClick={() => setSel(i)}
-                    onDoubleClick={() => navigate(`/freight/${r.id}`)}
-                    className={`border-t border-slate-100 ${i === sel ? 'bg-brand-50 outline-2 -outline-offset-2 outline-brand-600/40' : 'hover:bg-slate-50'}`}
-                  >
-                    <td className="px-3 py-2">
-                      <Link to={`/freight/${r.id}`} className="font-medium text-brand-700 hover:underline">
-                        {r.number}
-                      </Link>
-                      {r.unread > 0 && <span className="ml-2 rounded-full bg-brand-700 px-1.5 text-[11px] text-white">{r.unread} new</span>}
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">{fmtDate(r.enquiryDate)}</td>
-                    <td className="px-3 py-2">
-                      {r.portOfLoading} → {r.portOfDischarge}
-                    </td>
-                    <td className="px-3 py-2">
-                      {r.containerCount} × {r.containerType}
-                    </td>
-                    <td className="px-3 py-2 text-slate-600">{fmtDate(r.readyDate)}</td>
-                    <td className="px-3 py-2 text-slate-600">
-                      {r.replied}/{r.sent} replied · {r.quoted} quoted
-                    </td>
-                    <td className="px-3 py-2">
-                      <Badge tone={ENQUIRY_TONE[r.status]}>{label(r.status)}</Badge>
-                      {r.awardedTo && <span className="ml-1.5 text-slate-600">{r.awardedTo}</span>}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
+          <OrderGroups
+            groups={groupByOrder(rows, (r) => ({ orderId: r.orderId, orderNumber: r.orderNumber, buyer: r.buyer, orderSource: r.orderSource }))}
+            noOrderLabel="Enquiries not linked to an order"
+            summary={(g) => {
+              const unread = g.items.reduce((a, r) => a + r.unread, 0);
+              const booked = g.items.filter((r) => r.status === 'AWARDED').length;
+              return (
+                <>
+                  <Chip>{g.items.length} enquiry(ies)</Chip>
+                  {booked > 0 && <Chip tone="green">{booked} booked</Chip>}
+                  {unread > 0 && <Chip tone="amber">{unread} new reply(ies)</Chip>}
+                </>
+              );
+            }}
+          >
+            {(g) => (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[13px]">
+                  <thead className="text-left text-[12px] text-slate-500">
+                    <tr>
+                      {['Enquiry', 'Lot', 'Date', 'Route', 'Containers', 'Ready', 'Replies', 'Status'].map((h) => (
+                        <th key={h} className="px-3 py-1.5 font-medium">
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {g.items.map((r) => (
+                      <tr key={r.id} onClick={() => navigate(`/freight/${r.id}`)} className="cursor-pointer border-t border-slate-100 hover:bg-brand-50">
+                        <td className="px-3 py-2">
+                          <Link to={`/freight/${r.id}`} className="font-medium text-brand-700 hover:underline">
+                            {r.number}
+                          </Link>
+                          {r.unread > 0 && <span className="ml-2 rounded-full bg-brand-700 px-1.5 text-[11px] text-white">{r.unread} new</span>}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600">{r.lotNo ? `Lot ${r.lotNo}` : '—'}</td>
+                        <td className="px-3 py-2 text-slate-600">{fmtDate(r.enquiryDate)}</td>
+                        <td className="px-3 py-2">
+                          {r.portOfLoading} → {r.portOfDischarge}
+                        </td>
+                        <td className="px-3 py-2">
+                          {r.containerCount} × {r.containerType}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600">{fmtDate(r.readyDate)}</td>
+                        <td className="px-3 py-2 text-slate-600">
+                          {r.replied}/{r.sent} replied · {r.quoted} quoted
+                        </td>
+                        <td className="px-3 py-2">
+                          <Badge tone={ENQUIRY_TONE[r.status]}>{label(r.status)}</Badge>
+                          {r.awardedTo && <span className="ml-1.5 text-slate-600">{r.awardedTo}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </OrderGroups>
         )}
       </div>
     </div>

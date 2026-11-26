@@ -15,10 +15,14 @@ import {
   innerPacks,
   intakeKind,
   isDecimal,
+  componentsFor,
+  matchSupplier,
+  parseSupplierHintText,
   mul,
   packagingNeeds,
   PACKAGING_COMPONENTS,
   planLots,
+  PURCHASE_CATEGORY_KEYS,
   round,
   type PackagingComponent,
   type PlanLineInput,
@@ -31,8 +35,9 @@ import { audit } from '../../core/audit.js';
 import { inTenantTx, requireCompany, requireCtx, requirePerm, type RequestContext } from '../../core/context.js';
 import { badRequest, conflict, notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
-import { companies, docTables, masterTables, packagingItems, payments, shipmentDocuments, shipmentLines, shipments, vendorPos } from '../../db/schema/index.js';
+import { companies, docTables, inboxItems, masterTables, packagingItems, payments, shipmentDocuments, shipmentLines, shipments, vendorPos } from '../../db/schema/index.js';
 import { allocateNumber } from '../numbering.js';
+import { billedByPo } from '../purchases/purchases.routes.js';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
@@ -103,6 +108,22 @@ async function lotsWithLines(tx: Tx, piId: string) {
   const ids = lots.map((l) => l.id as string);
   const lines = ids.length ? ((await tx.select().from(shipmentLines).where(inArray(shipmentLines.shipmentId, ids)).orderBy(asc(shipmentLines.position))) as Row[]) : [];
   return lots.map((l) => ({ ...l, lines: lines.filter((x) => x.shipmentId === l.id) }) as Row & { lines: Row[] });
+}
+
+/** Whom the buyer's PO says to buy packaging from (read in the inbox, checked there), matched to Suppliers. */
+async function supplierHints(tx: Tx, piId: string) {
+  const docs = await tx
+    .select({ fields: inboxItems.fields })
+    .from(inboxItems)
+    .where(and(eq(inboxItems.orderId, piId), eq(inboxItems.status, 'CONFIRMED'), isNull(inboxItems.deletedAt)));
+  const written = docs.flatMap((d) => parseSupplierHintText(d.fields?.packagingSuppliers?.value));
+  if (!written.length) return [];
+  const su = masterTables.suppliers;
+  const all = (await tx.select({ id: su.id, name: su.name }).from(su).where(and(isNull(su.deletedAt), eq(su.isActive, true)))) as { id: string; name: string }[];
+  return written.map((h) => {
+    const found = matchSupplier(h.supplier, all);
+    return { item: h.item, written: h.supplier, components: componentsFor(h.item), supplierId: found?.id ?? null, supplierName: found?.name ?? null };
+  });
 }
 
 const optsSchema = z.object({
@@ -237,6 +258,7 @@ export async function planningRoutes(app: FastifyInstance) {
         options: DEFAULT_PLAN_OPTIONS,
         suggestedMarket: str(order.region).toLowerCase().includes('europe') ? 'EU' : 'GULF',
         lots,
+        supplierHints: await supplierHints(tx, req.params.piId),
         packaging: items.map((i) => ({ ...i, supplierName: name(i.supplierId) })),
         vendorPos: pos.map((p) => ({ ...p, supplierName: name(p.supplierId) })),
         components: PACKAGING_COMPONENTS.map((c) => ({ key: c.key, label: c.label })),
@@ -314,12 +336,13 @@ export async function planningRoutes(app: FastifyInstance) {
       for (const o of old.filter((x) => x.status === 'ORDERED')) ordered.set(keyOf(o), (ordered.get(keyOf(o)) ?? 0) + o.quantity);
       const prev = new Map(old.filter((x) => x.status === 'TO_ORDER').map((x) => [keyOf(x), x]));
       await tx.delete(packagingItems).where(and(eq(packagingItems.proformaInvoiceId, req.params.piId), eq(packagingItems.status, 'TO_ORDER')));
+      const hints = await supplierHints(tx, req.params.piId);
       let pos = old.length;
       for (const n of needs) {
         const qty = n.quantity - (ordered.get(keyOf(n)) ?? 0);
         if (qty <= 0) continue;
         const p = prev.get(keyOf(n));
-        await tx.insert(packagingItems).values({ companyId, proformaInvoiceId: req.params.piId, component: n.component, label: n.label, packingTypeId: n.packingTypeId, packingName: n.packingName, bags: n.bags, perBag: String(n.perBag), freePct: String(n.freePct), quantity: qty, supplierId: p?.supplierId ?? null, rate: p?.rate ?? null, status: 'TO_ORDER', position: pos++ });
+        await tx.insert(packagingItems).values({ companyId, proformaInvoiceId: req.params.piId, component: n.component, label: n.label, packingTypeId: n.packingTypeId, packingName: n.packingName, bags: n.bags, perBag: String(n.perBag), freePct: String(n.freePct), quantity: qty, supplierId: p?.supplierId ?? hints.find((h) => h.supplierId && h.components.includes(n.component))?.supplierId ?? null, rate: p?.rate ?? null, status: 'TO_ORDER', position: pos++ });
       }
       await audit(tx, ctx, { entity: 'packaging', recordId: req.params.piId, action: 'calculate', meta: { freePct: body.freePct, items: needs.length } });
       return tx.select().from(packagingItems).where(eq(packagingItems.proformaInvoiceId, req.params.piId)).orderBy(asc(packagingItems.position));
@@ -379,7 +402,7 @@ export async function planningRoutes(app: FastifyInstance) {
     });
   });
 
-  app.get<{ Querystring: { orderId?: string; status?: string; search?: string } }>('/vendor-pos', async (req) => {
+  app.get<{ Querystring: { orderId?: string; status?: string; search?: string; category?: string } }>('/vendor-pos', async (req) => {
     const ctx = requireCtx(req);
     requirePerm(ctx, 'sales.vendorPos', 'view');
     requireCompany(ctx);
@@ -389,15 +412,18 @@ export async function planningRoutes(app: FastifyInstance) {
       const conds = [isNull(vendorPos.deletedAt)];
       if (req.query.orderId) conds.push(eq(vendorPos.proformaInvoiceId, req.query.orderId));
       if (req.query.status) conds.push(eq(vendorPos.status, req.query.status));
+      if (req.query.category) conds.push(eq(vendorPos.category, req.query.category));
       if (req.query.search?.trim()) conds.push(or(ilike(vendorPos.number, `%${req.query.search.trim()}%`), ilike(su.name, `%${req.query.search.trim()}%`))!);
-      return tx
-        .select({ id: vendorPos.id, number: vendorPos.number, poDate: vendorPos.poDate, status: vendorPos.status, deliveryBy: vendorPos.deliveryBy, totalAmount: vendorPos.totalAmount, lines: vendorPos.lines, supplierName: su.name, orderId: vendorPos.proformaInvoiceId, orderNumber: pi.documentNumber })
+      const rows = await tx
+        .select({ category: vendorPos.category, orderSource: pi.orderSource, id: vendorPos.id, number: vendorPos.number, poDate: vendorPos.poDate, status: vendorPos.status, deliveryBy: vendorPos.deliveryBy, totalAmount: vendorPos.totalAmount, lines: vendorPos.lines, supplierName: su.name, orderId: vendorPos.proformaInvoiceId, orderNumber: pi.documentNumber, buyer: sql<string | null>`(select c.name from customers c where c.id = ${pi.buyerId})` })
         .from(vendorPos)
         .leftJoin(su, eq(su.id, vendorPos.supplierId))
         .leftJoin(pi, eq(pi.id, vendorPos.proformaInvoiceId))
         .where(and(...conds))
         .orderBy(desc(vendorPos.poDate), desc(vendorPos.number))
-        .limit(300);
+        .limit(2000);
+      const billed = await billedByPo(tx, rows.map((r) => r.id));
+      return rows.map((r) => ({ ...r, billedAmount: billed.get(r.id) ?? '0' }));
     });
   });
 
@@ -408,6 +434,7 @@ export async function planningRoutes(app: FastifyInstance) {
     const body = z
       .object({
         status: z.enum(['DRAFT', 'SENT', 'RECEIVED', 'CANCELLED']).optional(),
+        category: z.enum(PURCHASE_CATEGORY_KEYS).optional(),
         deliveryBy: z.string().regex(dateRx).nullable().optional(),
         notes: z.string().max(2000).nullable().optional(),
         lines: z.array(z.object({ description: z.string().trim().min(1).max(300), quantity: z.number().int().min(0), unit: z.string().trim().max(12), rate: z.string().refine((v) => v === '' || isDecimal(v)) })).min(1).max(60).optional(),
@@ -419,7 +446,7 @@ export async function planningRoutes(app: FastifyInstance) {
       const lines = body.lines?.map((l) => ({ ...l, amount: l.rate ? round(mul(String(l.quantity), l.rate, 2), 2) : '0' }));
       const [after] = await tx
         .update(vendorPos)
-        .set({ status: body.status ?? before.status, deliveryBy: body.deliveryBy === undefined ? before.deliveryBy : body.deliveryBy, notes: body.notes === undefined ? before.notes : body.notes, ...(lines ? { lines, totalAmount: add(lines.map((l) => l.amount), 2) } : {}), version: sql`${vendorPos.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
+        .set({ category: body.category ?? before.category, status: body.status ?? before.status, deliveryBy: body.deliveryBy === undefined ? before.deliveryBy : body.deliveryBy, notes: body.notes === undefined ? before.notes : body.notes, ...(lines ? { lines, totalAmount: add(lines.map((l) => l.amount), 2) } : {}), version: sql`${vendorPos.version} + 1`, updatedAt: new Date(), updatedBy: ctx.userId })
         .where(eq(vendorPos.id, before.id))
         .returning();
       // a cancelled PO frees its packaging lines to be ordered again
@@ -508,7 +535,7 @@ export async function planningRoutes(app: FastifyInstance) {
         .leftJoin(cu, eq(cu.id, pi.buyerId))
         .where(and(...conds))
         .orderBy(asc(sql`coalesce(${shipments.targetShipDate}, '9999-12-31')`), asc(pi.documentNumber), asc(shipments.lotNo))
-        .limit(500)) as Row[];
+        .limit(3000)) as Row[];
       const ids = rows.map((r) => r.id as string);
       const docs = ids.length ? await tx.select({ shipmentId: shipmentDocuments.shipmentId, kind: shipmentDocuments.kind, status: shipmentDocuments.status }).from(shipmentDocuments).where(inArray(shipmentDocuments.shipmentId, ids)) : [];
       const paid = await received(tx, rows.map((r) => r.commercialInvoiceId as string).filter(Boolean));

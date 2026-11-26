@@ -55,6 +55,8 @@ export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>, deps
           if (!matches(e, c)) continue;
           const hasMod = /(ctrl|alt|meta|mod)\+/.test(c) || /^f\d+$/.test(c) || c === 'esc' || c === 'escape';
           if (!opts.inInputs && !hasMod && isTyping(e.target)) continue;
+          // Enter on a focused button or link does what that button says, not the page's shortcut
+          if (c === 'enter' && ['BUTTON', 'A'].includes((e.target as HTMLElement | null)?.tagName ?? '')) continue;
           e.preventDefault();
           // the most recently mounted screen handles a key once; the layout's copy must not fire too
           e.stopImmediatePropagation();
@@ -116,6 +118,17 @@ export const SHORTCUTS: { section: string; items: [string, string][] }[] = [
       ['alt+d', 'Save current values as defaults for new records'],
       ['f2', 'Open the dropdown of the focused lookup field'],
       ['alt+n', 'In a lookup field: add a new record to its list (port, product, shipping line…)'],
+    ],
+  },
+  {
+    section: 'Orders and purchases',
+    items: [
+      ['↑ ↓ enter', 'Choose an order folder and open it'],
+      ['alt+1 … alt+5', 'In an order file: lots / documents / plan / purchases / money'],
+      ['alt+o', "In an order's Purchases tab: new purchase order"],
+      ['alt+i', "In an order's Purchases tab: new purchase invoice"],
+      ['alt+n', 'New purchase order / purchase invoice (on their lists)'],
+      ['alt+a', 'In a purchase order: add an item line'],
     ],
   },
   {

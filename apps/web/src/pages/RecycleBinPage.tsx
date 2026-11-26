@@ -48,6 +48,9 @@ function openPath(r: BinRow): string | null {
   if (['proformaInvoices', 'productionOrders', 'commercialInvoices', 'oceanBills', 'certificates'].includes(r.type)) return `/d/${r.type}/${r.id}`;
   if (r.type === 'freightEnquiries') return `/freight/${r.id}`;
   if (r.type === 'users') return `/admin/users/${r.id}`;
+  if (r.type === 'vendorPos') return '/purchase-orders';
+  if (r.type === 'purchaseInvoices') return '/purchase-invoices';
+  if (r.type === 'inbox') return `/inbox/${r.id}`;
   if (r.type === 'roles') return '/admin/roles';
   if (r.type === 'sharing') return '/admin/sharing';
   if (r.type === 'shipments' || r.type === 'payments') return null;

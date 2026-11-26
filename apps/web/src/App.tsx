@@ -11,6 +11,8 @@ import { UserFormPage, UsersPage } from './pages/admin/UsersPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { InboxPage } from './pages/flow/InboxPage';
 import { InboxReviewPage } from './pages/flow/InboxReviewPage';
+import { OrderFilePage } from './pages/flow/OrderFilePage';
+import { OrderListPage } from './pages/flow/OrdersPage';
 import { TrackerPage } from './pages/flow/TrackerPage';
 import { VendorPosPage } from './pages/flow/VendorPosPage';
 import { FreightDetailPage } from './pages/freight/FreightDetailPage';
@@ -27,6 +29,7 @@ import { DocumentationPage } from './pages/mis/DocumentationPage';
 import { FinancialPage } from './pages/mis/FinancialPage';
 import { LogisticsPage } from './pages/mis/LogisticsPage';
 import { OrdersPage } from './pages/mis/OrdersPage';
+import { PurchaseInvoicesPage } from './pages/flow/PurchaseInvoicesPage';
 import { ProductsPage } from './pages/mis/ProductsPage';
 import { ReportsPage } from './pages/mis/ReportsPage';
 import { TradePage } from './pages/mis/TradePage';
@@ -52,10 +55,13 @@ const router = createBrowserRouter([
       { path: '/mis/documentation', element: <DocumentationPage /> },
       { path: '/mis/reports', element: <ReportsPage /> },
       { path: '/shipments', element: <ShipmentsPage /> },
+      { path: '/orders', element: <OrderListPage /> },
+      { path: '/orders/:id', element: <OrderFilePage /> },
       { path: '/inbox', element: <InboxPage /> },
       { path: '/inbox/:id', element: <InboxReviewPage /> },
       { path: '/tracker', element: <TrackerPage /> },
-      { path: '/vendor-pos', element: <VendorPosPage /> },
+      { path: '/purchase-orders', element: <VendorPosPage /> },
+      { path: '/purchase-invoices', element: <PurchaseInvoicesPage /> },
       { path: '/freight', element: <FreightListPage /> },
       { path: '/freight/new', element: <FreightNewPage /> },
       { path: '/freight/mailbox', element: <MailboxPage /> },

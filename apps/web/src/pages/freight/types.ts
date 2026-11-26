@@ -51,6 +51,11 @@ export interface EnquiryRow {
   quoted: number;
   unread: number;
   awardedTo: string | null;
+  orderId: string | null;
+  orderNumber: string | null;
+  buyer: string | null;
+  orderSource: string | null;
+  lotNo: number | null;
 }
 
 export interface Quote {

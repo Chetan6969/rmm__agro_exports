@@ -11,7 +11,7 @@ import { audit } from '../core/audit.js';
 import { can, inTenantTx, requireCompany, requireCtx, requirePerm, type RequestContext } from '../core/context.js';
 import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
 import type { Tx } from '../db/client.js';
-import { docTables, freightEnquiries, inboxItems, masterTables, payments, roles, sharingPolicies, shipments, users, vendorPos, type AnyTable } from '../db/schema/index.js';
+import { docTables, freightEnquiries, inboxItems, masterTables, payments, purchaseInvoices, roles, sharingPolicies, shipments, users, vendorPos, type AnyTable } from '../db/schema/index.js';
 import { restoreDocument } from './documents/documents.service.js';
 
 type Row = Record<string, unknown>;
@@ -121,9 +121,27 @@ const sources: Source[] = [
     },
   },
   {
+    type: 'purchaseInvoices',
+    label: 'Purchase invoice',
+    group: 'Purchases',
+    module: 'sales.purchaseInvoices',
+    table: purchaseInvoices,
+    title: sql`${purchaseInvoices.invoiceNo}`,
+    sub: sql`(select s.name from suppliers s where s.id = ${purchaseInvoices.supplierId}) || ' · ' || to_char(${purchaseInvoices.invoiceDate}, 'DD Mon YYYY')`,
+    hasReason: true,
+    restore: async (tx, ctx, id) => {
+      const [bill] = await tx.select().from(purchaseInvoices).where(and(eq(purchaseInvoices.id, id), isNotNull(purchaseInvoices.deletedAt)));
+      if (!bill) throw notFound('Deleted purchase invoice not found', 'Reload the recycle bin.');
+      const [clash] = await tx.select({ id: purchaseInvoices.id }).from(purchaseInvoices).where(and(eq(purchaseInvoices.supplierId, bill.supplierId), sql`lower(${purchaseInvoices.invoiceNo}) = lower(${bill.invoiceNo})`, isNull(purchaseInvoices.deletedAt)));
+      if (clash) throw conflict(`Invoice ${bill.invoiceNo} of this supplier has been entered again`, 'Delete the newer one first, then restore this one.');
+      await tx.update(purchaseInvoices).set({ deletedAt: null, deletedBy: null, deleteReason: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(purchaseInvoices.id, id));
+      await audit(tx, ctx, { entity: 'purchaseInvoices', recordId: id, action: 'restore' });
+    },
+  },
+  {
     type: 'vendorPos',
-    label: 'Packaging purchase order',
-    group: 'Sales documents',
+    label: 'Purchase order (to supplier)',
+    group: 'Purchases',
     module: 'sales.vendorPos',
     table: vendorPos,
     title: sql`${vendorPos.number}`,

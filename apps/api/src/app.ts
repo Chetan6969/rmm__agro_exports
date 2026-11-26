@@ -18,7 +18,9 @@ import { exchangeRateRoutes } from './modules/exchange-rates.js';
 import { filesRoutes } from './modules/files.routes.js';
 import { freightRoutes } from './modules/freight/freight.routes.js';
 import { intakeRoutes } from './modules/intake/intake.routes.js';
+import { orderFileRoutes } from './modules/orders/order-files.routes.js';
 import { planningRoutes } from './modules/planning/planning.routes.js';
+import { purchaseRoutes } from './modules/purchases/purchases.routes.js';
 import { mastersRoutes } from './modules/masters/masters.routes.js';
 import { misRoutes } from './modules/mis/index.js';
 import { numberingRoutes } from './modules/numbering.js';
@@ -92,6 +94,8 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
       await api.register(freightRoutes);
       await api.register(intakeRoutes);
       await api.register(planningRoutes);
+      await api.register(purchaseRoutes);
+      await api.register(orderFileRoutes);
       await api.register(recycleBinRoutes);
       await api.register(misRoutes);
 
