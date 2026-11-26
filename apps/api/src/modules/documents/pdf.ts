@@ -871,11 +871,11 @@ export async function documentPdf(tx: Tx, ctx: RequestContext, key: string, id: 
     const [tpl] = (await tx.select().from(masterTables.certificateTemplates).where(eq(masterTables.certificateTemplates.id, d.certificateTemplateId as string))) as Row[];
     const obl = typeof d.oceanBillId === 'string' ? await getDocument(tx, ctx, 'oceanBills', d.oceanBillId, 'print').catch(() => null) : null;
     const ci = typeof d.commercialInvoiceId === 'string' ? await getDocument(tx, ctx, 'commercialInvoices', d.commercialInvoiceId, 'print').catch(() => null) : null;
-    // Certificates print the chosen letterhead (not the company logo) and the chosen signature.
-    const [lhRow] = (typeof d.letterheadId === 'string' ? await tx.select().from(masterTables.letterheads).where(eq(masterTables.letterheads.id, d.letterheadId)) : []) as Row[];
+    // Certificates print exactly like the commercial invoice: company logo top-right, company footer,
+    // and the chosen signature — no full-width letterhead banner.
     const [sgRow] = (typeof d.signatureId === 'string' ? await tx.select().from(masterTables.signatures).where(eq(masterTables.signatures.id, d.signatureId)) : []) as Row[];
-    const [lhImg, sgImg] = await Promise.all([image(tx, lhRow?.letterheadFileId), image(tx, sgRow?.signatureFileId)]);
-    data.images = { ...data.images, logo: null, letterhead: lhImg ?? data.images.letterhead, signature: sgImg ?? data.images.signature };
+    const sgImg = await image(tx, sgRow?.signatureFileId);
+    data.images = { ...data.images, letterhead: null, signature: sgImg ?? data.images.signature };
     if (sgRow?.signatoryName) {
       data.company = { ...data.company, signatoryName: sgRow.signatoryName, signatoryDesignation: sgRow.signatoryDesignation ?? data.company.signatoryDesignation };
     }
