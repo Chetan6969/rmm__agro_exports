@@ -228,33 +228,37 @@ export async function deleteRecord(tx: Tx, ctx: RequestContext, key: string, id:
 // ---------------------------------------------------------------- reference counting (delete warning)
 interface RefSource {
   kind: 'table' | 'line';
-  /** Table to count rows in: the header/master table for 'table', the line table for 'line'. */
+  /** Table to count distinct rows in: the header/master table for 'table', the line table for 'line'. */
   table: AnyTable;
   /** Parent header table (for 'line' sources), so soft-deleted parents are excluded. */
   header?: AnyTable;
-  /** FK column (field name) pointing at the master. */
-  col: string;
+  /** One or more FK columns on `table` that point at the master (counted as distinct rows, not summed). */
+  cols: string[];
   /** Human label for the breakdown. */
   label: string;
 }
 
 let _refSources: Map<string, RefSource[]> | null = null;
-/** Build, once, a map of masterKey → every live table/column that references it. */
+/** Build, once, a map of masterKey → every table that references it (columns grouped per table). */
 function refSourcesFor(entityKey: string): RefSource[] {
   if (!_refSources) {
     const m = new Map<string, RefSource[]>();
-    const add = (target: string, s: RefSource) => {
-      const list = m.get(target) ?? [];
-      list.push(s);
-      m.set(target, list);
+    // Add one source per (table, master) pair, gathering every column on that table that points at it,
+    // so a document referencing the master in two columns (e.g. buyer and consignee) is counted once.
+    const addTable = (base: Omit<RefSource, 'cols'>, fields: readonly { name: string; type: string; ref?: string }[]) => {
+      const byTarget = new Map<string, string[]>();
+      for (const f of fields) if (f.type === 'ref' && f.ref) (byTarget.get(f.ref) ?? byTarget.set(f.ref, []).get(f.ref)!).push(f.name);
+      for (const [target, cols] of byTarget) {
+        const list = m.get(target) ?? [];
+        list.push({ ...base, cols });
+        m.set(target, list);
+      }
     };
-    for (const e of ENTITY_LIST) {
-      for (const f of e.fields) if (f.type === 'ref' && f.ref) add(f.ref, { kind: 'table', table: masterTables[e.key], col: f.name, label: e.plural });
-    }
+    for (const e of ENTITY_LIST) addTable({ kind: 'table', table: masterTables[e.key], label: e.plural }, e.fields);
     for (const d of DOC_LIST) {
       const dt = docTables[d.key];
-      for (const f of d.header) if (f.type === 'ref' && f.ref) add(f.ref, { kind: 'table', table: dt.header, col: f.name, label: d.plural });
-      if (dt.lines) for (const f of d.lines) if (f.type === 'ref' && f.ref) add(f.ref, { kind: 'line', table: dt.lines, header: dt.header, col: f.name, label: d.plural });
+      addTable({ kind: 'table', table: dt.header, label: d.plural }, d.header);
+      if (dt.lines) addTable({ kind: 'line', table: dt.lines, header: dt.header, label: d.plural }, d.lines);
     }
     _refSources = m;
   }
@@ -269,16 +273,16 @@ export async function countReferences(tx: Tx, ctx: RequestContext, key: string, 
   if (!/^[0-9a-f-]{36}$/i.test(id)) return { total: 0, breakdown };
   let total = 0;
   for (const s of refSourcesFor(key)) {
-    const col = s.table[s.col];
-    if (!col) continue;
+    const match = or(...s.cols.map((c) => eq(s.table[c], id)));
+    if (!match) continue;
     const [{ c }] =
       s.kind === 'table'
-        ? await tx.select({ c: sql<number>`count(*)::int` }).from(s.table).where(and(eq(col, id), isNull(s.table.deletedAt)))
+        ? await tx.select({ c: sql<number>`count(*)::int` }).from(s.table).where(and(match, isNull(s.table.deletedAt)))
         : await tx
-            .select({ c: sql<number>`count(*)::int` })
+            .select({ c: sql<number>`count(distinct ${s.table.documentId})::int` })
             .from(s.table)
             .innerJoin(s.header!, eq(s.table.documentId, s.header!.id))
-            .where(and(eq(col, id), isNull(s.header!.deletedAt)));
+            .where(and(match, isNull(s.header!.deletedAt)));
     if (c > 0) {
       total += c;
       const ex = breakdown.find((b) => b.label === s.label);
