@@ -75,6 +75,44 @@ export function Modal({
 }
 
 /** Confirmation, optionally asking for a mandatory reason (used for deletes). */
+/** Save / Don't save / Cancel prompt shown when leaving a form with unsaved changes. */
+export function UnsavedDialog({
+  open,
+  saving,
+  onSave,
+  onDiscard,
+  onCancel,
+}: {
+  open: boolean;
+  saving?: boolean;
+  onSave: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal
+      open={open}
+      title="Save your changes?"
+      onClose={onCancel}
+      footer={
+        <>
+          <Button onClick={onCancel} shortcut="esc">
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onDiscard}>
+            Don’t save
+          </Button>
+          <Button variant="primary" loading={saving} onClick={onSave} shortcut="enter">
+            Save
+          </Button>
+        </>
+      }
+    >
+      <p className="text-slate-700">You have unsaved changes on this form. Save them before leaving, or discard them?</p>
+    </Modal>
+  );
+}
+
 export function ConfirmDialog({
   open,
   title,

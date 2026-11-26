@@ -26,11 +26,12 @@ import { EntityForm, type Values } from '../components/EntityForm';
 import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
 import { ReceiptsPanel } from '../components/ReceiptsPanel';
 import { RefSelect } from '../components/RefSelect';
-import { ConfirmDialog, Modal } from '../components/Modal';
+import { ConfirmDialog, Modal, UnsavedDialog } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api, ApiError } from '../lib/api';
 import { useFormCache } from '../lib/formCache';
 import { useHotkeys } from '../lib/hotkeys';
+import { useUnsavedGuard } from '../lib/useUnsavedGuard';
 import { showError } from '../lib/notify';
 import { useSession } from '../lib/session';
 import { STATUS_TONE } from './DocumentListPage';
@@ -105,7 +106,6 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState<{ group: number | null } | null>(null);
-  const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rateNote, setRateNote] = useState<string | null>(null);
 
@@ -138,6 +138,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
   const canLock = !isNew && can(def.module, 'edit') && can(def.module, 'delete');
   const back = () => navigate(`/d/${def.key}`);
   const touch = () => setDirty(true);
+  const blocker = useUnsavedGuard(dirty);
 
   const cache = useFormCache({
     storageKey: readOnly ? null : `doc:${def.key}:${id}:${from}`,
@@ -286,8 +287,8 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     return body;
   };
 
-  const save = async () => {
-    if (readOnly || saving) return;
+  const save = async (opts?: { stay?: boolean }): Promise<boolean> => {
+    if (readOnly || saving) return false;
     setSaving(true);
     setErrors({});
     setLineErrors({});
@@ -307,13 +308,18 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           } catch (e) {
             showError(e);
           }
+        }
+        // `stay` (guard-triggered save): don't navigate here — the guard proceeds to the user's destination.
+        if (!opts?.stay) {
           const piId = (saved as Record<string, unknown>).proformaInvoiceId as string | undefined;
-          navigate(piId ? `/plan/${piId}` : `/d/${def.key}/${saved.id}`, { replace: true });
-        } else navigate(`/d/${def.key}/${saved.id}`, { replace: true });
-      } else {
+          if (shipment && def.key === 'commercialInvoices') navigate(piId ? `/plan/${piId}` : `/d/${def.key}/${saved.id}`, { replace: true });
+          else navigate(`/d/${def.key}/${saved.id}`, { replace: true });
+        }
+      } else if (!opts?.stay) {
         setLoaded(false);
         await source.refetch();
       }
+      return true;
     } catch (e) {
       if (e instanceof ApiError && Object.keys(e.fields).length) {
         const h: Record<string, string> = {};
@@ -329,15 +335,24 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
         if (first) document.getElementById(`f-${first}`)?.focus();
       }
       setFormError(e);
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  // Guard dialog (Save / Don't save / Cancel) when leaving with unsaved changes.
+  const guardSave = async () => {
+    const ok = await save({ stay: true });
+    if (ok) blocker.proceed?.();
+    else blocker.reset?.(); // save failed: stay on the page so the errors can be fixed
   };
 
   const remove = async (reason: string) => {
     await api.del(`/documents/${def.key}/${id}`, { reason });
     qc.invalidateQueries({ queryKey: ['documents'] });
     toast.success(`${def.label} ${record?.documentNumber} deleted`);
+    setDirty(false); // don't let the unsaved-changes guard fire on the way out
     back();
   };
 
@@ -351,7 +366,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
       'mod+s, mod+enter': () => save(),
       'alt+a': () => !readOnly && setEditing({ group: null }),
       'mod+p': () => !isNew && can(def.module, 'print') && openPdf('pdf'),
-      esc: () => (editing ? setEditing(null) : dirty ? setConfirmLeave(true) : back()),
+      esc: () => (editing ? setEditing(null) : back()),
     },
     [header, lines, terms, containers, dirty, saving, record, editing],
     { inInputs: true },
@@ -425,7 +440,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
               </Button>
             )}
             {!readOnly && (
-              <Button variant="primary" data-nav-end icon={<Save className="size-3.5" />} loading={saving} onClick={save} shortcut="mod+s">
+              <Button variant="primary" data-nav-end icon={<Save className="size-3.5" />} loading={saving} onClick={() => save()} shortcut="mod+s">
                 Save
               </Button>
             )}
@@ -509,14 +524,12 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           }}
         />
       )}
-      <ConfirmDialog
-        open={confirmLeave}
-        title="Discard changes?"
-        message="You have unsaved changes on this document."
-        confirmLabel="Discard"
-        danger
-        onClose={() => setConfirmLeave(false)}
-        onConfirm={() => back()}
+      <UnsavedDialog
+        open={blocker.state === 'blocked'}
+        saving={saving}
+        onSave={guardSave}
+        onDiscard={() => blocker.proceed?.()}
+        onCancel={() => blocker.reset?.()}
       />
       <ConfirmDialog
         open={confirmDelete}
