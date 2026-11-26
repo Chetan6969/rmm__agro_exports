@@ -93,3 +93,41 @@ body {
 .palette-item[data-selected='true'] > span:first-child {
   @apply bg-white/15 text-white;
 }
+
+/*
+ * Ctrl+P prints the screen's content: no sidebar, top bar or buttons, and the whole page (not only the
+ * part that fits on screen — the app's scroll areas are opened up for paper). Documents print as PDF.
+ */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  html,
+  body,
+  #root {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  #root * {
+    overflow: visible !important;
+    max-height: none !important;
+  }
+  #root .h-full,
+  #root .min-h-0,
+  #root .flex-1 {
+    height: auto !important;
+    min-height: 0 !important;
+  }
+  [data-sonner-toaster],
+  .no-print {
+    display: none !important;
+  }
+  #root [class*='shadow'] {
+    box-shadow: none !important;
+  }
+  tr,
+  img {
+    break-inside: avoid;
+  }
+}

@@ -76,9 +76,12 @@ export function CommandPalette({ open, mode, onClose }: { open: boolean; mode: P
   useEffect(() => {
     if (open) {
       setSearch('');
-      document.body.dataset.modalOpen = '1';
+      // shared count with Modal: open dialogs stack
+      document.body.dataset.modalOpen = String(Number(document.body.dataset.modalOpen ?? 0) + 1);
       return () => {
-        delete document.body.dataset.modalOpen;
+        const left = Number(document.body.dataset.modalOpen ?? 1) - 1;
+        if (left > 0) document.body.dataset.modalOpen = String(left);
+        else delete document.body.dataset.modalOpen;
       };
     }
   }, [open, mode]);

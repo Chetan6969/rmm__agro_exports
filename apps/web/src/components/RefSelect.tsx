@@ -86,6 +86,13 @@ export function RefSelect({
   const samePresent = !!(sameAs && sameAs.id !== value);
   const offset = samePresent ? 1 : 0;
   const navLen = offset + options.length;
+  /** The "Add …" row is the last row of the list and can be reached with the arrows too. */
+  const createIdx = canCreate ? navLen : -1;
+  const total = navLen + (canCreate ? 1 : 0);
+  const startCreate = () => {
+    setCreating(text.trim());
+    setOpen(false);
+  };
   useEffect(() => setHi(samePresent && !text ? 0 : offset), [text, open, samePresent, offset]);
 
   const pick = (idx: number) => {
@@ -114,7 +121,7 @@ export function RefSelect({
           aria-controls={listId}
           aria-autocomplete="list"
           aria-invalid={invalid || undefined}
-          aria-activedescendant={open && hi < navLen ? `${listId}-${hi}` : undefined}
+          aria-activedescendant={open && hi < total ? `${listId}-${hi}` : undefined}
           data-combobox-open={open ? '1' : undefined}
           disabled={disabled}
           className="field-input pr-12"
@@ -127,6 +134,13 @@ export function RefSelect({
           onFocus={(e) => e.target.select()}
           onBlur={() => setTimeout(() => setOpen(false), 120)}
           onKeyDown={(e) => {
+            // Alt+N: create a new master record from here (list open or not)
+            if (canCreate && e.altKey && e.code === 'KeyN') {
+              e.preventDefault();
+              e.stopPropagation();
+              startCreate();
+              return;
+            }
             if ((e.key === 'F2' || (e.altKey && e.key === 'ArrowDown')) && !open) {
               e.preventDefault();
               setText('');
@@ -146,14 +160,16 @@ export function RefSelect({
             }
             if (e.key === 'ArrowDown') {
               e.preventDefault();
-              setHi((h) => Math.min(h + 1, navLen - 1));
+              setHi((h) => Math.min(h + 1, total - 1));
             } else if (e.key === 'ArrowUp') {
               e.preventDefault();
               setHi((h) => Math.max(h - 1, 0));
             } else if (e.key === 'Enter') {
               e.preventDefault();
               e.stopPropagation();
-              pick(hi);
+              // Enter on the "Add" row opens the quick-create popup
+              if (hi === createIdx) startCreate();
+              else pick(hi);
             } else if (e.key === 'Escape') {
               e.preventDefault();
               e.stopPropagation();
@@ -224,14 +240,17 @@ export function RefSelect({
             <li className="sticky bottom-0 border-t border-slate-100 bg-white">
               <button
                 type="button"
-                className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-brand-700 hover:bg-brand-50"
+                id={`${listId}-${createIdx}`}
+                role="option"
+                aria-selected={hi === createIdx}
+                tabIndex={-1}
+                className={`flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-brand-700 ${hi === createIdx ? 'bg-brand-50' : 'hover:bg-brand-50'}`}
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  setCreating(text.trim());
-                  setOpen(false);
-                }}
+                onMouseEnter={() => setHi(createIdx)}
+                onClick={startCreate}
               >
                 <Plus className="size-3.5" /> Add {text.trim() ? `"${text.trim()}"` : 'a new one'}
+                <span className="ml-auto text-[11px] text-slate-400">Alt+N</span>
               </button>
             </li>
           )}

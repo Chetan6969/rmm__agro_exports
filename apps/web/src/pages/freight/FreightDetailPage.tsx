@@ -8,7 +8,9 @@ import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../compon
 import { api } from '../../lib/api';
 import { showError } from '../../lib/notify';
 import { useSession } from '../../lib/session';
+import { enterNavigation } from '../../components/EntityForm';
 import { TemplateEditor } from '../../components/TemplateEditor';
+import { useHotkeys } from '../../lib/hotkeys';
 import { MailboxBanner } from './FreightListPage';
 import { ENQUIRY_TONE, fmtDate, fmtWhen, inr, label, THREAD_TONE, usd, type Contact, type Enquiry, type RankedRow, type Template, type ThreadDetail, type ThreadRow } from './types';
 
@@ -45,16 +47,49 @@ export function FreightDetailPage() {
   const [award, setAward] = useState<string | null>(null);
   const [del, setDel] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Keyboard cursor in the best-value table (↑ ↓, Enter = open, Alt+B = book). */
+  const [sel, setSel] = useState(0);
   const refresh = () => qc.invalidateQueries({ queryKey: ['freight'] });
+
+  const data = q.data;
+  const ranked = data?.comparison.rows ?? [];
+  const isOpen = data?.status === 'OPEN';
+  const canEdit = can('sales.freight', 'edit');
+  const notReplied = data?.threads.filter((t) => t.status === 'SENT').length ?? 0;
+  useHotkeys(
+    {
+      arrowdown: () => setSel((i) => Math.min(i + 1, ranked.length - 1)),
+      arrowup: () => setSel((i) => Math.max(i - 1, 0)),
+      enter: () => ranked[sel] && setThread(ranked[sel].threadId),
+      'alt+b': () => isOpen && canEdit && ranked[sel] && !ranked[sel].expired && setAward(ranked[sel].threadId),
+      'alt+s': () => isOpen && can('sales.freight', 'create') && setSendOpen(true),
+      'alt+k': () => checkMail(),
+      'alt+r': () => isOpen && canEdit && notReplied > 0 && remind(),
+      del: () => can('sales.freight', 'delete') && setDel(true),
+      esc: () => nav('/freight'),
+    },
+    [ranked, sel, isOpen, notReplied, data],
+  );
 
   if (q.isLoading) return <Spinner />;
   if (q.error || !q.data) return <div className="p-6"><ErrorBox error={q.error} /></div>;
   const e = q.data;
   const open = e.status === 'OPEN';
-  const canEdit = can('sales.freight', 'edit');
-  const notReplied = e.threads.filter((t) => t.status === 'SENT').length;
 
-  const act = async (key: string, fn: () => Promise<void>) => {
+  function checkMail() {
+    act('sync', async () => {
+      const r = await api.post<{ matched: number; quotes: number }>('/mail-account/sync');
+      toast.success(r.matched ? `${r.matched} new reply(ies), ${r.quotes} quote(s) read` : 'No new replies yet');
+    });
+  }
+  function remind() {
+    act('remind', async () => {
+      const r = await api.post<{ reminded: number }>(`/freight/enquiries/${id}/remind`);
+      toast.success(`Reminder sent to ${r.reminded} contact(s)`);
+    });
+  }
+
+  async function act(key: string, fn: () => Promise<void>) {
     setBusy(key);
     try {
       await fn();
@@ -84,16 +119,16 @@ export function FreightDetailPage() {
         subtitle={`${e.portOfLoading} → ${e.portOfDischarge} · ${e.containerCount} × ${e.containerType}${e.commodity ? ` · ${e.commodity}` : ''}`}
         actions={
           <>
-            <Button icon={<RefreshCw className="size-3.5" />} loading={busy === 'sync'} onClick={() => act('sync', async () => { const r = await api.post<{ matched: number; quotes: number }>('/mail-account/sync'); toast.success(r.matched ? `${r.matched} new reply(ies), ${r.quotes} quote(s) read` : 'No new replies yet'); })}>
+            <Button icon={<RefreshCw className="size-3.5" />} loading={busy === 'sync'} onClick={checkMail} shortcut="alt+k">
               Check mail
             </Button>
             {open && can('sales.freight', 'create') && (
-              <Button variant={e.threads.length ? 'secondary' : 'primary'} icon={<UserPlus className="size-3.5" />} onClick={() => setSendOpen(true)}>
+              <Button variant={e.threads.length ? 'secondary' : 'primary'} icon={<UserPlus className="size-3.5" />} onClick={() => setSendOpen(true)} shortcut="alt+s">
                 {e.threads.length ? 'Ask more contacts' : 'Send rate request'}
               </Button>
             )}
             {open && canEdit && notReplied > 0 && (
-              <Button icon={<BellRing className="size-3.5" />} loading={busy === 'remind'} onClick={() => act('remind', async () => { const r = await api.post<{ reminded: number }>(`/freight/enquiries/${e.id}/remind`); toast.success(`Reminder sent to ${r.reminded} contact(s)`); })}>
+              <Button icon={<BellRing className="size-3.5" />} loading={busy === 'remind'} onClick={remind} shortcut="alt+r">
                 Remind {notReplied} pending
               </Button>
             )}
@@ -129,7 +164,10 @@ export function FreightDetailPage() {
           )}
         </div>
 
-        <Comparison e={e} canAward={open && canEdit} onThread={setThread} onAward={setAward} />
+        <Comparison e={e} canAward={open && canEdit} sel={sel} onSelect={setSel} onThread={setThread} onAward={setAward} />
+        <div className="text-[12px] text-slate-400 max-md:hidden">
+          ↑ ↓ choose an offer · Enter open the conversation · Alt+B book it · Alt+S send rate request · Alt+K check mail · Alt+R remind · Tab to the conversations · Esc back
+        </div>
 
         <Card>
           <div className="flex items-center justify-between border-b border-slate-200 px-3 py-2">
@@ -196,7 +234,7 @@ export function FreightDetailPage() {
 }
 
 /** Best value first: lowest total freight, then faster transit and more free days. */
-function Comparison({ e, canAward, onThread, onAward }: { e: Enquiry; canAward: boolean; onThread: (id: string) => void; onAward: (id: string) => void }) {
+function Comparison({ e, canAward, sel, onSelect, onThread, onAward }: { e: Enquiry; canAward: boolean; sel: number; onSelect: (i: number) => void; onThread: (id: string) => void; onAward: (id: string) => void }) {
   const rows = e.comparison.rows;
   return (
     <Card>
@@ -228,8 +266,8 @@ function Comparison({ e, canAward, onThread, onAward }: { e: Enquiry; canAward: 
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
-                <RankRow key={r.id} r={r} e={e} best={r.rank === 1 && !r.expired} canAward={canAward} onThread={onThread} onAward={onAward} />
+              {rows.map((r, i) => (
+                <RankRow key={r.id} r={r} e={e} best={r.rank === 1 && !r.expired} selected={i === sel} onSelect={() => onSelect(i)} canAward={canAward} onThread={onThread} onAward={onAward} />
               ))}
             </tbody>
           </table>
@@ -239,10 +277,35 @@ function Comparison({ e, canAward, onThread, onAward }: { e: Enquiry; canAward: 
   );
 }
 
-function RankRow({ r, e, best, canAward, onThread, onAward }: { r: RankedRow; e: Enquiry; best: boolean; canAward: boolean; onThread: (id: string) => void; onAward: (id: string) => void }) {
+function RankRow({
+  r,
+  e,
+  best,
+  selected,
+  onSelect,
+  canAward,
+  onThread,
+  onAward,
+}: {
+  r: RankedRow;
+  e: Enquiry;
+  best: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  canAward: boolean;
+  onThread: (id: string) => void;
+  onAward: (id: string) => void;
+}) {
   const awarded = e.awardedThreadId === r.threadId;
   return (
-    <tr className={`border-t border-slate-100 align-top ${best ? 'bg-brand-50/60' : ''} ${r.expired ? 'text-slate-400' : ''}`}>
+    <tr
+      aria-selected={selected}
+      onClick={onSelect}
+      ref={(el) => {
+        if (selected) el?.scrollIntoView({ block: 'nearest' });
+      }}
+      className={`border-t border-slate-100 align-top ${best ? 'bg-brand-50/60' : ''} ${selected ? 'outline-2 -outline-offset-2 outline-brand-600/50' : ''} ${r.expired ? 'text-slate-400' : ''}`}
+    >
       <td className="px-3 py-2 font-semibold">{r.rank}</td>
       <td className="px-3 py-2">
         <button type="button" className="font-medium text-brand-700 hover:underline" onClick={() => onThread(r.threadId)}>
@@ -342,6 +405,7 @@ function SendModal({ e, onClose, onDone }: { e: Enquiry; onClose: () => void; on
       setBusy(false);
     }
   };
+  useHotkeys({ 'mod+enter, mod+s': () => count > 0 && !busy && send() }, [count, busy, subject, body, chosen, extra], { inModal: true, inInputs: true });
 
   return (
     <Modal
@@ -351,8 +415,11 @@ function SendModal({ e, onClose, onDone }: { e: Enquiry; onClose: () => void; on
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" icon={<Send className="size-3.5" />} loading={busy} disabled={!count} onClick={send}>
+          <span className="mr-auto self-center text-[12px] text-slate-400 max-md:hidden">Tab / Shift+Tab move · Space ticks a contact · / in the message inserts a value</span>
+          <Button onClick={onClose} shortcut="esc">
+            Cancel
+          </Button>
+          <Button variant="primary" icon={<Send className="size-3.5" />} loading={busy} disabled={!count} onClick={send} shortcut="mod+enter">
             Send to {count} contact(s)
           </Button>
         </>
@@ -468,11 +535,23 @@ function ThreadModal({ id, e, onClose }: { id: string; e: Enquiry; onClose: () =
     else setBody(pick(templates.data, mode)?.body ?? '');
     if (mode === 'Counter offer' && rival && !target) setTarget(`USD ${Math.round(rival.perContainerUsd)}`);
   }, [mode, templates.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  useHotkeys(
+    {
+      'mod+enter': () => open && !!t && !busy && body.trim().length >= 2 && send(),
+      'alt+1': () => setMode('Counter offer'),
+      'alt+2': () => setMode('Reply'),
+      'alt+3': () => setMode('Reminder'),
+      'alt+q': () => open && setQuoteOpen(true),
+    },
+    [t, busy, body, target, mode, open],
+    { inModal: true, inInputs: true, enabled: !quoteOpen },
+  );
 
   if (!t) return <Modal open title="Conversation" onClose={onClose}>{q.error ? <ErrorBox error={q.error} /> : <Spinner />}</Modal>;
   const latest = t.quotes[t.quotes.length - 1] ?? null;
 
-  const send = async () => {
+  async function send() {
+    if (!t) return;
     setBusy(true);
     try {
       await api.post(`/freight/threads/${id}/reply`, { body, subject: null, targetRate: mode === 'Counter offer' ? target || null : null });
@@ -518,9 +597,9 @@ function ThreadModal({ id, e, onClose }: { id: string; e: Enquiry; onClose: () =
           {open && (
             <div className="space-y-2 rounded border border-slate-200 p-2.5">
               <div className="flex flex-wrap items-center gap-1">
-                {(['Counter offer', 'Reply', 'Reminder'] as const).map((k) => (
-                  <button key={k} type="button" onClick={() => setMode(k)} className={`rounded px-2.5 py-1 text-[12.5px] ${mode === k ? 'bg-brand-700 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                    {k}
+                {(['Counter offer', 'Reply', 'Reminder'] as const).map((k, i) => (
+                  <button key={k} type="button" title={`Alt+${i + 1}`} onClick={() => setMode(k)} className={`rounded px-2.5 py-1 text-[12.5px] ${mode === k ? 'bg-brand-700 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                    {k} <span className={`text-[10.5px] ${mode === k ? 'text-white/70' : 'text-slate-400'}`}>Alt+{i + 1}</span>
                   </button>
                 ))}
               </div>
@@ -533,7 +612,7 @@ function ThreadModal({ id, e, onClose }: { id: string; e: Enquiry; onClose: () =
               <TemplateEditor value={body} onChange={setBody} vars={vars} multiline rows={8} ariaLabel="Message" />
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[12px] text-slate-500">Sent in the same mail thread. Press / to insert a value (their last rate, our target…).</span>
-                <Button variant="primary" icon={<Send className="size-3.5" />} loading={busy} disabled={body.trim().length < 2} onClick={send}>
+                <Button variant="primary" icon={<Send className="size-3.5" />} loading={busy} disabled={body.trim().length < 2} onClick={send} shortcut="mod+enter">
                   Send
                 </Button>
               </div>
@@ -544,7 +623,9 @@ function ThreadModal({ id, e, onClose }: { id: string; e: Enquiry; onClose: () =
           <div className="flex items-center justify-between">
             <h3 className="text-[13.5px] font-semibold text-slate-800">Quotes ({t.quotes.length})</h3>
             {open && (
-              <Button onClick={() => setQuoteOpen(true)}>{latest ? 'Correct / add round' : 'Add quote'}</Button>
+              <Button onClick={() => setQuoteOpen(true)} shortcut="alt+q">
+                {latest ? 'Correct / add round' : 'Add quote'}
+              </Button>
             )}
           </div>
           {!t.quotes.length && <div className="text-[12.5px] text-slate-500">No quote yet. One is read automatically from each reply that mentions a rate.</div>}
@@ -618,10 +699,11 @@ function QuoteModal({ threadId, latest, onClose, onDone }: { threadId: string; l
       setBusy(false);
     }
   };
+  useHotkeys({ 'mod+enter, mod+s': () => !busy && save() }, [f, busy], { inModal: true, inInputs: true });
   const inp = (k: keyof typeof f, lbl: string, props: Record<string, unknown> = {}) => (
     <label className="grid gap-1 text-[12.5px] text-slate-700">
       {lbl}
-      <input className="field-input" value={f[k] as string} onChange={(e) => setF((o) => ({ ...o, [k]: e.target.value }))} {...props} />
+      <input data-nav="1" className="field-input" value={f[k] as string} onChange={(e) => setF((o) => ({ ...o, [k]: e.target.value }))} {...props} />
     </label>
   );
   return (
@@ -631,18 +713,20 @@ function QuoteModal({ threadId, latest, onClose, onDone }: { threadId: string; l
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" loading={busy} onClick={save}>
+          <Button onClick={onClose} shortcut="esc">
+            Cancel
+          </Button>
+          <Button variant="primary" loading={busy} onClick={save} shortcut="mod+s" data-nav-end>
             Save quote
           </Button>
         </>
       }
     >
-      <div className="grid grid-cols-2 gap-2.5">
+      <div className="grid grid-cols-2 gap-2.5" onKeyDown={enterNavigation}>
         {inp('currency', 'Currency', { maxLength: 3, 'data-autofocus': true })}
         {inp('amount', 'Amount', { inputMode: 'decimal' })}
         <label className="col-span-2 flex items-center gap-2 text-[12.5px] text-slate-700">
-          <input type="checkbox" checked={f.perContainer} onChange={(e) => setF((o) => ({ ...o, perContainer: e.target.checked }))} /> Rate is per container (untick for one lump sum)
+          <input type="checkbox" data-nav="1" checked={f.perContainer} onChange={(e) => setF((o) => ({ ...o, perContainer: e.target.checked }))} /> Rate is per container (Space to untick for one lump sum)
         </label>
         {inp('surcharges', 'Surcharges per container', { inputMode: 'decimal' })}
         {inp('transitDays', 'Transit days', { inputMode: 'numeric' })}
@@ -680,6 +764,7 @@ function AwardModal({ e, threadId, onClose, onDone }: { e: Enquiry; threadId: st
       setBusy(false);
     }
   };
+  useHotkeys({ 'mod+enter': () => !busy && save() }, [opts, busy], { inModal: true, inInputs: true });
   const box = (k: keyof typeof opts, text: string, disabled = false) => (
     <label className={`flex items-start gap-2 text-[13px] ${disabled ? 'text-slate-400' : 'text-slate-700'}`}>
       <input type="checkbox" className="mt-0.5" disabled={disabled} checked={opts[k]} onChange={(ev) => setOpts((o) => ({ ...o, [k]: ev.target.checked }))} />
@@ -693,8 +778,10 @@ function AwardModal({ e, threadId, onClose, onDone }: { e: Enquiry; threadId: st
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button variant="primary" icon={<Award className="size-3.5" />} loading={busy} onClick={save}>
+          <Button onClick={onClose} shortcut="esc">
+            Cancel
+          </Button>
+          <Button variant="primary" icon={<Award className="size-3.5" />} loading={busy} onClick={save} shortcut="mod+enter" data-autofocus>
             Confirm booking
           </Button>
         </>

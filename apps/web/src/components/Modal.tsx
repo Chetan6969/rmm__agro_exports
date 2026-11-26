@@ -24,11 +24,14 @@ export function Modal({
   useEffect(() => {
     if (!open) return;
     const opener = document.activeElement as HTMLElement | null;
-    document.body.dataset.modalOpen = '1';
+    // a count, not a flag: closing a dialog opened on top of another must not mark the page as free
+    document.body.dataset.modalOpen = String(Number(document.body.dataset.modalOpen ?? 0) + 1);
     const first = ref.current?.querySelector<HTMLElement>('[data-autofocus]') ?? ref.current?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
     return () => {
-      delete document.body.dataset.modalOpen;
+      const left = Number(document.body.dataset.modalOpen ?? 1) - 1;
+      if (left > 0) document.body.dataset.modalOpen = String(left);
+      else delete document.body.dataset.modalOpen;
       opener?.focus?.();
     };
   }, [open]);

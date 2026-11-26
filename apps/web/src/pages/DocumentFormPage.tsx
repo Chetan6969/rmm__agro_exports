@@ -350,7 +350,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     {
       'mod+s, mod+enter': () => save(),
       'alt+a': () => !readOnly && setEditing({ group: null }),
-      'mod+p': () => !isNew && can(def.module, 'print') && openPdf('pdf'),
+      'mod+p': () => (!isNew && can(def.module, 'print') ? openPdf('pdf') : window.print()),
       esc: () => (editing ? setEditing(null) : dirty ? setConfirmLeave(true) : back()),
     },
     [header, lines, terms, containers, dirty, saving, record, editing],

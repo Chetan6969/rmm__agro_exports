@@ -16,6 +16,8 @@ import {
   Landmark,
   ListChecks,
   LayoutDashboard,
+  Contact,
+  FilePlus2,
   Mail,
   MailSearch,
   type LucideIcon,
@@ -44,6 +46,10 @@ export interface NavItem {
 
 const entities = ENTITY_LIST as readonly EntityDef[];
 
+/** The freight quotation section and the masters that live in it (not under Masters). */
+export const FREIGHT = 'Freight quotations';
+const FREIGHT_MASTERS = ['freightContacts', 'mailTemplates'];
+
 const DOC_ICONS: Record<string, LucideIcon> = { proformaInvoices: FileSignature, productionOrders: Factory, commercialInvoices: Receipt };
 
 /** Every screen in one list: drives the sidebar and the command palette. */
@@ -68,12 +74,18 @@ export const NAV: NavItem[] = [
     icon: DOC_ICONS[d.key] ?? FileText,
   })),
   { id: 'shipments', label: 'Shipments', path: '/shipments', group: 'Sales', perm: ['sales.shipments', 'view'], keywords: 'lots order planning shipment charges gulf eu staging stage board checkpoints overdue', icon: Ship },
-  { id: 'freight', label: 'Freight quotations', path: '/freight', group: 'Sales', perm: ['sales.freight', 'view'], keywords: 'freight rate quote quotation shipping line email mail negotiation booking ocean carrier compare best', icon: MailSearch },
-  { id: 'mailbox', label: 'My mailbox', path: '/freight/mailbox', group: 'Sales', perm: ['sales.freight', 'view'], keywords: 'email smtp imap app password gmail outlook connect mail account', icon: Mail },
   { id: 'pi-reports', label: 'PI reports', path: '/reports/proforma', group: 'Sales', perm: ['sales.proformaInvoices', 'view'], keywords: 'proforma analysis field usage terms', icon: BarChart3 },
+  // Freight quotations: everything for asking, comparing and booking ocean freight, in one section
+  { id: 'freight', label: 'Enquiries', path: '/freight', group: FREIGHT, perm: ['sales.freight', 'view'], keywords: 'freight rate quote quotation shipping line email mail negotiation booking ocean carrier compare best enquiry', icon: MailSearch },
+  { id: 'freight-new', label: 'New enquiry', path: '/freight/new', group: FREIGHT, perm: ['sales.freight', 'create'], keywords: 'freight rate request quotation new ask shipping lines', icon: FilePlus2 },
+  { id: 'mailbox', label: 'My mailbox', path: '/freight/mailbox', group: FREIGHT, perm: ['sales.freight', 'view'], keywords: 'email smtp imap app password gmail outlook microsoft yahoo connect mail account', icon: Mail },
+  ...FREIGHT_MASTERS.map((key) => {
+    const e = entities.find((x) => x.key === key)!;
+    return { id: `m-${key}`, label: e.plural, path: `/m/${key}`, group: FREIGHT, perm: [`master.${key}`, 'view'] as [string, Action], keywords: `${e.label} master freight quotation`, icon: key === 'freightContacts' ? Contact : FileText };
+  }),
   ...MENU_ORDER.flatMap((menu) =>
     entities
-      .filter((e) => e.menu === menu)
+      .filter((e) => e.menu === menu && !FREIGHT_MASTERS.includes(e.key))
       .map((e) => ({
         id: `m-${e.key}`,
         label: e.plural,
@@ -97,6 +109,7 @@ export const GROUP_ICONS: Record<string, LucideIcon> = {
   General: House,
   MIS: LayoutDashboard,
   Sales: Receipt,
+  [FREIGHT]: MailSearch,
   'Masters · Company': Building2,
   'Masters · Parties': Users,
   'Masters · Products': Package,

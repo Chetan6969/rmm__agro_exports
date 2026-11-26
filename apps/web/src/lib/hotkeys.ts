@@ -48,13 +48,16 @@ export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>, deps
       if (!opts.inModal && document.body.dataset.modalOpen) return;
       // an open dropdown owns Enter/Escape/arrows
       if ((e.target as HTMLElement | null)?.dataset?.comboboxOpen && ['Enter', 'Escape', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+      // inside a lookup field Alt+N means "create a new record for this field", not "new record" for the page
+      if ((e.target as HTMLElement | null)?.getAttribute?.('role') === 'combobox' && e.altKey && e.code === 'KeyN') return;
       for (const [combo, fn] of Object.entries(ref.current)) {
         for (const c of combo.split(',').map((x) => x.trim())) {
           if (!matches(e, c)) continue;
           const hasMod = /(ctrl|alt|meta|mod)\+/.test(c) || /^f\d+$/.test(c) || c === 'esc' || c === 'escape';
           if (!opts.inInputs && !hasMod && isTyping(e.target)) continue;
           e.preventDefault();
-          e.stopPropagation();
+          // the most recently mounted screen handles a key once; the layout's copy must not fire too
+          e.stopImmediatePropagation();
           fn(e);
           return;
         }
@@ -82,6 +85,7 @@ export const SHORTCUTS: { section: string; items: [string, string][] }[] = [
       ['mod+\\', 'Collapse / expand the sidebar'],
       ['alt+c', 'Switch company'],
       ['f1', 'Show keyboard shortcuts'],
+      ['mod+p', 'Print this screen (on a saved document: its PDF)'],
       ['alt+h', 'Go to home'],
       ['alt+l', 'Log out'],
     ],
@@ -111,6 +115,23 @@ export const SHORTCUTS: { section: string; items: [string, string][] }[] = [
       ['esc', 'Close / back'],
       ['alt+d', 'Save current values as defaults for new records'],
       ['f2', 'Open the dropdown of the focused lookup field'],
+      ['alt+n', 'In a lookup field: add a new record to its list (port, product, shipping line…)'],
+    ],
+  },
+  {
+    section: 'Freight quotations',
+    items: [
+      ['alt+n', 'New enquiry (on the enquiry list)'],
+      ['alt+1 … alt+5', 'Enquiry list: all / open / awarded / closed / cancelled'],
+      ['↑ ↓ enter', 'Choose an offer or enquiry and open it'],
+      ['alt+s', 'Send the rate request / ask more contacts'],
+      ['alt+k', 'Check mail now'],
+      ['alt+r', 'Remind everyone who has not replied'],
+      ['alt+b', 'Book the selected offer'],
+      ['alt+q', 'In a conversation: add or correct the quote'],
+      ['alt+1 … alt+3', 'In a conversation: counter offer / reply / reminder'],
+      ['mod+enter', 'Send the mail / save / confirm'],
+      ['/', 'In a mail text: insert a value (port, rate, name…)'],
     ],
   },
 ];

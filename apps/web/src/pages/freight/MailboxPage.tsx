@@ -4,9 +4,11 @@ import { CheckCircle2, Mail, RefreshCw, Send, Unplug } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
+import { enterNavigation } from '../../components/EntityForm';
 import { ConfirmDialog } from '../../components/Modal';
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../components/ui';
 import { api } from '../../lib/api';
+import { useHotkeys } from '../../lib/hotkeys';
 import { showError } from '../../lib/notify';
 import { fmtWhen, type MailboxInfo } from './types';
 
@@ -37,6 +39,15 @@ export function MailboxPage() {
   useEffect(() => {
     if (acc) setF({ provider: acc.provider in SHORT ? acc.provider : DEFAULT_MAIL_PROVIDER, email: acc.email, displayName: acc.displayName ?? '', password: '' });
   }, [acc]);
+  useHotkeys(
+    {
+      'mod+s, mod+enter': () => info?.ready && f.email && busy === null && save(),
+      'alt+t': () => acc && busy === null && sendTest(),
+      'alt+k': () => acc && busy === null && checkNow(),
+    },
+    [f, acc, busy, info],
+    { inInputs: true },
+  );
 
   if (q.isLoading) return <Spinner />;
   if (q.error) return <div className="p-6"><ErrorBox error={q.error} /></div>;
@@ -44,7 +55,20 @@ export function MailboxPage() {
   const chosen = providers.find((p) => p.provider === f.provider) ?? providers[0];
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setF((o) => ({ ...o, [k]: v }));
 
-  const save = async () => {
+  function sendTest() {
+    run('test', async () => {
+      const r = await api.post<{ to: string }>('/mail-account/test');
+      toast.success(`Test mail sent to ${r.to}`);
+    });
+  }
+  function checkNow() {
+    run('sync', async () => {
+      const r = await api.post<{ checked: number; matched: number; quotes: number }>('/mail-account/sync');
+      toast.success(`Checked ${r.checked} new mail(s)`, { description: `${r.matched} reply(ies) to enquiries, ${r.quotes} quote(s) read.` });
+    });
+  }
+
+  async function save() {
     setBusy('save');
     setError(null);
     try {
@@ -59,7 +83,7 @@ export function MailboxPage() {
     }
   };
 
-  const run = async (key: string, fn: () => Promise<void>) => {
+  async function run(key: string, fn: () => Promise<void>) {
     setBusy(key);
     try {
       await fn();
@@ -94,15 +118,32 @@ export function MailboxPage() {
               {acc.lastError && <div className="w-full text-[12.5px] text-red-700">{acc.lastError}</div>}
             </div>
           )}
-          <div className="grid gap-3">
+          <div className="grid gap-3" onKeyDown={enterNavigation}>
             <div className="grid gap-1 text-[12.5px] font-medium text-slate-700">
               Your email is with
-              <div className="grid grid-cols-3 gap-2" role="radiogroup" aria-label="Email provider">
+              <div
+                className="grid grid-cols-3 gap-2"
+                role="radiogroup"
+                aria-label="Email provider"
+                onKeyDown={(e) => {
+                  // ← → (or ↑ ↓) pick the provider, like any radio group; Enter moves to the email box
+                  const dir = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+                  if (!dir) return;
+                  e.preventDefault();
+                  const i = providers.findIndex((p) => p.provider === f.provider);
+                  const n = providers[(i + dir + providers.length) % providers.length];
+                  set('provider', n.provider);
+                  (e.currentTarget.querySelector(`[data-provider="${n.provider}"]`) as HTMLElement | null)?.focus();
+                }}
+              >
                 {providers.map((p) => (
                   <button
                     key={p.provider}
                     type="button"
                     role="radio"
+                    data-provider={p.provider}
+                    data-nav={f.provider === p.provider ? '1' : undefined}
+                    tabIndex={f.provider === p.provider ? 0 : -1}
                     aria-checked={f.provider === p.provider}
                     onClick={() => set('provider', p.provider)}
                     className={`rounded border px-2.5 py-2 text-left ${f.provider === p.provider ? 'border-brand-600 bg-brand-50 ring-2 ring-brand-600/25' : 'border-slate-300 bg-white hover:bg-slate-50'}`}
@@ -118,6 +159,7 @@ export function MailboxPage() {
               <input
                 className="field-input"
                 type="email"
+                data-nav="1"
                 autoComplete="email"
                 value={f.email}
                 onChange={(e) => {
@@ -133,7 +175,7 @@ export function MailboxPage() {
             </label>
             <label className="grid gap-1 text-[12.5px] font-medium text-slate-700">
               Your name in mails
-              <input className="field-input" value={f.displayName} onChange={(e) => set('displayName', e.target.value)} placeholder="e.g. Navneet — RMM Agro Exports" />
+              <input data-nav="1" className="field-input" value={f.displayName} onChange={(e) => set('displayName', e.target.value)} placeholder="e.g. Navneet — RMM Agro Exports" />
             </label>
             <label className="grid gap-1 text-[12.5px] font-medium text-slate-700">
               App password
@@ -141,6 +183,7 @@ export function MailboxPage() {
                 className="field-input font-mono"
                 type="password"
                 autoComplete="new-password"
+                data-nav="1"
                 value={f.password}
                 onChange={(e) => set('password', e.target.value)}
                 placeholder={acc ? 'Saved — leave empty to keep it' : 'Paste the app password'}
@@ -151,15 +194,15 @@ export function MailboxPage() {
             </label>
             <ErrorBox error={error} />
             <div className="flex flex-wrap gap-2">
-              <Button variant="primary" loading={busy === 'save'} onClick={save} disabled={!info!.ready || !f.email}>
+              <Button variant="primary" loading={busy === 'save'} onClick={save} disabled={!info!.ready || !f.email} shortcut="mod+s" data-nav-end>
                 {acc ? 'Save and re-check' : 'Connect mailbox'}
               </Button>
               {acc && (
                 <>
-                  <Button icon={<Send className="size-3.5" />} loading={busy === 'test'} onClick={() => run('test', async () => { const r = await api.post<{ to: string }>('/mail-account/test'); toast.success(`Test mail sent to ${r.to}`); })}>
+                  <Button icon={<Send className="size-3.5" />} loading={busy === 'test'} onClick={sendTest} shortcut="alt+t">
                     Send test mail
                   </Button>
-                  <Button icon={<RefreshCw className="size-3.5" />} loading={busy === 'sync'} onClick={() => run('sync', async () => { const r = await api.post<{ checked: number; matched: number; quotes: number }>('/mail-account/sync'); toast.success(`Checked ${r.checked} new mail(s)`, { description: `${r.matched} reply(ies) to enquiries, ${r.quotes} quote(s) read.` }); })}>
+                  <Button icon={<RefreshCw className="size-3.5" />} loading={busy === 'sync'} onClick={checkNow} shortcut="alt+k">
                     Check now
                   </Button>
                   <Button variant="ghost" icon={<Unplug className="size-3.5" />} onClick={() => setDisconnect(true)}>

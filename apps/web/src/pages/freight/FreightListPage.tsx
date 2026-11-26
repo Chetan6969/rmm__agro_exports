@@ -1,9 +1,12 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Mail, Plus, Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
+import { enterNavigation, focusSibling } from '../../components/EntityForm';
+import { RefSelect } from '../../components/RefSelect';
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '../../components/ui';
 import { api, qs } from '../../lib/api';
+import { useHotkeys } from '../../lib/hotkeys';
 import { showError } from '../../lib/notify';
 import { useSession } from '../../lib/session';
 import { useDebounced } from '../MasterListPage';
@@ -45,6 +48,32 @@ export function FreightListPage() {
     placeholderData: keepPreviousData,
     enabled: !!session?.activeCompany,
   });
+  const navigate = useNavigate();
+  const rows = q.data ?? [];
+  const [sel, setSel] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const tableRef = useRef<HTMLTableSectionElement>(null);
+  useEffect(() => setSel(0), [status, debounced]);
+  useEffect(() => {
+    tableRef.current?.querySelector(`[data-row="${sel}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [sel]);
+  const setStatus = (s: string) => {
+    const n = new URLSearchParams(params);
+    n.set('status', s);
+    setParams(n, { replace: true });
+  };
+  useHotkeys(
+    {
+      '/': () => searchRef.current?.focus(),
+      arrowdown: () => setSel((i) => Math.min(i + 1, rows.length - 1)),
+      arrowup: () => setSel((i) => Math.max(i - 1, 0)),
+      enter: () => rows[sel] && navigate(`/freight/${rows[sel].id}`),
+      'alt+n': () => can('sales.freight', 'create') && navigate('/freight/new'),
+      'alt+m': () => navigate('/freight/mailbox'),
+      ...Object.fromEntries(STATUSES.map((s, i) => [`alt+${i + 1}`, () => setStatus(s)])),
+    },
+    [rows, sel, params],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -53,15 +82,13 @@ export function FreightListPage() {
         subtitle="Ask shipping lines for rates by email, negotiate in the same thread and book the best offer."
         actions={
           <>
-            <Link to="/freight/mailbox" className="text-[13px] text-brand-700 hover:underline">
+            <Button onClick={() => navigate('/freight/mailbox')} shortcut="alt+m">
               My mailbox
-            </Link>
+            </Button>
             {can('sales.freight', 'create') && (
-              <Link to="/freight/new">
-                <Button variant="primary" icon={<Plus className="size-3.5" />}>
-                  New enquiry
-                </Button>
-              </Link>
+              <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => navigate('/freight/new')} shortcut="alt+n">
+                New enquiry
+              </Button>
             )}
           </>
         }
@@ -70,25 +97,38 @@ export function FreightListPage() {
       <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-3 py-2.5 sm:px-5">
         <div className="relative w-full max-w-xs">
           <Search className="absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-slate-400" />
-          <input className="field-input pl-7" placeholder="Number, port or cargo…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search enquiries" />
+          <input
+            ref={searchRef}
+            className="field-input pl-7"
+            placeholder="Number, port or cargo…  ( / )"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              // leave the box to move through the rows with the arrows
+              if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === 'Escape') {
+                e.preventDefault();
+                e.currentTarget.blur();
+                if (e.key === 'Enter' && rows[0]) navigate(`/freight/${rows[0].id}`);
+              }
+            }}
+            aria-label="Search enquiries"
+          />
         </div>
         <div className="flex flex-wrap gap-1" role="tablist">
-          {STATUSES.map((s) => (
+          {STATUSES.map((s, i) => (
             <button
               key={s || 'all'}
               role="tab"
               aria-selected={status === s}
-              onClick={() => {
-                const n = new URLSearchParams(params);
-                n.set('status', s);
-                setParams(n, { replace: true });
-              }}
+              onClick={() => setStatus(s)}
+              title={`Alt+${i + 1}`}
               className={`rounded px-2.5 py-1 text-[12.5px] ${status === s ? 'bg-brand-700 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
             >
               {s ? label(s) : 'All'}
             </button>
           ))}
         </div>
+        <span className="ml-auto text-[12px] text-slate-400 max-md:hidden">/ search · ↑ ↓ choose · Enter open · Alt+N new · Alt+1–5 status</span>
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-5">
         {q.isLoading ? (
@@ -111,9 +151,16 @@ export function FreightListPage() {
                   ))}
                 </tr>
               </thead>
-              <tbody>
-                {q.data.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50">
+              <tbody ref={tableRef}>
+                {q.data.map((r, i) => (
+                  <tr
+                    key={r.id}
+                    data-row={i}
+                    aria-selected={i === sel}
+                    onClick={() => setSel(i)}
+                    onDoubleClick={() => navigate(`/freight/${r.id}`)}
+                    className={`border-t border-slate-100 ${i === sel ? 'bg-brand-50 outline-2 -outline-offset-2 outline-brand-600/40' : 'hover:bg-slate-50'}`}
+                  >
                     <td className="px-3 py-2">
                       <Link to={`/freight/${r.id}`} className="font-medium text-brand-700 hover:underline">
                         {r.number}
@@ -166,23 +213,36 @@ interface Draft {
   notes?: string | null;
 }
 
-/** New enquiry; from a shipment lot the route, containers and cargo are filled in. */
+/** Fields picked from masters (the enquiry keeps the chosen name, so mails read naturally). */
+const PICKERS: { key: 'portOfLoading' | 'portOfDischarge' | 'containerType' | 'commodity'; entity: string; label: string; placeholder: string }[] = [
+  { key: 'portOfLoading', entity: 'ports', label: 'Port of loading', placeholder: 'Type to search ports… (F2 = list)' },
+  { key: 'portOfDischarge', entity: 'ports', label: 'Port of discharge', placeholder: 'Type to search ports…' },
+  { key: 'containerType', entity: 'containerTypes', label: 'Container type', placeholder: "e.g. 20' FCL" },
+  { key: 'commodity', entity: 'products', label: 'Commodity', placeholder: 'Type to search products…' },
+];
+
+/** New enquiry; from a shipment lot the route, containers and cargo are filled in. Fully keyboard driven. */
 export function FreightNewPage() {
   const [params] = useSearchParams();
   const nav = useNavigate();
   const shipment = params.get('shipment') ?? '';
   const q = useQuery({ queryKey: ['freight', 'draft', shipment], queryFn: () => api.get<Draft>(`/freight/enquiries/draft${qs({ shipmentId: shipment })}`) });
   const [d, setD] = useState<Draft | null>(null);
+  const [ids, setIds] = useState<Record<string, string | null>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const formRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (q.data) setD(q.data);
   }, [q.data]);
-  if (q.isLoading || !d) return q.error ? <div className="p-6"><ErrorBox error={q.error} /></div> : <Spinner />;
-  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((o) => (o ? { ...o, [k]: v } : o));
-  const fieldErr = (k: string) => (error && typeof error === 'object' && 'fields' in error ? (error as { fields: Record<string, string> }).fields[k] : undefined);
+  // put the cursor in the first field once the form is there
+  const ready = !!d;
+  useEffect(() => {
+    if (ready) setTimeout(() => formRef.current?.querySelector<HTMLElement>('[data-nav]')?.focus(), 0);
+  }, [ready]);
 
   const save = async () => {
+    if (!d || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -204,58 +264,104 @@ export function FreightNewPage() {
       setBusy(false);
     }
   };
+  useHotkeys({ 'mod+s, mod+enter': () => save(), esc: () => nav('/freight') }, [d, busy], { inInputs: true });
 
-  const text = (k: keyof Draft, lbl: string, extra: Record<string, unknown> = {}) => (
-    <label className="grid gap-1 text-[12.5px] font-medium text-slate-700">
-      {lbl}
-      <input className="field-input" aria-invalid={!!fieldErr(k)} value={(d[k] as string | number | null | undefined) ?? ''} onChange={(e) => set(k, e.target.value as never)} {...extra} />
-      {fieldErr(k) && <span className="text-[12px] font-normal text-red-600">{fieldErr(k)}</span>}
-    </label>
+  if (q.isLoading || !d) return q.error ? <div className="p-6"><ErrorBox error={q.error} /></div> : <Spinner />;
+  const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setD((o) => (o ? { ...o, [k]: v } : o));
+  const fieldErr = (k: string) => (error && typeof error === 'object' && 'fields' in error ? (error as { fields: Record<string, string> }).fields[k] : undefined);
+  const next = () => {
+    const root = formRef.current;
+    const at = document.activeElement as HTMLElement | null;
+    if (root && at) focusSibling(root, at, 1);
+  };
+
+  const field = (k: string, lbl: string, input: ReactNode) => (
+    <div className="grid content-start gap-1">
+      <label htmlFor={`fq-${k}`} className="text-[12.5px] font-medium text-slate-700">
+        {lbl}
+      </label>
+      {input}
+      {fieldErr(k) && <span className="text-[12px] text-red-600">{fieldErr(k)}</span>}
+    </div>
   );
+  const text = (k: keyof Draft, lbl: string, extra: Record<string, unknown> = {}) =>
+    field(
+      k,
+      lbl,
+      <input id={`fq-${k}`} data-nav="1" className="field-input" aria-invalid={!!fieldErr(k)} value={(d[k] as string | number | null | undefined) ?? ''} onChange={(e) => set(k, e.target.value as never)} {...extra} />,
+    );
+  const picker = (pk: (typeof PICKERS)[number]) =>
+    field(
+      pk.key,
+      pk.label,
+      <RefSelect
+        id={`fq-${pk.key}`}
+        entity={pk.entity}
+        value={ids[pk.key] ?? null}
+        label={(d[pk.key] as string | null) || null}
+        invalid={!!fieldErr(pk.key)}
+        placeholder={pk.placeholder}
+        allowCreate
+        onChange={(id, name) => {
+          setIds((o) => ({ ...o, [pk.key]: id }));
+          set(pk.key, (name ?? '') as never);
+        }}
+        onCommit={next}
+      />,
+    );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <PageHeader title="New freight enquiry" subtitle={d.shipmentId ? `For lot ${d.lotNo} of ${d.piNumber ?? 'the order'} — check the details, then choose whom to ask.` : 'Describe the shipment; next you choose the shipping lines to ask.'} />
+      <PageHeader
+        title="New freight enquiry"
+        subtitle={d.shipmentId ? `For lot ${d.lotNo} of ${d.piNumber ?? 'the order'} — check the details, then choose whom to ask.` : 'Describe the shipment; next you choose the shipping lines to ask.'}
+      />
       <MailboxBanner />
       <div className="p-3 sm:p-5">
-        <Card className="grid max-w-3xl gap-3 p-4 sm:grid-cols-2">
-          {text('portOfLoading', 'Port of loading', { placeholder: 'e.g. Mundra', 'data-autofocus': true })}
-          {text('portOfDischarge', 'Port of discharge', { placeholder: 'e.g. Jebel Ali' })}
-          {text('containerType', 'Container type', { placeholder: "e.g. 20' FCL" })}
-          <label className="grid gap-1 text-[12.5px] font-medium text-slate-700">
-            No. of containers
-            <input className="field-input" type="number" min={1} value={d.containerCount} onChange={(e) => set('containerCount', Number(e.target.value))} />
-          </label>
-          {text('commodity', 'Commodity')}
-          {text('grossWeightMt', 'Gross weight (MT)', { inputMode: 'decimal' })}
-          {text('readyDate', 'Cargo ready date', { type: 'date' })}
-          <label className="grid gap-1 text-[12.5px] font-medium text-slate-700">
-            Free days wanted at destination
-            <input className="field-input" type="number" min={0} value={d.freeDaysWanted ?? ''} onChange={(e) => set('freeDaysWanted', e.target.value === '' ? null : Number(e.target.value))} />
-          </label>
-          {text('replyBy', 'Ask for replies by', { type: 'date' })}
-          <label className="grid gap-1 text-[12.5px] font-medium text-slate-700">
-            Automatic reminder after
-            <select className="field-input" value={d.reminderHours} onChange={(e) => set('reminderHours', Number(e.target.value))}>
-              {[...new Set([0, 24, 48, 72, d.reminderHours])].sort((a, b) => a - b).map((h) => (
-                <option key={h} value={h}>
-                  {h ? `${h} hours without a reply` : 'No reminders'}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1 text-[12.5px] font-medium text-slate-700 sm:col-span-2">
-            Internal notes
-            <textarea className="field-input" rows={2} value={d.notes ?? ''} onChange={(e) => set('notes', e.target.value)} />
-          </label>
-          <div className="sm:col-span-2">
-            <ErrorBox error={error} />
-          </div>
-          <div className="flex gap-2 sm:col-span-2">
-            <Button variant="primary" loading={busy} onClick={save}>
-              Save and choose contacts
-            </Button>
-            <Button onClick={() => nav(-1)}>Cancel</Button>
+        <Card className="max-w-3xl p-4">
+          <div ref={formRef} className="grid gap-3 sm:grid-cols-2" onKeyDown={enterNavigation}>
+            {picker(PICKERS[0])}
+            {picker(PICKERS[1])}
+            {picker(PICKERS[2])}
+            {text('containerCount', 'No. of containers', { type: 'number', min: 1, value: d.containerCount, onChange: (e: ChangeEvent<HTMLInputElement>) => set('containerCount', Number(e.target.value)) })}
+            {picker(PICKERS[3])}
+            {text('grossWeightMt', 'Gross weight (MT)', { inputMode: 'decimal' })}
+            {text('readyDate', 'Cargo ready date', { type: 'date' })}
+            {text('freeDaysWanted', 'Free days wanted at destination', {
+              type: 'number',
+              min: 0,
+              value: d.freeDaysWanted ?? '',
+              onChange: (e: ChangeEvent<HTMLInputElement>) => set('freeDaysWanted', e.target.value === '' ? null : Number(e.target.value)),
+            })}
+            {text('replyBy', 'Ask for replies by', { type: 'date' })}
+            {field(
+              'reminderHours',
+              'Automatic reminder after',
+              <select id="fq-reminderHours" data-nav="1" className="field-input" value={d.reminderHours} onChange={(e) => set('reminderHours', Number(e.target.value))}>
+                {[...new Set([0, 24, 48, 72, d.reminderHours])]
+                  .sort((a, b) => a - b)
+                  .map((h) => (
+                    <option key={h} value={h}>
+                      {h ? `${h} hours without a reply` : 'No reminders'}
+                    </option>
+                  ))}
+              </select>,
+            )}
+            <div className="sm:col-span-2">
+              {field('notes', 'Internal notes', <textarea id="fq-notes" data-nav="1" className="field-input" rows={2} value={d.notes ?? ''} onChange={(e) => set('notes', e.target.value)} />)}
+            </div>
+            <div className="sm:col-span-2">
+              <ErrorBox error={error} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:col-span-2">
+              <Button variant="primary" loading={busy} onClick={save} shortcut="mod+s" data-nav-end>
+                Save and choose contacts
+              </Button>
+              <Button onClick={() => nav('/freight')} shortcut="esc">
+                Cancel
+              </Button>
+              <span className="text-[12px] text-slate-500 max-sm:hidden">Enter = next field · F2 = open list · Alt+N in a list = add a new port / container / product</span>
+            </div>
           </div>
         </Card>
       </div>

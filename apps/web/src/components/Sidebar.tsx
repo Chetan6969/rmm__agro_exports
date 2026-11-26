@@ -48,7 +48,9 @@ export function useSidebarCollapsed() {
   return { collapsed, toggle };
 }
 
-const isActive = (item: NavItem, path: string) => (item.path === '/' ? path === '/' : path === item.path || path.startsWith(`${item.path}/`));
+const under = (item: NavItem, path: string) => (item.path === '/' ? path === '/' : path === item.path || path.startsWith(`${item.path}/`));
+/** The most specific screen wins: on /freight/mailbox only "My mailbox" is active, not "Enquiries" too. */
+const isActive = (item: NavItem, path: string) => under(item, path) && !NAV.some((o) => o.path.length > item.path.length && under(o, path));
 
 /**
  * Main navigation.
@@ -125,7 +127,7 @@ export function Sidebar({
     <aside
       id="main-nav"
       aria-label="Main navigation"
-      className={`flex shrink-0 flex-col border-r ${companyTone(session.activeCompany?.code).panel} text-slate-300 transition-[width] duration-200 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:shadow-2xl max-md:transition-transform ${
+      className={`flex shrink-0 flex-col border-r print:hidden ${companyTone(session.activeCompany?.code).panel} text-slate-300 transition-[width] duration-200 max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:w-72 max-md:shadow-2xl max-md:transition-transform ${
         drawerOpen ? '' : 'max-md:-translate-x-full'
       } ${rail ? 'md:w-[60px]' : 'md:w-60'}`}
     >

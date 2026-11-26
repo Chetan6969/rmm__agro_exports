@@ -21,7 +21,7 @@ export function Layout() {
 
   useHotkeys(
     {
-      'mod+k, mod+p': () => setPalette('all'),
+      'mod+k': () => setPalette('all'),
       'alt+c': () => setPalette('company'),
       'f1, shift+?': () => setHelp(true),
       'alt+h': () => navigate('/'),
@@ -41,7 +41,7 @@ export function Layout() {
       <Sidebar collapsed={collapsed} drawerOpen={navOpen} onToggle={toggle} onCloseDrawer={closeNav} onSwitchCompany={() => setPalette('company')} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="grid h-12 shrink-0 grid-cols-[auto_1fr_auto] items-center gap-2 border-b border-slate-200 bg-white px-2 sm:gap-3 sm:px-4">
+        <header className="grid h-12 shrink-0 print:hidden grid-cols-[auto_1fr_auto] items-center gap-2 border-b border-slate-200 bg-white px-2 sm:gap-3 sm:px-4">
           <div className="flex items-center gap-1">
             <button
               type="button"
