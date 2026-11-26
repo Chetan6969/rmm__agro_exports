@@ -54,7 +54,7 @@ export function FreightDetailPage() {
   const data = q.data;
   const ranked = data?.comparison.rows ?? [];
   const isOpen = data?.status === 'OPEN';
-  const canEdit = can('sales.freight', 'edit');
+  const canEdit = can('freight.quotations', 'edit');
   const notReplied = data?.threads.filter((t) => t.status === 'SENT').length ?? 0;
   useHotkeys(
     {
@@ -62,10 +62,10 @@ export function FreightDetailPage() {
       arrowup: () => setSel((i) => Math.max(i - 1, 0)),
       enter: () => ranked[sel] && setThread(ranked[sel].threadId),
       'alt+b': () => isOpen && canEdit && ranked[sel] && !ranked[sel].expired && setAward(ranked[sel].threadId),
-      'alt+s': () => isOpen && can('sales.freight', 'create') && setSendOpen(true),
+      'alt+s': () => isOpen && can('freight.quotations', 'create') && setSendOpen(true),
       'alt+k': () => checkMail(),
       'alt+r': () => isOpen && canEdit && notReplied > 0 && remind(),
-      del: () => can('sales.freight', 'delete') && setDel(true),
+      del: () => can('freight.quotations', 'delete') && setDel(true),
       esc: () => nav('/freight'),
     },
     [ranked, sel, isOpen, notReplied, data],
@@ -122,7 +122,7 @@ export function FreightDetailPage() {
             <Button icon={<RefreshCw className="size-3.5" />} loading={busy === 'sync'} onClick={checkMail} shortcut="alt+k">
               Check mail
             </Button>
-            {open && can('sales.freight', 'create') && (
+            {open && can('freight.quotations', 'create') && (
               <Button variant={e.threads.length ? 'secondary' : 'primary'} icon={<UserPlus className="size-3.5" />} onClick={() => setSendOpen(true)} shortcut="alt+s">
                 {e.threads.length ? 'Ask more contacts' : 'Send rate request'}
               </Button>
@@ -145,7 +145,7 @@ export function FreightDetailPage() {
                 )}
               </select>
             )}
-            {can('sales.freight', 'delete') && <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDel(true)} aria-label="Delete enquiry" />}
+            {can('freight.quotations', 'delete') && <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setDel(true)} aria-label="Delete enquiry" />}
           </>
         }
       />

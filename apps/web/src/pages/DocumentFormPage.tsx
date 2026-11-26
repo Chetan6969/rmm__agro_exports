@@ -22,15 +22,18 @@ import { ArrowDown, ArrowLeft, ArrowUp, FileText, History, Lock, Package, Pencil
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { toast } from 'sonner';
+import { DocNumberInput } from '../components/DocNumberInput';
 import { EntityForm, type Values } from '../components/EntityForm';
 import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
+import { SuggestInput, type SuggestSource } from '../components/SuggestInput';
 import { ReceiptsPanel } from '../components/ReceiptsPanel';
 import { RefSelect } from '../components/RefSelect';
-import { ConfirmDialog, Modal } from '../components/Modal';
+import { ConfirmDialog, Modal, UnsavedDialog } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api, ApiError } from '../lib/api';
 import { useFormCache } from '../lib/formCache';
 import { useHotkeys } from '../lib/hotkeys';
+import { useUnsavedGuard } from '../lib/useUnsavedGuard';
 import { showError } from '../lib/notify';
 import { useSession } from '../lib/session';
 import { STATUS_TONE } from './DocumentListPage';
@@ -105,7 +108,6 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState<{ group: number | null } | null>(null);
-  const [confirmLeave, setConfirmLeave] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rateNote, setRateNote] = useState<string | null>(null);
 
@@ -114,13 +116,24 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     queryKey: ['documents', def.key, 'one', id, from, shipment],
     queryFn: () => api.get<Loaded>(isNew ? `/documents/${def.key}/draft${draftQuery}` : `/documents/${def.key}/${id}`),
     refetchOnWindowFocus: false,
+    staleTime: 0, // always revalidate the single document on open, so a reopen never shows a stale cached copy
   });
   const record = source.data;
+  const seededStamp = useRef(0); // which server snapshot (dataUpdatedAt) local state currently mirrors
 
+  // Seed local state from the server on first load, and RE-seed whenever a newer server snapshot
+  // arrives while the user has no unsaved edits. Without the re-seed, a background refetch updated the
+  // query cache but the form kept showing the copy captured at mount (the "reopen shows old data" bug).
   useEffect(() => {
-    if (loaded || !record) return;
+    if (!record) return;
+    if (loaded && (dirty || source.dataUpdatedAt === seededStamp.current)) return;
     const h: Values = {};
-    for (const f of def.header) h[f.name] = record[f.name] ?? (f.type === 'boolean' ? false : null);
+    for (const f of def.header) {
+      const raw = record[f.name];
+      // A stored select value that is no longer one of the options (e.g. an old free-text pre-carriage)
+      // would fail validation on save — show it blank so the user re-picks instead of being blocked.
+      h[f.name] = f.type === 'select' && raw != null && !f.options?.includes(raw as string) ? null : raw ?? (f.type === 'boolean' ? false : null);
+    }
     setHeader(h);
     setLabels(labelsOf(def.header, record));
     setLines(withGroups(def, record.lines));
@@ -128,9 +141,12 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     containersTouched.current = record.noOfContainers != null && String(record.noOfContainers) !== String(containerCount(record.lines));
     setTerms(record.terms.map((t) => ({ _key: key(), tcTemplateId: (t.tcTemplateId as string) ?? null, content: String(t.content) })));
     setContainers(record.containers.map((c) => ({ ...c, _key: key() })));
-    setLoaded(true);
-    setTimeout(() => root.current?.querySelector<HTMLElement>('[data-nav]')?.focus(), 0);
-  }, [record, loaded, def]);
+    seededStamp.current = source.dataUpdatedAt;
+    if (!loaded) {
+      setLoaded(true);
+      setTimeout(() => root.current?.querySelector<HTMLElement>('[data-nav]')?.focus(), 0);
+    }
+  }, [record, loaded, dirty, source.dataUpdatedAt, def]);
 
   const locked = !isNew && Boolean(record?.locked);
   const readOnly = isNew ? !can(def.module, 'create') : !can(def.module, 'edit') || locked;
@@ -138,6 +154,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
   const canLock = !isNew && can(def.module, 'edit') && can(def.module, 'delete');
   const back = () => navigate(`/d/${def.key}`);
   const touch = () => setDirty(true);
+  const blocker = useUnsavedGuard(dirty);
 
   const cache = useFormCache({
     storageKey: readOnly ? null : `doc:${def.key}:${id}:${from}`,
@@ -286,8 +303,8 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     return body;
   };
 
-  const save = async () => {
-    if (readOnly || saving) return;
+  const save = async (opts?: { stay?: boolean }): Promise<boolean> => {
+    if (readOnly || saving) return false;
     setSaving(true);
     setErrors({});
     setLineErrors({});
@@ -307,13 +324,18 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           } catch (e) {
             showError(e);
           }
+        }
+        // `stay` (guard-triggered save): don't navigate here — the guard proceeds to the user's destination.
+        if (!opts?.stay) {
           const piId = (saved as Record<string, unknown>).proformaInvoiceId as string | undefined;
-          navigate(piId ? `/plan/${piId}` : `/d/${def.key}/${saved.id}`, { replace: true });
-        } else navigate(`/d/${def.key}/${saved.id}`, { replace: true });
-      } else {
+          if (shipment && def.key === 'commercialInvoices') navigate(piId ? `/plan/${piId}` : `/d/${def.key}/${saved.id}`, { replace: true });
+          else navigate(`/d/${def.key}/${saved.id}`, { replace: true });
+        }
+      } else if (!opts?.stay) {
         setLoaded(false);
         await source.refetch();
       }
+      return true;
     } catch (e) {
       if (e instanceof ApiError && Object.keys(e.fields).length) {
         const h: Record<string, string> = {};
@@ -329,15 +351,24 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
         if (first) document.getElementById(`f-${first}`)?.focus();
       }
       setFormError(e);
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  // Guard dialog (Save / Don't save / Cancel) when leaving with unsaved changes.
+  const guardSave = async () => {
+    const ok = await save({ stay: true });
+    if (ok) blocker.proceed?.();
+    else blocker.reset?.(); // save failed: stay on the page so the errors can be fixed
   };
 
   const remove = async (reason: string) => {
     await api.del(`/documents/${def.key}/${id}`, { reason });
     qc.invalidateQueries({ queryKey: ['documents'] });
     toast.success(`${def.label} ${record?.documentNumber} deleted`);
+    setDirty(false); // don't let the unsaved-changes guard fire on the way out
     back();
   };
 
@@ -351,7 +382,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
       'mod+s, mod+enter': () => save(),
       'alt+a': () => !readOnly && setEditing({ group: null }),
       'mod+p': () => (!isNew && can(def.module, 'print') ? openPdf('pdf') : window.print()),
-      esc: () => (editing ? setEditing(null) : dirty ? setConfirmLeave(true) : back()),
+      esc: () => (editing ? setEditing(null) : back()),
     },
     [header, lines, terms, containers, dirty, saving, record, editing],
     { inInputs: true },
@@ -428,7 +459,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
               </Button>
             )}
             {!readOnly && (
-              <Button variant="primary" data-nav-end icon={<Save className="size-3.5" />} loading={saving} onClick={save} shortcut="mod+s">
+              <Button variant="primary" data-nav-end icon={<Save className="size-3.5" />} loading={saving} onClick={() => save()} shortcut="mod+s">
                 Save
               </Button>
             )}
@@ -441,7 +472,28 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           <DraftBanner cache={cache} />
           {!isNew && record?.children && <ChildrenPanel def={def} id={id} items={record.children} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           {!isNew && !!record?.letterChildren?.length && <LetterChildrenPanel id={id} items={record.letterChildren} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
-          <EntityForm def={asEntity(def.key, def.header)} values={header} labels={labels} errors={errors} readOnly={readOnly} onChange={onHeaderChange} />
+          <EntityForm
+            def={asEntity(def.key, def.header)}
+            values={header}
+            labels={labels}
+            errors={errors}
+            readOnly={readOnly}
+            onChange={onHeaderChange}
+            suggestFrom={{ key: def.key, part: 'header' }}
+            renderField={(f) =>
+              f.name === 'documentNumber' ? (
+                <DocNumberInput
+                  docKey={def.key}
+                  date={(header.documentDate as string) ?? null}
+                  value={(header.documentNumber as string) ?? null}
+                  onChange={(v) => onHeaderChange('documentNumber', v)}
+                  readOnly={readOnly}
+                  isNew={isNew}
+                  invalid={!!errors.documentNumber}
+                />
+              ) : undefined
+            }
+          />
           {rateNote && <div className="-mt-2 text-[12px] text-slate-500">{rateNote}</div>}
 
           {!!def.lines.length && (
@@ -492,7 +544,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           {def.key === 'commercialInvoices' && !isNew && <ReceiptsPanel invoiceId={id} />}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
-            <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print</span>
+            <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print · Ctrl+Shift+N = new</span>
             {record?.updatedAt && <span>Last changed {new Date(record.updatedAt).toLocaleString()} · v{record.version}</span>}
           </div>
         </div>
@@ -512,14 +564,12 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           }}
         />
       )}
-      <ConfirmDialog
-        open={confirmLeave}
-        title="Discard changes?"
-        message="You have unsaved changes on this document."
-        confirmLabel="Discard"
-        danger
-        onClose={() => setConfirmLeave(false)}
-        onConfirm={() => back()}
+      <UnsavedDialog
+        open={blocker.state === 'blocked'}
+        saving={saving}
+        onSave={guardSave}
+        onDiscard={() => blocker.proceed?.()}
+        onCancel={() => blocker.reset?.()}
       />
       <ConfirmDialog
         open={confirmDelete}
@@ -544,7 +594,7 @@ function blankLine(def: DocDef): Line {
 // ---------------------------------------------------------------- packing groups
 // Packing rows that belong to the same product card share a `packGroup` number.
 // Fields that describe the product (not the packing) are the same across the group.
-const SHARED_LINE_FIELDS = ['productId', 'brand', 'cropYear', 'specifications'];
+const SHARED_LINE_FIELDS = ['productId', 'productIdText', 'brand', 'cropYear', 'specifications'];
 
 /** Give loaded lines stable client group numbers (existing single lines stay separate). */
 function withGroups(def: DocDef, rows: Values[]): Line[] {
@@ -734,8 +784,16 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
   const showRate = def.lines.some((f) => f.name === 'ratePerMt');
   const rateRequired = def.lines.find((f) => f.name === 'ratePerMt')?.required ?? false;
   const base = rows[0] ?? blankLine(def);
-  const [shared, setShared] = useState<Values>(() => ({ productId: base.productId ?? null, brand: base.brand ?? null, cropYear: base.cropYear ?? null, specifications: base.specifications ?? null }));
-  const [productLabel, setProductLabel] = useState<string | null>(base._labels?.productId ?? null);
+  const [shared, setShared] = useState<Values>(() => ({
+    productId: base.productId ?? null,
+    productIdText: base.productIdText ?? null,
+    brand: base.brand ?? null,
+    cropYear: base.cropYear ?? null,
+    specifications: base.specifications ?? null,
+  }));
+  const [productLabel, setProductLabel] = useState<string | null>(base._labels?.productId ?? (base.productIdText as string | null) ?? null);
+  /** "Used before" source for a product-line box. */
+  const ls = (field: string): SuggestSource => ({ key: def.key, part: 'lines', field });
   const [packs, setPacks] = useState<Line[]>(() => (rows.length ? rows.map((r) => ({ ...r, _labels: { ...r._labels } })) : [blankLine(def)]));
   const [error, setError] = useState<string | null>(null);
 
@@ -824,8 +882,8 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
   };
 
   const submit = (again: boolean) => {
-    if (!shared.productId) {
-      setError('Pick a product.');
+    if (!shared.productId && !shared.productIdText) {
+      setError('Pick a product, or type one.');
       return;
     }
     for (const [i, p] of packs.entries()) {
@@ -872,19 +930,40 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
           <div className="sm:col-span-2">
             <FieldLabel>Variety *</FieldLabel>
-            <RefSelect entity="products" value={(shared.productId as string) ?? null} label={productLabel} allowCreate onChange={(v, l) => void onProduct(v, l)} />
+            <RefSelect
+              entity="products"
+              value={(shared.productId as string) ?? null}
+              label={shared.productId ? productLabel : null}
+              allowCreate
+              onChange={(v, l) => void onProduct(v, l)}
+              freeText={{
+                value: (shared.productIdText as string | null) ?? null,
+                onChange: (t) => {
+                  setShared((s) => ({ ...s, productIdText: t }));
+                  if (t) setProductLabel(t);
+                },
+                suggest: ls('productIdText'),
+              }}
+            />
           </div>
           <div>
             <FieldLabel>Brand</FieldLabel>
-            <input className="field-input" value={(shared.brand as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, brand: e.target.value }))} placeholder="e.g. AL WALIMAH" />
+            <SuggestInput className="field-input" source={ls('brand')} value={(shared.brand as string) ?? ''} onValue={(v) => setShared((s) => ({ ...s, brand: v }))} placeholder="e.g. AL WALIMAH" />
           </div>
           <div>
             <FieldLabel>Crop year</FieldLabel>
-            <input className="field-input" value={(shared.cropYear as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, cropYear: e.target.value }))} />
+            <SuggestInput className="field-input" source={ls('cropYear')} value={(shared.cropYear as string) ?? ''} onValue={(v) => setShared((s) => ({ ...s, cropYear: v }))} />
           </div>
           <div className="sm:col-span-4">
             <FieldLabel>Description / specification</FieldLabel>
-            <textarea className="field-input resize-y" rows={2} value={(shared.specifications as string) ?? ''} onChange={(e) => setShared((s) => ({ ...s, specifications: e.target.value }))} />
+            <SuggestInput
+              multiline
+              rows={2}
+              className="field-input resize-y"
+              source={ls('specifications')}
+              value={(shared.specifications as string) ?? ''}
+              onValue={(v) => setShared((s) => ({ ...s, specifications: v }))}
+            />
           </div>
         </div>
 
@@ -904,7 +983,19 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <div className="col-span-2">
                   <FieldLabel>Packing type</FieldLabel>
-                  <RefSelect entity="packingTypes" value={(p.packingTypeId as string) ?? null} label={(p._labels?.packingTypeId as string) ?? null} allowCreate onChange={(v, l) => void onPacking(i, v, l)} />
+                  <RefSelect
+                    entity="packingTypes"
+                    value={(p.packingTypeId as string) ?? null}
+                    label={p.packingTypeId ? ((p._labels?.packingTypeId as string) ?? null) : null}
+                    allowCreate
+                    onChange={(v, l) => void onPacking(i, v, l)}
+                    freeText={{
+                      value: (p.packingTypeIdText as string | null) ?? null,
+                      // clearing the text (a record was picked) must not wipe the picked record's label
+                      onChange: (t) => setPack(i, { packingTypeIdText: t }, t ? { packingTypeId: t } : undefined),
+                      suggest: ls('packingTypeIdText'),
+                    }}
+                  />
                   {(p as Values)._packing ? (
                     <p className="mt-0.5 text-[11px] text-slate-400">
                       Bag: {String((p._packing as Values).netWeightKg)} kg net · {Math.round(Number((p._packing as Values).tareWeightKg ?? 0) * 1000)} g empty · bags &amp; gross auto
@@ -913,15 +1004,15 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
                 </div>
                 <div className="col-span-2">
                   <FieldLabel>Packing details (printed)</FieldLabel>
-                  <input className="field-input" value={(p.packingText as string) ?? ''} onChange={(e) => setPack(i, { packingText: e.target.value })} placeholder="e.g. 30 KG BOPP bags" />
+                  <SuggestInput className="field-input" source={ls('packingText')} value={(p.packingText as string) ?? ''} onValue={(v) => setPack(i, { packingText: v })} placeholder="e.g. 30 KG BOPP bags" />
                 </div>
                 <div className="col-span-2 sm:col-span-4">
                   <FieldLabel>Extra printed note (optional)</FieldLabel>
-                  <input className="field-input" value={(p.packingNote as string) ?? ''} onChange={(e) => setPack(i, { packingNote: e.target.value })} placeholder="extra line printed under this packing" />
+                  <SuggestInput className="field-input" source={ls('packingNote')} value={(p.packingNote as string) ?? ''} onValue={(v) => setPack(i, { packingNote: v })} placeholder="extra line printed under this packing" />
                 </div>
                 <div>
                   <FieldLabel>HS code</FieldLabel>
-                  <input className="field-input" value={(p.hsCode as string) ?? ''} onChange={(e) => setPack(i, { hsCode: e.target.value })} />
+                  <SuggestInput className="field-input" source={ls('hsCode')} value={(p.hsCode as string) ?? ''} onValue={(v) => setPack(i, { hsCode: v })} />
                 </div>
                 <div>
                   <FieldLabel>Bags</FieldLabel>
@@ -953,7 +1044,13 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
                 {showRate && (
                   <div>
                     <FieldLabel>Rate per MT{rateRequired ? ' *' : ''}</FieldLabel>
-                    <input className="field-input text-right tabular-nums" inputMode="decimal" value={String(p.ratePerMt ?? '')} onChange={(e) => setPack(i, { ratePerMt: e.target.value })} />
+                    <SuggestInput
+                      className="field-input text-right tabular-nums"
+                      inputMode="decimal"
+                      source={ls('ratePerMt')}
+                      value={String(p.ratePerMt ?? '')}
+                      onValue={(v) => setPack(i, { ratePerMt: v })}
+                    />
                   </div>
                 )}
                 <div className="flex items-end justify-between gap-2 sm:col-span-3">

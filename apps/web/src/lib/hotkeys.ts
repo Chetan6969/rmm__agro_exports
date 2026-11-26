@@ -50,6 +50,8 @@ export function useHotkeys(map: Record<string, (e: KeyboardEvent) => void>, deps
       if ((e.target as HTMLElement | null)?.dataset?.comboboxOpen && ['Enter', 'Escape', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
       // inside a lookup field Alt+N means "create a new record for this field", not "new record" for the page
       if ((e.target as HTMLElement | null)?.getAttribute?.('role') === 'combobox' && e.altKey && e.code === 'KeyN') return;
+      // an open "used before" list closes on Esc instead of the page going back
+      if ((e.target as HTMLElement | null)?.dataset?.suggestOpen && e.key === 'Escape') return;
       for (const [combo, fn] of Object.entries(ref.current)) {
         for (const c of combo.split(',').map((x) => x.trim())) {
           if (!matches(e, c)) continue;
@@ -84,6 +86,7 @@ export const SHORTCUTS: { section: string; items: [string, string][] }[] = [
     section: 'Anywhere',
     items: [
       ['mod+k', 'Search: screens, buyers, products, PI / invoice numbers, actions'],
+      ['mod+shift+n', 'New in the current section (new CI inside invoices, etc.); Alt+N also works on a form'],
       ['mod+\\', 'Collapse / expand the sidebar'],
       ['alt+c', 'Switch company'],
       ['f1', 'Show keyboard shortcuts'],

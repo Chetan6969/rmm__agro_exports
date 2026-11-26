@@ -12,6 +12,7 @@ import { badRequest, notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
 import { docTables, inboxItems, masterTables, shipments } from '../../db/schema/index.js';
 import { confirmItem, MAX_INTAKE_BYTES, processItem, storeUpload, suggestFor, suggestPurchase } from './intake.service.js';
+import { orderBuyer } from '../documents/names.js';
 
 const MOD = 'sales.intake';
 
@@ -43,7 +44,7 @@ async function orderInfo(tx: Tx, id: string | null) {
   const pi = docTables.proformaInvoices.header;
   const cu = masterTables.customers;
   const [o] = (await tx
-    .select({ id: pi.id, number: pi.documentNumber, buyerPoRef: pi.buyerPoRef, buyer: cu.name, orderSource: pi.orderSource })
+    .select({ id: pi.id, number: pi.documentNumber, buyerPoRef: pi.buyerPoRef, buyer: orderBuyer(), orderSource: pi.orderSource })
     .from(pi)
     .leftJoin(cu, eq(cu.id, pi.buyerId))
     .where(and(eq(pi.id, id), isNull(pi.deletedAt)))) as Record<string, unknown>[];
@@ -162,14 +163,14 @@ export async function intakeRoutes(app: FastifyInstance) {
       if (q.source === 'pi') conds.push(eq(pi.orderSource, 'Our PI'));
       if (q.search?.trim()) {
         const s = `%${q.search.trim()}%`;
-        conds.push(or(ilike(inboxItems.fileName, s), ilike(inboxItems.sourcePath, s), sql`${inboxItems.refs}::text ilike ${s}`, sql`${inboxItems.fields}::text ilike ${s}`, ilike(pi.documentNumber, s), ilike(pi.buyerPoRef, s), ilike(cu.name, s))!);
+        conds.push(or(ilike(inboxItems.fileName, s), ilike(inboxItems.sourcePath, s), sql`${inboxItems.refs}::text ilike ${s}`, sql`${inboxItems.fields}::text ilike ${s}`, ilike(pi.documentNumber, s), ilike(pi.buyerPoRef, s), ilike(pi.buyerIdText, s), ilike(cu.name, s))!);
       }
       const page = Math.max(1, Number(q.page) || 1);
       const all = await tx
         .select({
           orderId: inboxItems.orderId,
           orderNumber: pi.documentNumber,
-          buyer: cu.name,
+          buyer: orderBuyer(),
           buyerPoRef: pi.buyerPoRef,
           orderSource: pi.orderSource,
           total: sql<number>`count(*)::int`,
@@ -180,7 +181,7 @@ export async function intakeRoutes(app: FastifyInstance) {
         .leftJoin(pi, eq(pi.id, inboxItems.orderId))
         .leftJoin(cu, eq(cu.id, pi.buyerId))
         .where(and(...conds))
-        .groupBy(inboxItems.orderId, pi.documentNumber, cu.name, pi.buyerPoRef, pi.orderSource)
+        .groupBy(inboxItems.orderId, pi.documentNumber, cu.name, pi.buyerIdText, pi.buyerPoRef, pi.orderSource)
         // documents not linked to any order come first (they need attention), then the newest activity
         .orderBy(sql`(${inboxItems.orderId} is not null)`, desc(sql`max(${inboxItems.createdAt})`));
       const counts = await tx.select({ status: inboxItems.status, n: count() }).from(inboxItems).where(isNull(inboxItems.deletedAt)).groupBy(inboxItems.status);

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api, qs } from '../lib/api';
+import { popModal, pushModal } from '../lib/modalOpen';
 import { GROUP_ICONS, groupLabel, NAV } from '../lib/nav';
 import { showError } from '../lib/notify';
 import { useSession } from '../lib/session';
@@ -76,12 +77,9 @@ export function CommandPalette({ open, mode, onClose }: { open: boolean; mode: P
   useEffect(() => {
     if (open) {
       setSearch('');
-      // shared count with Modal: open dialogs stack
-      document.body.dataset.modalOpen = String(Number(document.body.dataset.modalOpen ?? 0) + 1);
+      pushModal();
       return () => {
-        const left = Number(document.body.dataset.modalOpen ?? 1) - 1;
-        if (left > 0) document.body.dataset.modalOpen = String(left);
-        else delete document.body.dataset.modalOpen;
+        popModal();
       };
     }
   }, [open, mode]);

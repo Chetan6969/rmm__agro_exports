@@ -12,6 +12,7 @@ import { notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
 import { billedByPo, listPurchaseInvoices } from '../purchases/purchases.routes.js';
 import { docTables, freightEnquiries, inboxItems, masterTables, packagingItems, payments, shipmentDocuments, shipmentLines, shipments, vendorPos } from '../../db/schema/index.js';
+import { orderBuyer } from '../documents/names.js';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
@@ -130,7 +131,7 @@ const header = () => {
     pi,
     cu,
     cur,
-    columns: { id: pi.id, number: pi.documentNumber, date: pi.documentDate, status: pi.status, orderSource: pi.orderSource, buyer: cu.name, buyerPoRef: pi.buyerPoRef, lcNumber: pi.lcNumber, totalMt: pi.totalQuantityMt, amount: pi.grandTotal, currency: cur.code },
+    columns: { id: pi.id, number: pi.documentNumber, date: pi.documentDate, status: pi.status, orderSource: pi.orderSource, buyer: orderBuyer(), buyerPoRef: pi.buyerPoRef, lcNumber: pi.lcNumber, totalMt: pi.totalQuantityMt, amount: pi.grandTotal, currency: cur.code },
   };
 };
 
@@ -152,6 +153,7 @@ async function orderList(tx: Tx, q: { search?: string; state?: string; page?: st
         ilike(pi.buyerPoRef, s),
         ilike(pi.lcNumber, s),
         ilike(cu.name, s),
+        ilike(pi.buyerIdText, s),
         sql`exists (select 1 from shipments s where s.proforma_invoice_id = ${pi.id} and s.deleted_at is null and (s.invoice_number ilike ${s} or s.bl_number ilike ${s} or s.booking_no ilike ${s}))`,
       )!,
     );
@@ -240,7 +242,7 @@ async function orderFile(tx: Tx, ctx: RequestContext, id: string) {
   };
   const pos = can(ctx, 'sales.vendorPos', 'view') ? await tx.select().from(vendorPos).where(and(eq(vendorPos.proformaInvoiceId, id), isNull(vendorPos.deletedAt))).orderBy(desc(vendorPos.poDate), desc(vendorPos.number)) : [];
   const suppliers = await supplierName([...new Set(pos.map((p) => p.supplierId))]);
-  const freight = can(ctx, 'sales.freight', 'view')
+  const freight = can(ctx, 'freight.quotations', 'view')
     ? await tx
         .select({ id: freightEnquiries.id, number: freightEnquiries.number, status: freightEnquiries.status, date: freightEnquiries.enquiryDate, portOfLoading: freightEnquiries.portOfLoading, portOfDischarge: freightEnquiries.portOfDischarge, containerCount: freightEnquiries.containerCount, shipmentId: freightEnquiries.shipmentId, awardedTo: sql<string | null>`(select t.carrier from freight_threads t where t.id = freight_enquiries.awarded_thread_id)` })
         .from(freightEnquiries)

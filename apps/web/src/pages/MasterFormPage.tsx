@@ -1,17 +1,18 @@
 import { getEntity, type EntityDef } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, History, Save } from 'lucide-react';
+import { ArrowLeft, History, Save, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { EntityForm, type Values } from '../components/EntityForm';
 import { DraftBanner, UndoRedo } from '../components/FormCacheBar';
-import { ConfirmDialog } from '../components/Modal';
+import { ConfirmDialog, UnsavedDialog } from '../components/Modal';
 import { Badge, Button, ErrorBox, PageHeader, Spinner } from '../components/ui';
 import { api, ApiError } from '../lib/api';
 import { useFormCache } from '../lib/formCache';
 import { showError, showProblem } from '../lib/notify';
 import { useHotkeys } from '../lib/hotkeys';
+import { useUnsavedGuard } from '../lib/useUnsavedGuard';
 import { useSession } from '../lib/session';
 
 type Rec = Values & { id: string; version: number; _shared?: boolean; _ownerCode?: string };
@@ -37,7 +38,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
   const [formError, setFormError] = useState<unknown>(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
   const record = useQuery({
@@ -49,6 +50,11 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
     queryKey: ['defaults', def.key],
     queryFn: () => api.get<{ values: Values }>(`/defaults/${def.key}`),
     enabled: isNew,
+  });
+  const usage = useQuery({
+    queryKey: ['masters', def.key, 'usage', id],
+    queryFn: () => api.get<{ total: number; breakdown: { label: string; count: number }[] }>(`/masters/${def.key}/${id}/usage`),
+    enabled: confirmDelete && !isNew,
   });
 
   useEffect(() => {
@@ -69,6 +75,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
 
   const readOnly = isNew ? !can(mod, 'create') : !can(mod, 'edit');
   const back = () => navigate(`/m/${def.key}`);
+  const blocker = useUnsavedGuard(dirty);
 
   const cache = useFormCache({
     storageKey: readOnly ? null : `master:${def.key}:${id}`,
@@ -84,8 +91,8 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
     serverStamp: record.data?.updatedAt ? Date.parse(String(record.data.updatedAt)) : null,
   });
 
-  const save = async (then: 'list' | 'new' = 'list') => {
-    if (readOnly || saving) return;
+  const save = async (then: 'list' | 'new' | 'stay' = 'list'): Promise<boolean> => {
+    if (readOnly || saving) return false;
     setSaving(true);
     setErrors({});
     setFormError(null);
@@ -103,7 +110,9 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
       cache.clear();
       if (then === 'new') {
         setLoaded(false); // effect re-applies defaults and focuses the first field
-      } else back();
+      } else if (then === 'list') back();
+      // 'stay': leave navigation to the caller (the unsaved-changes guard proceeds on its own)
+      return true;
     } catch (e) {
       if (e instanceof ApiError && Object.keys(e.fields).length) {
         setErrors(e.fields);
@@ -111,9 +120,16 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
         document.getElementById(`f-${first}`)?.focus();
       }
       setFormError(e);
+      return false;
     } finally {
       setSaving(false);
     }
+  };
+
+  const guardSave = async () => {
+    const ok = await save('stay');
+    if (ok) blocker.proceed?.();
+    else blocker.reset?.();
   };
 
   const saveDefaults = async () => {
@@ -134,7 +150,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
       'mod+s, mod+enter': () => save('list'),
       'mod+shift+s': () => isNew && save('new'),
       'alt+d': saveDefaults,
-      esc: () => (dirty ? setConfirmLeave(true) : back()),
+      esc: () => back(),
     },
     [values, dirty, saving, record.data],
     { inInputs: true },
@@ -173,7 +189,12 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
               </Button>
             )}
             {!readOnly && <UndoRedo cache={cache} />}
-            <Button onClick={() => (dirty ? setConfirmLeave(true) : back())} shortcut="esc">
+            {!isNew && can(mod, 'delete') && (
+              <Button variant="danger" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmDelete(true)} title={`Delete this ${def.label.toLowerCase()}`}>
+                Delete
+              </Button>
+            )}
+            <Button onClick={back} shortcut="esc">
               Cancel
             </Button>
             {!readOnly && (
@@ -194,6 +215,7 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
             labels={labels}
             errors={errors}
             readOnly={readOnly}
+            suggestFrom={{ key: def.key }}
             onChange={(name, v, l) => {
               setValues((s) => ({ ...s, [name]: v }));
               if (l !== undefined) setLabels((s) => ({ ...s, [name]: l }));
@@ -214,14 +236,40 @@ function MasterForm({ def, id }: { def: EntityDef; id: string }) {
           )}
         </div>
       </div>
+      <UnsavedDialog
+        open={blocker.state === 'blocked'}
+        saving={saving}
+        onSave={guardSave}
+        onDiscard={() => blocker.proceed?.()}
+        onCancel={() => blocker.reset?.()}
+      />
       <ConfirmDialog
-        open={confirmLeave}
-        title="Discard changes?"
-        message="You have unsaved changes on this form."
-        confirmLabel="Discard"
+        open={confirmDelete}
+        title={`Delete ${def.label.toLowerCase()}`}
+        confirmLabel="Delete"
         danger
-        onClose={() => setConfirmLeave(false)}
-        onConfirm={() => back()}
+        requireReason
+        message={
+          <>
+            Delete <b>{title}</b>? It is hidden everywhere but kept — you can restore it from the Recycle bin.
+            {usage.data && usage.data.total > 0 && (
+              <span className="mt-2 block rounded bg-amber-50 px-2 py-1.5 text-[12.5px] text-amber-800">
+                Still used by {usage.data.total} live record{usage.data.total === 1 ? '' : 's'}
+                {usage.data.breakdown.length ? ` (${usage.data.breakdown.map((b) => `${b.count} ${b.label.toLowerCase()}`).join(', ')})` : ''}. Those keep pointing at it and
+                will show a blank reference until you restore it.
+              </span>
+            )}
+          </>
+        }
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={async (reason) => {
+          await api.del(`/masters/${def.key}/${id}`, { reason });
+          toast.success(`${def.label} deleted`);
+          qc.invalidateQueries({ queryKey: ['masters', def.key] });
+          qc.invalidateQueries({ queryKey: ['lookup', def.key] });
+          setDirty(false); // don't let the unsaved-changes guard fire on the way out
+          back();
+        }}
       />
     </div>
   );

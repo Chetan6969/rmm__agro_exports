@@ -60,7 +60,7 @@ export function FreightListPage() {
   useHotkeys(
     {
       '/': () => searchRef.current?.focus(),
-      'alt+n': () => can('sales.freight', 'create') && navigate('/freight/new'),
+      'alt+n': () => can('freight.quotations', 'create') && navigate('/freight/new'),
       'alt+m': () => navigate('/freight/mailbox'),
       ...Object.fromEntries(STATUSES.map((s, i) => [`alt+${i + 1}`, () => setStatus(s)])),
     },
@@ -77,7 +77,7 @@ export function FreightListPage() {
             <Button onClick={() => navigate('/freight/mailbox')} shortcut="alt+m">
               My mailbox
             </Button>
-            {can('sales.freight', 'create') && (
+            {can('freight.quotations', 'create') && (
               <Button variant="primary" icon={<Plus className="size-3.5" />} onClick={() => navigate('/freight/new')} shortcut="alt+n">
                 New enquiry
               </Button>
@@ -129,7 +129,7 @@ export function FreightListPage() {
           <ErrorBox error={q.error} />
         ) : !q.data?.length ? (
           <Card className="p-6 text-center text-[13px] text-slate-500">
-            No enquiries here yet. {can('sales.freight', 'create') && <Link className="text-brand-700 underline" to="/freight/new">Create one</Link>} — or press "Get freight quotes" on a shipment lot.
+            No enquiries here yet. {can('freight.quotations', 'create') && <Link className="text-brand-700 underline" to="/freight/new">Create one</Link>} — or press "Get freight quotes" on a shipment lot.
           </Card>
         ) : (
           <OrderGroups

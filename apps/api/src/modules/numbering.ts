@@ -1,9 +1,9 @@
-import { businessDate, DOC_TYPES, financialYear, formatDocNumber, validatePattern } from '@rmm/shared';
-import { and, eq, gt, sql } from 'drizzle-orm';
+import { businessDate, DOC_LIST, DOC_TYPES, financialYear, formatDocNumber, validatePattern } from '@rmm/shared';
+import { and, eq, gt, isNull, sql } from 'drizzle-orm';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { Tx } from '../db/client.js';
-import { companies, numberCounters, numberSeries } from '../db/schema/index.js';
+import { companies, docTables, numberCounters, numberSeries } from '../db/schema/index.js';
 import { audit } from '../core/audit.js';
 import { inTenantTx, requireCompany, requireCtx, requirePerm, type RequestContext } from '../core/context.js';
 import { badRequest, notFound } from '../core/errors.js';
@@ -39,6 +39,8 @@ const periodOf = (date: string, resetYearly: boolean, fyStartMonth: number) =>
  */
 export async function allocateNumber(tx: Tx, ctx: RequestContext, key: string, docDate: string): Promise<string> {
   const companyId = requireCompany(ctx);
+  // Numbers typed by hand / imported earlier must not be issued again.
+  await catchUpCounter(tx, companyId, key, docDate);
   const s = await seriesFor(tx, companyId, key);
   const period = periodOf(docDate, s.resetYearly, s.fyStartMonth);
   const [row] = await tx
@@ -50,6 +52,91 @@ export async function allocateNumber(tx: Tx, ctx: RequestContext, key: string, d
     })
     .returning({ seq: numberCounters.lastValue });
   return formatDocNumber(s.pattern, { companyCode: s.companyCode, date: docDate, seq: row.seq, fyStartMonth: s.fyStartMonth });
+}
+
+/** Splits a series pattern around its {SEQ} token, formatted for `docDate` ("RMM/EX/26-27/" + seq + ""). */
+async function seriesParts(tx: Tx, companyId: string, key: string, docDate: string) {
+  const s = await seriesFor(tx, companyId, key);
+  const m = /\{SEQ(?::(\d{1,2}))?\}/.exec(s.pattern);
+  const fmt = (p: string) => formatDocNumber(p, { companyCode: s.companyCode, date: docDate, seq: 0, fyStartMonth: s.fyStartMonth });
+  return {
+    s,
+    period: periodOf(docDate, s.resetYearly, s.fyStartMonth),
+    prefix: m ? fmt(s.pattern.slice(0, m.index)) : '',
+    suffix: m ? fmt(s.pattern.slice(m.index + m[0].length)) : '',
+    pad: m?.[1] ? Number(m[1]) : 1,
+  };
+}
+
+/**
+ * Highest running number already used on live documents of this series (prefix…suffix), e.g. numbers
+ * typed by hand or imported before the counter existed. The counter never issues at or below it.
+ */
+async function highestUsed(tx: Tx, companyId: string, key: string, prefix: string, suffix: string): Promise<number> {
+  if (!prefix && !suffix) return 0;
+  let max = 0;
+  for (const d of DOC_LIST.filter((x) => x.numbering === key)) {
+    const h = docTables[d.key].header;
+    const rows = await tx
+      .select({ n: h.documentNumber })
+      .from(h)
+      .where(and(eq(h.companyId, companyId), isNull(h.deletedAt), sql`${h.documentNumber} like ${`${prefix.replace(/[%_\\]/g, '\\$&')}%`}`));
+    for (const { n } of rows as { n: string }[]) {
+      if (!n.endsWith(suffix)) continue;
+      const mid = n.slice(prefix.length, n.length - suffix.length);
+      if (/^\d{1,9}$/.test(mid)) max = Math.max(max, Number(mid));
+    }
+  }
+  return max;
+}
+
+/** Make sure the counter for this series/period is at least the highest number already in use. */
+async function catchUpCounter(tx: Tx, companyId: string, key: string, docDate: string) {
+  const { prefix, suffix, period } = await seriesParts(tx, companyId, key, docDate);
+  const used = await highestUsed(tx, companyId, key, prefix, suffix);
+  if (!used) return;
+  await tx
+    .insert(numberCounters)
+    .values({ companyId, docType: key, period, lastValue: used })
+    .onConflictDoUpdate({
+      target: [numberCounters.companyId, numberCounters.docType, numberCounters.period],
+      set: { lastValue: sql`greatest(${numberCounters.lastValue}, ${used})` },
+    });
+}
+
+/**
+ * The fixed part of a document number for a date and the number that would come next — without
+ * allocating it. The form shows the prefix locked and lets the user edit only the running number.
+ */
+export async function numberFormat(tx: Tx, ctx: RequestContext, key: string, docDate: string) {
+  const companyId = requireCompany(ctx);
+  const { prefix, suffix, pad, period } = await seriesParts(tx, companyId, key, docDate);
+  const [c] = await tx
+    .select({ last: numberCounters.lastValue })
+    .from(numberCounters)
+    .where(and(eq(numberCounters.companyId, companyId), eq(numberCounters.docType, key), eq(numberCounters.period, period)));
+  const last = Math.max(c?.last ?? 0, await highestUsed(tx, companyId, key, prefix, suffix));
+  return { prefix, suffix, next: String(last + 1).padStart(pad, '0') };
+}
+
+/**
+ * A number typed by hand in the series format ("RMM/EX/26-27/120") moves the counter up to it, so the
+ * next automatic number continues after it instead of colliding later. Never moves the counter back.
+ */
+export async function noteTypedNumber(tx: Tx, ctx: RequestContext, key: string, docDate: string, number: string) {
+  const companyId = requireCompany(ctx);
+  const { prefix, suffix, period } = await seriesParts(tx, companyId, key, docDate);
+  if (!number.startsWith(prefix) || !number.endsWith(suffix)) return;
+  const middle = number.slice(prefix.length, number.length - suffix.length);
+  if (!/^\d{1,9}$/.test(middle)) return;
+  const seq = Number(middle);
+  await tx
+    .insert(numberCounters)
+    .values({ companyId, docType: key, period, lastValue: seq })
+    .onConflictDoUpdate({
+      target: [numberCounters.companyId, numberCounters.docType, numberCounters.period],
+      set: { lastValue: sql`greatest(${numberCounters.lastValue}, ${seq})` },
+    });
 }
 
 const today = () => businessDate();
@@ -68,7 +155,8 @@ export async function numberingRoutes(app: FastifyInstance) {
           .select({ last: numberCounters.lastValue })
           .from(numberCounters)
           .where(and(eq(numberCounters.companyId, companyId), eq(numberCounters.docType, d.key), eq(numberCounters.period, period)));
-        const next = (c?.last ?? 0) + 1;
+        const parts = await seriesParts(tx, companyId, d.key, today());
+        const next = Math.max(c?.last ?? 0, await highestUsed(tx, companyId, d.key, parts.prefix, parts.suffix)) + 1;
         out.push({
           docType: d.key,
           label: d.label,

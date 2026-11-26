@@ -531,7 +531,7 @@ function Money({ data }: { data: OrderFile }) {
             </li>
           ))}
         </ul>
-        {can('sales.freight', 'create') && open.length > 0 && (
+        {can('freight.quotations', 'create') && open.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5 border-t border-slate-200 px-3 py-2 text-[12.5px]">
             Get quotes for:
             {open.map((l) => (

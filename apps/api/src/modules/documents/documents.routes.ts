@@ -1,6 +1,8 @@
-import { DOC_LIST } from '@rmm/shared';
+import { businessDate, DOC_LIST, getDoc } from '@rmm/shared';
 import type { FastifyInstance } from 'fastify';
-import { inTenantTx, requireCtx } from '../../core/context.js';
+import { can, inTenantTx, requireCtx, requirePerm } from '../../core/context.js';
+import { notFound } from '../../core/errors.js';
+import { numberFormat } from '../numbering.js';
 import {
   createDocument,
   deleteDocument,
@@ -58,6 +60,16 @@ export async function documentRoutes(app: FastifyInstance) {
   app.get<{ Params: P; Querystring: { from?: string; shipment?: string } }>('/documents/:doc/draft', async (req) => {
     const ctx = requireCtx(req);
     return inTenantTx(ctx, (tx) => draftDocument(tx, ctx, req.params.doc, req.query.from || undefined, req.query.shipment || undefined));
+  });
+
+  /** Fixed prefix / suffix of this document type's number for a date, and the next running number. */
+  app.get<{ Params: P; Querystring: { date?: string } }>('/documents/:doc/number-format', async (req) => {
+    const ctx = requireCtx(req);
+    const def = getDoc(req.params.doc);
+    if (!def) throw notFound(`Unknown document type ${req.params.doc}`);
+    if (!can(ctx, def.module, 'create') && !can(ctx, def.module, 'edit')) requirePerm(ctx, def.module, 'create');
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date ?? '') ? req.query.date! : businessDate();
+    return inTenantTx(ctx, (tx) => numberFormat(tx, ctx, def.numbering, date));
   });
 
   app.get<{ Params: P }>('/documents/:doc/:id', async (req) => {

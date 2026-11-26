@@ -16,6 +16,7 @@ import { masterTables } from '../../db/schema/masters.js';
 import { files } from '../../db/schema/core.js';
 import { shipmentCharges, shipments, shipmentStages } from '../../db/schema/shipments.js';
 import { lotPipelines, templateFor } from './pipeline.js';
+import { orderBuyer } from '../documents/names.js';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
@@ -47,7 +48,7 @@ async function piInfo(tx: Tx, piId: string) {
   const cust = masterTables.customers;
   const cur = masterTables.currencies;
   const [row] = (await tx
-    .select({ id: pi.id, number: pi.documentNumber, date: pi.documentDate, totalMt: pi.totalQuantityMt, buyer: cust.name, incoterm: pi.incoterm, currency: cur.code })
+    .select({ id: pi.id, number: pi.documentNumber, date: pi.documentDate, totalMt: pi.totalQuantityMt, buyer: orderBuyer(), incoterm: pi.incoterm, currency: cur.code })
     .from(pi)
     .leftJoin(cust, eq(cust.id, pi.buyerId))
     .leftJoin(cur, eq(cur.id, pi.currencyId))
@@ -296,7 +297,7 @@ export async function listShipments(tx: Tx, ctx: RequestContext) {
       proformaInvoiceId: shipments.proformaInvoiceId,
       piNumber: pi.documentNumber,
       orderSource: pi.orderSource,
-      buyer: cust.name,
+      buyer: orderBuyer(),
       currency: cur.code,
       productionOrderId: shipments.productionOrderId,
       commercialInvoiceId: shipments.commercialInvoiceId,

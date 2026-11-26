@@ -35,12 +35,13 @@ const salesModules: ModuleDef[] = DOC_LIST.map((d) => ({
 export const MODULES: ModuleDef[] = [
   ...salesModules,
   { key: 'sales.payments', label: 'Payments / receipts', group: 'Sales', actions: ['view', 'create', 'delete', 'export'] },
-  { key: 'sales.freight', label: 'Freight quotations (email)', group: 'Sales', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'sales.intake', label: 'Document inbox (read POs, BLs, certificates…)', group: 'Sales', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'sales.vendorPos', label: 'Purchase orders (to suppliers)', group: 'Purchase', actions: ['view', 'create', 'edit', 'delete', 'print'] },
   { key: 'sales.purchaseInvoices', label: 'Purchase invoices (supplier bills)', group: 'Purchase', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'sales.shipments', label: 'Shipments / order planning', group: 'Sales', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'mis.dashboard', label: 'MIS dashboard', group: 'MIS', actions: ['view', 'export'] },
+  // Freight quotations is its own section, gated separately so only permitted users see the whole area.
+  { key: 'freight.quotations', label: 'Freight quotations (email)', group: 'Freight', actions: ['view', 'create', 'edit', 'delete'] },
   ...masterModules,
   { key: 'admin.users', label: 'Users', group: 'Administration', actions: ['view', 'create', 'edit', 'delete'] },
   { key: 'admin.roles', label: 'Roles & permissions', group: 'Administration', actions: ['view', 'create', 'edit', 'delete'] },

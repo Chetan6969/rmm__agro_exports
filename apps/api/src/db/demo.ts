@@ -421,7 +421,7 @@ export async function loadDemo() {
               shippingLineId: lines.get(inv.vessel.startsWith('MSC') ? 'MSCU' : 'MAEU'),
               vesselFlightName: inv.vessel,
               voyageNumber: inv.voyage,
-              preCarriageBy: 'Road',
+              preCarriageBy: 'ROAD',
               placeOfReceipt: 'Karnal',
               termsOf: id.incoterm as string,
               blNumber: `${inv.vessel.slice(0, 4).replace(/\s/g, '')}${inv.date.replace(/-/g, '').slice(2)}01`,

@@ -52,7 +52,7 @@ export async function misOrders(tx: Tx, f: MisFilter) {
     sql`select pi.id,
                 pi.document_number as number,
                 to_char(pi.document_date, 'YYYY-MM-DD') as date,
-                coalesce(cust.name, '-') as buyer,
+                coalesce(cust.name, pi.buyer_id_text, '-') as buyer,
                 coalesce(cur.code, '') as currency,
                 pi.status,
                 pi.grand_total::text as value,

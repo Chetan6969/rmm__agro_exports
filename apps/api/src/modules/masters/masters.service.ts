@@ -2,10 +2,10 @@
  * Generic master-data engine. Works for every EntityDef in the shared registry, so
  * adding a master needs no new service code.
  */
-import { buildEntitySchema, getEntity, type EntityDef } from '@rmm/shared';
+import { buildEntitySchema, DOC_LIST, ENTITY_LIST, getEntity, type EntityDef } from '@rmm/shared';
 import { and, asc, desc, eq, ilike, inArray, isNull, ne, or, sql, type SQL } from 'drizzle-orm';
 import type { Tx } from '../../db/client.js';
-import { files, masterTables, type AnyTable } from '../../db/schema/index.js';
+import { docTables, files, masterTables, type AnyTable } from '../../db/schema/index.js';
 import { companiesForUser } from '../../core/access.js';
 import { audit } from '../../core/audit.js';
 import { requireCompany, requirePerm, type RequestContext } from '../../core/context.js';
@@ -223,6 +223,75 @@ export async function deleteRecord(tx: Tx, ctx: RequestContext, key: string, id:
     .where(eq(table.id, id));
   await audit(tx, ctx, { entity: def.key, recordId: id, action: 'delete', meta: { reason: reason.trim() } });
   return { ok: true };
+}
+
+// ---------------------------------------------------------------- reference counting (delete warning)
+interface RefSource {
+  kind: 'table' | 'line';
+  /** Table to count distinct rows in: the header/master table for 'table', the line table for 'line'. */
+  table: AnyTable;
+  /** Parent header table (for 'line' sources), so soft-deleted parents are excluded. */
+  header?: AnyTable;
+  /** One or more FK columns on `table` that point at the master (counted as distinct rows, not summed). */
+  cols: string[];
+  /** Human label for the breakdown. */
+  label: string;
+}
+
+let _refSources: Map<string, RefSource[]> | null = null;
+/** Build, once, a map of masterKey → every table that references it (columns grouped per table). */
+function refSourcesFor(entityKey: string): RefSource[] {
+  if (!_refSources) {
+    const m = new Map<string, RefSource[]>();
+    // Add one source per (table, master) pair, gathering every column on that table that points at it,
+    // so a document referencing the master in two columns (e.g. buyer and consignee) is counted once.
+    const addTable = (base: Omit<RefSource, 'cols'>, fields: readonly { name: string; type: string; ref?: string }[]) => {
+      const byTarget = new Map<string, string[]>();
+      for (const f of fields) if (f.type === 'ref' && f.ref) (byTarget.get(f.ref) ?? byTarget.set(f.ref, []).get(f.ref)!).push(f.name);
+      for (const [target, cols] of byTarget) {
+        const list = m.get(target) ?? [];
+        list.push({ ...base, cols });
+        m.set(target, list);
+      }
+    };
+    for (const e of ENTITY_LIST) addTable({ kind: 'table', table: masterTables[e.key], label: e.plural }, e.fields);
+    for (const d of DOC_LIST) {
+      const dt = docTables[d.key];
+      addTable({ kind: 'table', table: dt.header, label: d.plural }, d.header);
+      if (dt.lines) addTable({ kind: 'line', table: dt.lines, header: dt.header, label: d.plural }, d.lines);
+    }
+    _refSources = m;
+  }
+  return _refSources.get(entityKey) ?? [];
+}
+
+/** Count live records that still reference this master — shown as a warning before a (soft) delete. */
+export async function countReferences(tx: Tx, ctx: RequestContext, key: string, id: string) {
+  const { def } = resolveEntity(key);
+  requirePerm(ctx, moduleKey(def), 'view');
+  const breakdown: { label: string; count: number }[] = [];
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return { total: 0, breakdown };
+  let total = 0;
+  for (const s of refSourcesFor(key)) {
+    const match = or(...s.cols.map((c) => eq(s.table[c], id)));
+    if (!match) continue;
+    const [{ c }] =
+      s.kind === 'table'
+        ? await tx.select({ c: sql<number>`count(*)::int` }).from(s.table).where(and(match, isNull(s.table.deletedAt)))
+        : await tx
+            .select({ c: sql<number>`count(distinct ${s.table.documentId})::int` })
+            .from(s.table)
+            .innerJoin(s.header!, eq(s.table.documentId, s.header!.id))
+            .where(and(match, isNull(s.header!.deletedAt)));
+    if (c > 0) {
+      total += c;
+      const ex = breakdown.find((b) => b.label === s.label);
+      if (ex) ex.count += c;
+      else breakdown.push({ label: s.label, count: c });
+    }
+  }
+  breakdown.sort((a, b) => b.count - a.count);
+  return { total, breakdown };
 }
 
 /** Compact id/label list for dropdowns. Any signed-in member may look up labels. */

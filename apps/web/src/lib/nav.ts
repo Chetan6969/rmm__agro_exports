@@ -91,9 +91,9 @@ export const NAV: NavItem[] = [
   { id: 'purchase-orders', label: 'Purchase orders', path: '/purchase-orders', group: PURCHASE, perm: ['sales.vendorPos', 'view'], keywords: 'purchase order supplier vendor miller packaging bags jute tags strips seals paddy rice buy', icon: ShoppingCart },
   { id: 'purchase-invoices', label: 'Purchase invoices', path: '/purchase-invoices', group: PURCHASE, perm: ['sales.purchaseInvoices', 'view'], keywords: 'purchase invoice supplier bill vendor payable gst mandi paddy packaging pay due', icon: ReceiptText },
   // Freight quotations: everything for asking, comparing and booking ocean freight, in one section
-  { id: 'freight', label: 'Enquiries', path: '/freight', group: FREIGHT, perm: ['sales.freight', 'view'], keywords: 'freight rate quote quotation shipping line email mail negotiation booking ocean carrier compare best enquiry', icon: MailSearch },
-  { id: 'freight-new', label: 'New enquiry', path: '/freight/new', group: FREIGHT, perm: ['sales.freight', 'create'], keywords: 'freight rate request quotation new ask shipping lines', icon: FilePlus2 },
-  { id: 'mailbox', label: 'My mailbox', path: '/freight/mailbox', group: FREIGHT, perm: ['sales.freight', 'view'], keywords: 'email smtp imap app password gmail outlook microsoft yahoo connect mail account', icon: Mail },
+  { id: 'freight', label: 'Enquiries', path: '/freight', group: FREIGHT, perm: ['freight.quotations', 'view'], keywords: 'freight rate quote quotation shipping line email mail negotiation booking ocean carrier compare best enquiry', icon: MailSearch },
+  { id: 'freight-new', label: 'New enquiry', path: '/freight/new', group: FREIGHT, perm: ['freight.quotations', 'create'], keywords: 'freight rate request quotation new ask shipping lines', icon: FilePlus2 },
+  { id: 'mailbox', label: 'My mailbox', path: '/freight/mailbox', group: FREIGHT, perm: ['freight.quotations', 'view'], keywords: 'email smtp imap app password gmail outlook microsoft yahoo connect mail account', icon: Mail },
   ...FREIGHT_MASTERS.map((key) => {
     const e = entities.find((x) => x.key === key)!;
     return { id: `m-${key}`, label: e.plural, path: `/m/${key}`, group: FREIGHT, perm: [`master.${key}`, 'view'] as [string, Action], keywords: `${e.label} master freight quotation`, icon: key === 'freightContacts' ? Contact : FileText };

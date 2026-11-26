@@ -6,6 +6,7 @@ import { entityDefaults } from '../../db/schema/index.js';
 import { audit } from '../../core/audit.js';
 import { can, inTenantTx, requireCompany, requireCtx, requirePerm } from '../../core/context.js';
 import {
+  countReferences,
   createRecord,
   deleteRecord,
   exportCsv,
@@ -48,6 +49,12 @@ export async function mastersRoutes(app: FastifyInstance) {
   app.get<{ Params: P }>('/masters/:entity/:id', async (req) => {
     const ctx = requireCtx(req);
     return inTenantTx(ctx, (tx) => getRecord(tx, ctx, req.params.entity, req.params.id));
+  });
+
+  // How many live records still reference this master — shown as a warning before deleting.
+  app.get<{ Params: P }>('/masters/:entity/:id/usage', async (req) => {
+    const ctx = requireCtx(req);
+    return inTenantTx(ctx, (tx) => countReferences(tx, ctx, req.params.entity, req.params.id));
   });
 
   app.post<{ Params: P }>('/masters/:entity', async (req, reply) => {

@@ -1,6 +1,7 @@
+import { getDoc, getEntity } from '@rmm/shared';
 import { Building2, Keyboard, LogOut, Menu, PanelLeftOpen, Search } from 'lucide-react';
 import { useState } from 'react';
-import { Outlet, useNavigate } from 'react-router';
+import { Outlet, useLocation, useNavigate } from 'react-router';
 import { SHORTCUTS, useHotkeys } from '../lib/hotkeys';
 import { useSession } from '../lib/session';
 import { CommandPalette, type PaletteMode } from './CommandPalette';
@@ -9,8 +10,9 @@ import { Sidebar, SIDEBAR_SHORTCUT, useSidebarCollapsed } from './Sidebar';
 import { Kbd } from './ui';
 
 export function Layout() {
-  const { session, logout } = useSession();
+  const { session, logout, can } = useSession();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [palette, setPalette] = useState<PaletteMode | null>(null);
   const [help, setHelp] = useState(false);
   /** Below the md breakpoint the sidebar is an off-canvas drawer. */
@@ -19,6 +21,26 @@ export function Layout() {
   const closeNav = () => setNavOpen(false);
   const isDesktop = () => window.matchMedia('(min-width: 768px)').matches;
 
+  // "New in the current section": from /d/:doc[/...] make a new document of that type, from /m/:entity a
+  // new master. `formsOnly` is used by Alt+N so it doesn't double-fire with the list page's own Alt+N —
+  // only the form routes (which have no Alt+N of their own) get the global handler.
+  const newInSection = (formsOnly = false) => {
+    const path = window.location.pathname;
+    const d = /^\/d\/([^/]+)(\/([^/]+))?/.exec(path);
+    if (d) {
+      if (formsOnly && !d[3]) return;
+      const def = getDoc(d[1]);
+      if (def && can(def.module, 'create')) navigate(`/d/${d[1]}/new`);
+      return;
+    }
+    const m = /^\/m\/([^/]+)(\/([^/]+))?/.exec(path);
+    if (m) {
+      if (formsOnly && !m[3]) return;
+      const def = getEntity(m[1]);
+      if (def && can(`master.${m[1]}`, 'create')) navigate(`/m/${m[1]}/new`);
+    }
+  };
+
   useHotkeys(
     {
       'mod+k': () => setPalette('all'),
@@ -26,11 +48,16 @@ export function Layout() {
       'f1, shift+?': () => setHelp(true),
       'alt+h': () => navigate('/'),
       'alt+l': () => logout(),
+      // Ctrl+Shift+N everywhere (best-effort: some browsers grab it for Incognito); Alt+N only on form
+      // routes, so the list pages keep their own reliable Alt+N.
+      'mod+shift+n': () => newInSection(false),
+      // listed only on a form: a shortcut that is listed is consumed, even when it does nothing
+      ...(/^\/(d|m)\/[^/]+\/[^/]+/.test(pathname) ? { 'alt+n': () => newInSection(true) } : {}),
       [SIDEBAR_SHORTCUT]: () => (isDesktop() ? toggle() : setNavOpen((o) => !o)),
       // only while the phone drawer is open; otherwise Esc belongs to the page (forms, menus)
       ...(navOpen ? { escape: () => setNavOpen(false) } : {}),
     },
-    [navigate, logout, collapsed, navOpen],
+    [navigate, logout, collapsed, navOpen, pathname],
   );
 
   if (!session) return null;

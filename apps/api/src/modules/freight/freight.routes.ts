@@ -1,7 +1,7 @@
 /**
  * Freight quotations by email.
  *  /mail-account               the signed-in user's own mailbox (any user; the password is never returned)
- *  /freight/enquiries...       rate requests, conversations, quotes, comparison and award (sales.freight)
+ *  /freight/enquiries...       rate requests, conversations, quotes, comparison and award (freight.quotations)
  */
 import { businessDate, DEFAULT_MAIL_PROVIDER, DEFAULT_MAIL_TEMPLATES, detectMailProvider, isDecimal, isPositive, MAIL_PROVIDER_KEYS, MAIL_PROVIDERS, MAIL_TEMPLATE_KINDS, mailProvider, renderTemplate, type MailProviderKey } from '@rmm/shared';
 import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
@@ -34,7 +34,7 @@ import {
 } from './freight.service.js';
 import { mailDriver } from './mail.js';
 
-const MOD = 'sales.freight';
+const MOD = 'freight.quotations';
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-12-31');
 const money = (msg: string) => z.string().trim().refine((v) => isDecimal(v) && isPositive(v), msg);
 
@@ -265,7 +265,7 @@ export async function freightRoutes(app: FastifyInstance) {
           orderId: sql<string | null>`coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id))`,
           orderNumber: sql<string | null>`(select pi.document_number from proforma_invoices pi where pi.id = coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id)))`,
           orderSource: sql<string | null>`(select pi.order_source from proforma_invoices pi where pi.id = coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id)))`,
-          buyer: sql<string | null>`(select c.name from proforma_invoices pi join customers c on c.id = pi.buyer_id where pi.id = coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id)))`,
+          buyer: sql<string | null>`(select coalesce(c.name, pi.buyer_id_text) from proforma_invoices pi left join customers c on c.id = pi.buyer_id where pi.id = coalesce(freight_enquiries.proforma_invoice_id, (select s.proforma_invoice_id from shipments s where s.id = freight_enquiries.shipment_id)))`,
           lotNo: sql<number | null>`(select s.lot_no from shipments s where s.id = freight_enquiries.shipment_id)`,
           sent: sql<number>`(select count(*)::int from freight_threads t where t.enquiry_id = freight_enquiries.id)`,
           replied: sql<number>`(select count(*)::int from freight_threads t where t.enquiry_id = ${e.id} and t.last_inbound_at is not null)`,
@@ -298,9 +298,9 @@ export async function freightRoutes(app: FastifyInstance) {
       const lines = docTables.proformaInvoices.lines!;
       const products = masterTables.products;
       const cargo = (await tx
-        .selectDistinct({ n: products.name })
+        .selectDistinct({ n: sql<string>`coalesce(${products.name}, ${lines.productIdText}, '')` })
         .from(lines)
-        .innerJoin(products, eq(products.id, lines.productId))
+        .leftJoin(products, eq(products.id, lines.productId))
         .where(eq(lines.documentId, s.proformaInvoiceId))) as { n: string }[];
       const ct = masterTables.containerTypes;
       const [type] = (await tx.select({ n: ct.name }).from(ct).where(and(eq(ct.isActive, true), isNull(ct.deletedAt))).orderBy(asc(ct.name)).limit(1)) as { n: string }[];
@@ -310,11 +310,11 @@ export async function freightRoutes(app: FastifyInstance) {
         proformaInvoiceId: s.proformaInvoiceId,
         piNumber: h?.documentNumber ?? null,
         lotNo: s.lotNo,
-        portOfLoading: await portName(h?.portOfLoadingId),
-        portOfDischarge: await portName(h?.portOfDischargeId),
+        portOfLoading: (await portName(h?.portOfLoadingId)) || String(h?.portOfLoadingIdText ?? ''),
+        portOfDischarge: (await portName(h?.portOfDischargeId)) || String(h?.portOfDischargeIdText ?? ''),
         containerCount: Math.max(1, s.containerCount),
         containerType: type?.n ?? '',
-        commodity: cargo.map((c) => c.n).join(', ') || null,
+        commodity: cargo.map((c) => c.n).filter(Boolean).join(', ') || null,
         grossWeightMt: s.quantityMt,
         readyDate: s.targetShipDate,
         incoterm: (h?.incoterm as string) ?? null,

@@ -431,6 +431,49 @@ describe('document inbox → order → plan → packaging → tracker', () => {
     expect(await root.ok('GET', '/purchase-invoices')).toHaveLength(1);
   });
 
+  it('follows an order whose buyer, goods, packing and port were typed on the document', async () => {
+    const order = await root.ok('POST', '/documents/proformaInvoices', {
+      documentDate: '2026-12-03',
+      buyerIdText: 'Walk In Trading FZE',
+      currencyId: ids.usd,
+      exchangeRate: '84',
+      incoterm: 'FOB',
+      lines: [{ productIdText: 'Golden sella rice', packingTypeIdText: '25 KG pp bag', destinationPortIdText: 'Typed Harbour', quantityMt: '46', ratePerMt: '900' }],
+      terms: [],
+    });
+    const found = await root.ok('GET', '/order-files?state=all&search=Walk%20In');
+    expect(found.rows).toHaveLength(1);
+    expect(found.rows[0]).toMatchObject({ id: order.id, buyer: 'Walk In Trading FZE', orderSource: 'Our PI' });
+
+    const applied = await root.ok('POST', `/planning/${order.id}/apply`, { market: 'GULF' });
+    expect(applied.lots[0].lines[0]).toMatchObject({ portName: 'Typed Harbour', bags: 1840 });
+    expect(applied.lots[0].lines[0].label).toContain('Golden sella rice');
+    expect((await root.ok('GET', `/planning/${order.id}`)).order.buyer).toBe('Walk In Trading FZE');
+    expect((await root.ok('GET', '/tracker?status=all&search=Walk%20In')).map((r: { buyer: string }) => r.buyer)).toEqual(applied.lots.map(() => 'Walk In Trading FZE'));
+    const lots = await root.ok('GET', '/shipments');
+    expect(lots.find((r: { id: string }) => r.id === applied.lots[0].id)).toMatchObject({ buyer: 'Walk In Trading FZE' });
+
+    await root.ok('POST', '/purchase-invoices', { invoiceNo: 'UP/TYPED', invoiceDate: '2026-12-04', supplierId: ids.supplier, proformaInvoiceId: order.id, totalAmount: '10' });
+    expect((await root.ok('GET', `/purchase-invoices?orderId=${order.id}`))[0].buyer).toBe('Walk In Trading FZE');
+    const draft = await root.ok('GET', `/freight/enquiries/draft?shipmentId=${applied.lots[0].id}`);
+    expect(draft.commodity).toBe('Golden sella rice');
+    await root.ok('POST', '/freight/enquiries', { proformaInvoiceId: order.id, portOfLoading: 'Mundra', portOfDischarge: 'Typed Harbour', containerType: "20' FCL", containerCount: 2 });
+    expect((await root.ok('GET', '/freight/enquiries')).find((e: { orderId: string }) => e.orderId === order.id).buyer).toBe('Walk In Trading FZE');
+    const m = multipart([{ name: 'typed-note.txt', body: 'a note filed with this order 5551212' }]);
+    await app.inject({ method: 'POST', url: `/api/intake/upload?orderId=${order.id}`, headers: { cookie: root.cookie, ...m.headers }, payload: m.payload });
+    await whenIdle();
+    expect((await root.ok('GET', '/intake/groups?status=ALL')).groups.find((g: { orderId: string }) => g.orderId === order.id).buyer).toBe('Walk In Trading FZE');
+  });
+
+  it('continues the purchase order series after a number typed by hand', async () => {
+    const po = (number?: string) => root.ok('POST', '/vendor-pos', { number, poDate: '2026-12-05', supplierId: ids.supplier, category: 'OTHER', lines: [{ description: 'Pallets', quantity: 1, rate: '1' }] });
+    const first = (await po()).number as string;
+    const seq = /\d+$/.exec(first)![0];
+    const typed = first.slice(0, -seq.length) + String(Number(seq) + 5).padStart(seq.length, '0');
+    await po(typed);
+    expect((await po()).number).toBe(first.slice(0, -seq.length) + String(Number(seq) + 6).padStart(seq.length, '0'));
+  });
+
   it('remembers corrections for the same layout', async () => {
     const doc = (no: string) => `GLOBAL BOOKING CONFIRMATION\nACME SEA LINES\nOur reference ${no} please quote\nVessel: ACME STAR / 12E\nETD 05-12-2026`;
     const [a] = await upload([{ name: 'booking-a.txt', body: doc('ACM-555001') }]);

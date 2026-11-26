@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { popModal, pushModal } from '../lib/modalOpen';
 import { Button, ErrorBox } from './ui';
 
 const FOCUSABLE = 'input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -24,14 +25,11 @@ export function Modal({
   useEffect(() => {
     if (!open) return;
     const opener = document.activeElement as HTMLElement | null;
-    // a count, not a flag: closing a dialog opened on top of another must not mark the page as free
-    document.body.dataset.modalOpen = String(Number(document.body.dataset.modalOpen ?? 0) + 1);
+    pushModal();
     const first = ref.current?.querySelector<HTMLElement>('[data-autofocus]') ?? ref.current?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
     return () => {
-      const left = Number(document.body.dataset.modalOpen ?? 1) - 1;
-      if (left > 0) document.body.dataset.modalOpen = String(left);
-      else delete document.body.dataset.modalOpen;
+      popModal();
       opener?.focus?.();
     };
   }, [open]);
@@ -78,6 +76,44 @@ export function Modal({
 }
 
 /** Confirmation, optionally asking for a mandatory reason (used for deletes). */
+/** Save / Don't save / Cancel prompt shown when leaving a form with unsaved changes. */
+export function UnsavedDialog({
+  open,
+  saving,
+  onSave,
+  onDiscard,
+  onCancel,
+}: {
+  open: boolean;
+  saving?: boolean;
+  onSave: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal
+      open={open}
+      title="Save your changes?"
+      onClose={onCancel}
+      footer={
+        <>
+          <Button onClick={onCancel} shortcut="esc">
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onDiscard}>
+            Don’t save
+          </Button>
+          <Button variant="primary" loading={saving} onClick={onSave} shortcut="enter">
+            Save
+          </Button>
+        </>
+      }
+    >
+      <p className="text-slate-700">You have unsaved changes on this form. Save them before leaving, or discard them?</p>
+    </Modal>
+  );
+}
+
 export function ConfirmDialog({
   open,
   title,

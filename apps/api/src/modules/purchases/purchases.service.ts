@@ -10,7 +10,7 @@ import { requireCompany, type RequestContext } from '../../core/context.js';
 import { badRequest, conflict, notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
 import { docTables, masterTables, purchaseInvoices, shipments, vendorPos } from '../../db/schema/index.js';
-import { allocateNumber } from '../numbering.js';
+import { allocateNumber, noteTypedNumber } from '../numbering.js';
 
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-12-31');
 const amount = z.string().trim().refine((v) => v === '' || isDecimal(v), 'Enter a number');
@@ -155,6 +155,7 @@ export async function createPurchaseOrder(tx: Tx, ctx: RequestContext, body: unk
     const [clash] = await tx.select({ id: vendorPos.id }).from(vendorPos).where(and(eq(vendorPos.number, typed), isNull(vendorPos.deletedAt)));
     if (clash) throw conflict(`Purchase order number ${typed} is already used`, 'Leave the number empty to take the next one, or open the existing purchase order.');
   }
+  if (typed) await noteTypedNumber(tx, ctx, 'purchase_order', p.poDate, typed);
   const number = typed ?? (await allocateNumber(tx, ctx, 'purchase_order', p.poDate));
   const lines = p.lines.map((l) => ({ ...l, amount: l.rate ? round(mul(String(l.quantity), l.rate, 2), 2) : '0' }));
   const [po] = await tx

@@ -30,6 +30,7 @@ import { pipelineRoutes } from './modules/shipments/pipeline.js';
 import { shipmentsRoutes } from './modules/shipments/shipments.routes.js';
 import { rolesRoutes } from './modules/roles.routes.js';
 import { sharingRoutes } from './modules/sharing.routes.js';
+import { suggestRoutes } from './modules/suggest.js';
 import { usersRoutes } from './modules/users.routes.js';
 
 declare module 'fastify' {
@@ -98,6 +99,7 @@ export async function buildApp(opts: FastifyServerOptions = {}) {
       await api.register(orderFileRoutes);
       await api.register(recycleBinRoutes);
       await api.register(misRoutes);
+      await api.register(suggestRoutes);
 
       api.setNotFoundHandler((_req, reply) =>
         reply.status(404).send({

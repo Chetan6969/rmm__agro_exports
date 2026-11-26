@@ -38,6 +38,8 @@ import type { Tx } from '../../db/client.js';
 import { companies, docTables, inboxItems, masterTables, packagingItems, payments, shipmentDocuments, shipmentLines, shipments, vendorPos } from '../../db/schema/index.js';
 import { allocateNumber } from '../numbering.js';
 import { billedByPo } from '../purchases/purchases.routes.js';
+import { orderBuyer, orderBuyerLookup } from '../documents/names.js';
+import { packKg as kgPerBag } from '@rmm/shared';
 
 type Row = Record<string, unknown>;
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
@@ -50,7 +52,7 @@ async function orderHeader(tx: Tx, piId: string) {
   const cu = masterTables.customers;
   const co = masterTables.countries;
   const [o] = (await tx
-    .select({ id: pi.id, number: pi.documentNumber, date: pi.documentDate, status: pi.status, orderSource: pi.orderSource, buyerPoRef: pi.buyerPoRef, lcNumber: pi.lcNumber, totalMt: pi.totalQuantityMt, buyer: cu.name, country: co.name, region: co.region })
+    .select({ id: pi.id, number: pi.documentNumber, date: pi.documentDate, status: pi.status, orderSource: pi.orderSource, buyerPoRef: pi.buyerPoRef, lcNumber: pi.lcNumber, totalMt: pi.totalQuantityMt, buyer: orderBuyer(), country: sql<string | null>`coalesce(${co.name}, ${pi.destinationCountryIdText})`, region: co.region })
     .from(pi)
     .leftJoin(cu, eq(cu.id, pi.buyerId))
     .leftJoin(co, eq(co.id, pi.destinationCountryId))
@@ -67,15 +69,16 @@ export async function planInput(tx: Tx, piId: string): Promise<PlanLineInput[]> 
   const rows = (await tx
     .select({
       id: ln.id,
-      product: pr.name,
+      product: sql<string | null>`coalesce(${pr.name}, ${ln.productIdText})`,
       brand: ln.brand,
       packingTypeId: ln.packingTypeId,
       packingName: pk.name,
       packingText: ln.packingText,
+      typedPacking: ln.packingTypeIdText,
       netKg: pk.netWeightKg,
       load: sql<string>`coalesce(${ln.containerCapacityMt}, ${pk.containerCapacityMt})`,
       portId: ln.destinationPortId,
-      portName: po.name,
+      portName: sql<string | null>`coalesce(${po.name}, ${ln.destinationPortIdText})`,
       quantityMt: ln.quantityMt,
       dispatchBy: ln.dispatchBy,
     })
@@ -86,13 +89,14 @@ export async function planInput(tx: Tx, piId: string): Promise<PlanLineInput[]> 
     .where(eq(ln.documentId, piId))
     .orderBy(asc(ln.position))) as Row[];
   return rows.map((r) => {
-    const name = str(r.packingName) || str(r.packingText);
+    const name = str(r.packingName) || str(r.typedPacking) || str(r.packingText);
     return {
       lineId: r.id as string,
       label: [str(r.brand) || str(r.product), name].filter(Boolean).join(' · ') || 'Goods',
       packingTypeId: (r.packingTypeId as string) ?? null,
       packingName: name || null,
-      packKg: Number(r.netKg ?? 0) || 0,
+      // typed packing has no master record: take the weight written in it ("40 KG jute bag")
+      packKg: Number(r.netKg ?? 0) || (r.typedPacking ? (kgPerBag(str(r.typedPacking)) ?? 0) : 0),
       innerPacks: innerPacks(name),
       containerLoadMt: Number(r.load ?? 0) || 0,
       portId: (r.portId as string) ?? null,
@@ -415,7 +419,7 @@ export async function planningRoutes(app: FastifyInstance) {
       if (req.query.category) conds.push(eq(vendorPos.category, req.query.category));
       if (req.query.search?.trim()) conds.push(or(ilike(vendorPos.number, `%${req.query.search.trim()}%`), ilike(su.name, `%${req.query.search.trim()}%`))!);
       const rows = await tx
-        .select({ category: vendorPos.category, orderSource: pi.orderSource, id: vendorPos.id, number: vendorPos.number, poDate: vendorPos.poDate, status: vendorPos.status, deliveryBy: vendorPos.deliveryBy, totalAmount: vendorPos.totalAmount, lines: vendorPos.lines, supplierName: su.name, orderId: vendorPos.proformaInvoiceId, orderNumber: pi.documentNumber, buyer: sql<string | null>`(select c.name from customers c where c.id = ${pi.buyerId})` })
+        .select({ category: vendorPos.category, orderSource: pi.orderSource, id: vendorPos.id, number: vendorPos.number, poDate: vendorPos.poDate, status: vendorPos.status, deliveryBy: vendorPos.deliveryBy, totalAmount: vendorPos.totalAmount, lines: vendorPos.lines, supplierName: su.name, orderId: vendorPos.proformaInvoiceId, orderNumber: pi.documentNumber, buyer: orderBuyerLookup() })
         .from(vendorPos)
         .leftJoin(su, eq(su.id, vendorPos.supplierId))
         .leftJoin(pi, eq(pi.id, vendorPos.proformaInvoiceId))
@@ -498,7 +502,7 @@ export async function planningRoutes(app: FastifyInstance) {
       if (req.query.market) conds.push(eq(shipments.market, req.query.market));
       if (req.query.search?.trim()) {
         const s = `%${req.query.search.trim()}%`;
-        conds.push(or(ilike(pi.documentNumber, s), ilike(pi.buyerPoRef, s), ilike(cu.name, s), ilike(shipments.invoiceNumber, s), ilike(shipments.blNumber, s), ilike(shipments.bookingNo, s), ilike(shipments.vessel, s))!);
+        conds.push(or(ilike(pi.documentNumber, s), ilike(pi.buyerPoRef, s), ilike(cu.name, s), ilike(pi.buyerIdText, s), ilike(shipments.invoiceNumber, s), ilike(shipments.blNumber, s), ilike(shipments.bookingNo, s), ilike(shipments.vessel, s))!);
       }
       const rows = (await tx
         .select({
@@ -528,7 +532,7 @@ export async function planningRoutes(app: FastifyInstance) {
           buyerPoRef: pi.buyerPoRef,
           lcNumber: pi.lcNumber,
           orderSource: pi.orderSource,
-          buyer: cu.name,
+          buyer: orderBuyer(),
         })
         .from(shipments)
         .innerJoin(pi, eq(pi.id, shipments.proformaInvoiceId))

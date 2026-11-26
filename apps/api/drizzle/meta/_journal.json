@@ -148,6 +148,13 @@
       "when": 1795691810364,
       "tag": "0020_purchase_invoices",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795696345333,
+      "tag": "0021_free_text_refs",
+      "breakpoints": true
     }
   ]
 }

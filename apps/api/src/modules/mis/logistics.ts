@@ -59,7 +59,7 @@ export async function misLogistics(tx: Tx, f: MisFilter) {
     sql`select s.id,
                 pi.id as pi_id,
                 pi.document_number as order_no,
-                coalesce(cust.name, '-') as buyer,
+                coalesce(cust.name, pi.buyer_id_text, '-') as buyer,
                 s.market,
                 s.status,
                 s.quantity_mt::text as qty_mt,

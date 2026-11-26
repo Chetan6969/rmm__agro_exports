@@ -11,6 +11,7 @@ import { notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
 import { docTables, masterTables, purchaseInvoices } from '../../db/schema/index.js';
 import { createPurchaseInvoice, createPurchaseOrder, paymentStatus, updatePurchaseInvoice } from './purchases.service.js';
+import { orderBuyerLookup } from '../documents/names.js';
 
 const MOD = 'sales.purchaseInvoices';
 
@@ -41,7 +42,7 @@ export async function listPurchaseInvoices(tx: Tx, q: { search?: string; categor
       orderId: t.proformaInvoiceId,
       orderNumber: pi.documentNumber,
       orderSource: pi.orderSource,
-      buyer: sql<string | null>`(select c.name from customers c where c.id = ${pi.buyerId})`,
+      buyer: orderBuyerLookup(),
       shipmentId: t.shipmentId,
       lotNo: sql<number | null>`(select s.lot_no from shipments s where s.id = ${t.shipmentId})`,
       category: t.category,

@@ -145,14 +145,20 @@ Users open `http://<server-ip>:4000`. For HTTPS on the LAN put Caddy/nginx in fr
 
 Also back up `apps/api/storage/` (uploaded logos, seals, signatures, mail attachments) and keep a copy of `MAIL_SECRET_KEY`.
 
+**Documents.** Dropdowns on a document also accept a value that is not in the master list (kept on that
+document only; currency, certificate template and signature must come from the list). The series part of a
+document number is fixed and only the running number is typed. Boxes offer values typed before, and leaving a
+form with unsaved changes asks first.
+
 ## Email: freight quotations
 
-Sales → **Freight quotations** asks shipping lines and forwarders for ocean freight by email, reads their
+The **Freight quotations** menu (its own permission, *Freight quotations*: only Administrators have it until
+it is granted to a role) asks shipping lines and forwarders for ocean freight by email, reads their
 replies back into the ERP, helps negotiate in the same mail thread and ranks the offers by best value.
 
 **How it works**
 
-1. Each user connects **their own mailbox** once (Sales → My mailbox): they pick **Google** (default —
+1. Each user connects **their own mailbox** once (Freight quotations → My mailbox): they pick **Google** (default —
    Gmail and company mail on Google Workspace), **Microsoft** (Outlook / Microsoft 365) or **Yahoo**, then
    enter the email address and an *app password*. The SMTP/IMAP servers are fixed per provider in the ERP;
    users never type server settings. The connection is tested before it is saved. The password is stored encrypted (AES-256-GCM with `MAIL_SECRET_KEY`) and never shown again.
