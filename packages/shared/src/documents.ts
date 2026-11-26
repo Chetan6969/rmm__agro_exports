@@ -148,6 +148,17 @@ const lineExtras: FieldDef[] = [
   { name: 'specifications', label: 'Description / specification', type: 'textarea', span: 3 },
 ];
 
+/** An order can start from our PI or straight from the buyer's PO / contract (no PI is shared then). */
+export const ORDER_SOURCES = ['Our PI', 'Buyer PO / contract'] as const;
+export const BUYER_PO = 'Buyer PO / contract';
+
+/** Order lines also say where each quantity goes and when it must ship (buyer POs split by port and month). */
+const orderLineExtras: FieldDef[] = [
+  { name: 'destinationPortId', label: 'Deliver to (port)', type: 'ref', ref: 'ports', help: 'For orders split by destination (e.g. Riyadh / Dammam / Jeddah)' },
+  { name: 'dispatchBy', label: 'Dispatch by', type: 'date', help: "From the buyer's delivery schedule; days 1–15 = priority P1, 16–end = P2" },
+  { name: 'buyerItemCode', label: "Buyer's item code", type: 'text', maxLength: 64 },
+];
+
 const productionFlags: FieldDef[] = [
   { name: 'brokenBelow', label: 'Broken below spec', type: 'boolean', default: false },
   { name: 'fcl', label: 'FCL', type: 'boolean', default: false },
@@ -157,8 +168,8 @@ const productionFlags: FieldDef[] = [
 export const DOC_LIST: DocDef[] = [
   {
     key: 'proformaInvoices',
-    label: 'Proforma invoice',
-    plural: 'Proforma invoices',
+    label: 'Order / PI',
+    plural: 'Orders & PIs',
     short: 'PI',
     table: 'proforma_invoices',
     linesTable: 'proforma_invoice_lines',
@@ -169,9 +180,19 @@ export const DOC_LIST: DocDef[] = [
     statuses: ['DRAFT', 'CONFIRMED', 'FULFILLED', CANCELLED],
     defaultStatus: 'CONFIRMED',
     header: [
-      docNumber('Proforma invoice no.'),
+      docNumber('Order / PI no.'),
       docDate,
       status(['DRAFT', 'CONFIRMED', 'FULFILLED', CANCELLED], 'CONFIRMED'),
+      {
+        name: 'orderSource',
+        label: 'Order came as',
+        type: 'select',
+        options: ORDER_SOURCES,
+        default: 'Our PI',
+        required: true,
+        list: true,
+        help: 'Buyer PO / contract: the buyer sent their own PO, so no PI is shared — plan, produce and ship straight from it',
+      },
       ...parties(true),
       ...buyerRefs,
       ...commercial,
@@ -193,7 +214,7 @@ export const DOC_LIST: DocDef[] = [
       { name: 'showTermsConditions', label: 'Print terms & conditions', type: 'boolean', default: true },
       { name: 'showSignatureBlock', label: 'Print signature & stamp', type: 'boolean', default: true },
     ],
-    lines: [...productLine(true), ...lineExtras],
+    lines: [...productLine(true), ...lineExtras, ...orderLineExtras],
     totals: [
       { name: 'totalQuantityMt', label: 'Total quantity (MT)', scale: 3 },
       { name: 'totalBags', label: 'Total bags', scale: 0 },

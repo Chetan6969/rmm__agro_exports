@@ -16,7 +16,7 @@ import { DOCUMENT_TABLE_NAMES } from './schema/documents.js';
 const companyMasters = (ENTITY_LIST as readonly EntityDef[]).filter((e) => e.scope === 'company');
 
 /** Extra company-scoped tables that are never shared. Transaction modules add theirs here. */
-export const PRIVATE_COMPANY_TABLES = ['entity_defaults', 'number_series', 'number_counters', 'payments', 'shipments', 'shipment_charges', 'shipment_stages', 'pipeline_templates', 'freight_enquiries', 'freight_threads', 'freight_messages', 'freight_quotes', ...DOCUMENT_TABLE_NAMES];
+export const PRIVATE_COMPANY_TABLES = ['entity_defaults', 'number_series', 'number_counters', 'payments', 'shipments', 'shipment_charges', 'shipment_stages', 'pipeline_templates', 'freight_enquiries', 'freight_threads', 'freight_messages', 'freight_quotes', 'inbox_items', 'extraction_templates', 'shipment_lines', 'shipment_documents', 'packaging_items', 'vendor_pos', ...DOCUMENT_TABLE_NAMES];
 
 const functions = /* sql */ `
 create or replace function app_company_id() returns uuid

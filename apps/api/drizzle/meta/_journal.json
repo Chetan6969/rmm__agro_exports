@@ -127,6 +127,20 @@
       "when": 1795599080825,
       "tag": "0017_freight_quotations",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795679542369,
+      "tag": "0018_order_from_buyer_po",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795680231420,
+      "tag": "0019_intake_planning_tracking",
+      "breakpoints": true
     }
   ]
 }

@@ -71,7 +71,7 @@ describe('recycle bin', () => {
     // the production order needs its PI back first
     const early = await root.post(`/recycle-bin/productionOrders/${ids.po}/restore`);
     expect(early.status).toBe(400);
-    expect(early.body.message).toMatch(/Restore proforma invoice/i);
+    expect(early.body.message).toMatch(/Restore order \/ PI/i);
     await root.ok('POST', `/recycle-bin/proformaInvoices/${ids.pi}/restore`);
     await root.ok('POST', `/recycle-bin/productionOrders/${ids.po}/restore`);
     expect((await root.ok('GET', `/documents/productionOrders/${ids.po}`)).deletedAt).toBeNull();

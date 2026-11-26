@@ -7,7 +7,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { add, containerCount, CONTAINER_FIELDS, fillTemplate, formatAmount, round, type DocDef } from '@rmm/shared';
+import { add, BUYER_PO, containerCount, CONTAINER_FIELDS, fillTemplate, formatAmount, round, type DocDef } from '@rmm/shared';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import PDFDocument from 'pdfkit';
 import { config } from '../../config.js';
@@ -510,13 +510,15 @@ function bankBlock(w: Writer, bank: Row | null, x: number, width: number, y: num
 // ------------------------------------------------------------------ documents
 function proforma(data: PrintData, descriptions: Map<string, string>) {
   const d = data.doc;
+  // an order taken from the buyer's own PO prints as an order confirmation, not a proforma invoice
+  const isPo = d.orderSource === BUYER_PO;
   return render(
     (w) => {
       const ey = w.exporter(LEFT, 250, w.y);
       const dy = w.kv(
         [
-          ['PI no.', d.documentNumber],
-          ['PI date', formatDate(d.documentDate)],
+          [isPo ? 'Order no.' : 'PI no.', d.documentNumber],
+          [isPo ? 'Order date' : 'PI date', formatDate(d.documentDate)],
           ...(d.buyerPoRef ? ([["Buyer's PO / ref", d.buyerPoRef]] as [string, unknown][]) : []),
           ...(d.poDate ? ([['PO date', formatDate(d.poDate)]] as [string, unknown][]) : []),
           ...(d.showLcDetails ? ([['LC no.', d.lcNumber], ['LC date', formatDate(d.lcDate)]] as [string, unknown][]) : []),
@@ -526,7 +528,7 @@ function proforma(data: PrintData, descriptions: Map<string, string>) {
         ],
         MIDX,
         RIGHT - MIDX,
-        w.heading('PROFORMA INVOICE DETAILS', MIDX, RIGHT - MIDX),
+        w.heading(isPo ? 'ORDER DETAILS' : 'PROFORMA INVOICE DETAILS', MIDX, RIGHT - MIDX),
         90,
       );
       w.y = Math.max(ey, dy) + 8;
@@ -572,7 +574,7 @@ function proforma(data: PrintData, descriptions: Map<string, string>) {
       }
     },
     data,
-    'PROFORMA INVOICE',
+    isPo ? 'ORDER CONFIRMATION' : 'PROFORMA INVOICE',
   );
 }
 

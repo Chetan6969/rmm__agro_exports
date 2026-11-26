@@ -5,6 +5,8 @@
  *   seed     create first super admin, system roles and baseline masters (idempotent)
  *   reset-password <username>   set a new random temporary password (printed once)
  *   demo / demo-reset            load / remove the demo company (DEMO) and its data
+ *   intake-import <folder> --company CODE [--limit N]   read old document folders (a local copy) into the inbox
+ *   intake-accuracy <folder> [--limit N] [--out file]    measure document reading on a folder (no database writes)
  *   wipe     drop the whole LOCAL database (refused for non-local servers and NODE_ENV=production)
  *
  * Dev:  pnpm db:setup | db:migrate | db:seed
@@ -18,6 +20,7 @@ import { adminSql, closeDb } from './db/client.js';
 import { importCopy, resetCopy } from './db/copy-import.js';
 import { loadDemo, resetDemo } from './db/demo.js';
 import { wipeLocalDatabase } from './db/wipe.js';
+import { accuracyReport, bulkImport } from './modules/intake/bulk.js';
 import { sessions, users } from './db/schema/index.js';
 import { migrateDatabase } from './db/migrate.js';
 import { seedDatabase } from './db/seed.js';
@@ -59,6 +62,13 @@ const commands: Record<string, () => Promise<void>> = {
     console.log((await resetCopy(code)) ? `Copy company ${code} and all its data were deleted.` : `No company ${code} found.`);
   },
   /** Drops the whole local database (dev only); "pnpm db:reset" recreates it afterwards. */
+  // read old document folders (a LOCAL COPY) into the inbox, or measure reading accuracy on them
+  'intake-import': async () => {
+    await bulkImport(args);
+  },
+  'intake-accuracy': async () => {
+    await accuracyReport(args);
+  },
   wipe: async () => {
     await wipeLocalDatabase();
   },

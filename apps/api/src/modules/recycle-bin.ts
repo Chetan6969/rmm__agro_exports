@@ -11,7 +11,7 @@ import { audit } from '../core/audit.js';
 import { can, inTenantTx, requireCompany, requireCtx, requirePerm, type RequestContext } from '../core/context.js';
 import { badRequest, conflict, forbidden, notFound } from '../core/errors.js';
 import type { Tx } from '../db/client.js';
-import { docTables, freightEnquiries, masterTables, payments, roles, sharingPolicies, shipments, users, type AnyTable } from '../db/schema/index.js';
+import { docTables, freightEnquiries, inboxItems, masterTables, payments, roles, sharingPolicies, shipments, users, vendorPos, type AnyTable } from '../db/schema/index.js';
 import { restoreDocument } from './documents/documents.service.js';
 
 type Row = Record<string, unknown>;
@@ -102,6 +102,41 @@ const sources: Source[] = [
       if (!inv) throw badRequest('Restore its commercial invoice first', 'This receipt belongs to a deleted invoice; bring the invoice back first.');
       await tx.update(payments).set({ deletedAt: null, deletedBy: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(payments.id, id));
       await audit(tx, ctx, { entity: 'payments', recordId: id, action: 'restore' });
+    },
+  },
+  {
+    type: 'inbox',
+    label: 'Inbox document',
+    group: 'Sales documents',
+    module: 'sales.intake',
+    table: inboxItems,
+    title: sql`${inboxItems.fileName}`,
+    sub: sql`coalesce(${inboxItems.kind}, '') || ' · ' || ${inboxItems.status}`,
+    hasReason: true,
+    restore: async (tx, ctx, id) => {
+      const [f] = await tx.select({ id: inboxItems.id }).from(inboxItems).where(and(eq(inboxItems.id, id), isNotNull(inboxItems.deletedAt)));
+      if (!f) throw notFound('Deleted document not found', 'Reload the recycle bin.');
+      await tx.update(inboxItems).set({ deletedAt: null, deletedBy: null, deleteReason: null, updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(inboxItems.id, id));
+      await audit(tx, ctx, { entity: 'inbox', recordId: id, action: 'restore' });
+    },
+  },
+  {
+    type: 'vendorPos',
+    label: 'Packaging purchase order',
+    group: 'Sales documents',
+    module: 'sales.vendorPos',
+    table: vendorPos,
+    title: sql`${vendorPos.number}`,
+    sub: sql`(select s.name from suppliers s where s.id = ${vendorPos.supplierId}) || ' · ' || to_char(${vendorPos.poDate}, 'DD Mon YYYY')`,
+    hasReason: true,
+    restore: async (tx, ctx, id) => {
+      const [po] = await tx.select().from(vendorPos).where(and(eq(vendorPos.id, id), isNotNull(vendorPos.deletedAt)));
+      if (!po) throw notFound('Deleted purchase order not found', 'Reload the recycle bin.');
+      const [clash] = await tx.select({ id: vendorPos.id }).from(vendorPos).where(and(eq(vendorPos.number, po.number), isNull(vendorPos.deletedAt)));
+      if (clash) throw conflict(`Number ${po.number} is used by another purchase order`, 'Renumber or delete the other one first.');
+      // its packaging lines were freed when it was deleted; it comes back as a draft to review
+      await tx.update(vendorPos).set({ deletedAt: null, deletedBy: null, deleteReason: null, status: 'DRAFT', updatedAt: new Date(), updatedBy: ctx.userId }).where(eq(vendorPos.id, id));
+      await audit(tx, ctx, { entity: 'vendorPos', recordId: id, action: 'restore' });
     },
   },
   {

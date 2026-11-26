@@ -4,3 +4,4 @@ export * from './documents.js';
 export * from './payments.js';
 export * from './shipments.js';
 export * from './freight.js';
+export * from './intake.js';

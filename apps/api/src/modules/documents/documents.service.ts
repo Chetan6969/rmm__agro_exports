@@ -88,6 +88,8 @@ function payloadSchema(def: DocDef) {
 function parsePayload(def: DocDef, body: unknown) {
   const b = (body ?? {}) as Row;
   const { lines, terms, containers, version, ...header } = b;
+  // a field left out takes its default before validation (fields added later, e.g. "Order came as", stay optional for older callers)
+  for (const f of def.header) if ((header[f.name] === undefined || header[f.name] === null) && f.default !== undefined && f.required) header[f.name] = f.default;
   const parsed = payloadSchema(def).parse({ header, lines: lines ?? [], terms: terms ?? [], containers: containers ?? [], version });
   for (const f of def.header) {
     if ((parsed.header[f.name] === undefined || parsed.header[f.name] === null) && f.default !== undefined) parsed.header[f.name] = f.default;

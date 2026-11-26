@@ -4,6 +4,7 @@ import { ArrowLeft, Check, FileText, Package, Plus, Save, Trash2 } from 'lucide-
 import { useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
+import { AutoPlanPanel } from '../components/AutoPlanPanel';
 import { CheckpointList } from '../components/Checkpoints';
 import { ReceiptsPanel } from '../components/ReceiptsPanel';
 import { RefSelect } from '../components/RefSelect';
@@ -91,6 +92,8 @@ export function OrderPlanningPage() {
             <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-indigo-600" style={{ width: `${pct}%` }} />
           </div>
         </div>
+
+        <AutoPlanPanel piId={piId} onChanged={refetch} />
 
         {plan.shipments.map((lot) => (
           <LotCard key={lot.id} lot={lot} heads={plan.chargeHeads} currency={cur} piId={piId} readOnly={!canEdit} canDelete={canDelete} onDone={refetch} />

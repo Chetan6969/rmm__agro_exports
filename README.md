@@ -201,6 +201,52 @@ replies back into the ERP, helps negotiate in the same mail thread and ranks the
 The server needs outbound access to the mail servers (ports 465/587 and 993). Mail is only read from
 INBOX and is never deleted or marked as read.
 
+## Export flow: semi-automatic orders, planning and documents
+
+The ERP reads the export paperwork itself and proposes the next step; a person checks and confirms.
+Everything is read **on this server** — no document or text is sent to any cloud or AI service.
+
+**1. Orders without a PI.** An order (Sales → Orders & PIs) now says how it came: *Our PI* or
+*Buyer PO / contract*. When the buyer sends their own PO, no PI is shared: the order is planned,
+produced and shipped straight from it, and prints as an *Order confirmation*. Order lines carry the
+destination port, the dispatch date (days 1–15 = P1, 16–end = P2) and the buyer's item code.
+
+**2. Document inbox** (Export flow → Document inbox). Drop any file — PDF, scan or phone photo,
+Excel (.xlsx/.xls), Word (.docx/.doc), text:
+- PDFs with a text layer are read directly; scans and photos go through **offline OCR**
+  (Tesseract, English + Arabic models bundled in `node_modules`, nothing downloaded at run time).
+- The type is recognised (buyer PO / contract, PI, LC, booking, BL, shipping bill, export invoice,
+  packing list, COO, phyto, fumigation, health certificate, COC, test report, APEDA/COI, bill of exchange,
+  EIA intimation, traceability, our packaging PO) and its fields are read with the words they came from.
+- It is matched to its order and lot by the numbers in it (our invoice no., buyer PO, LC, BL / booking no.).
+- The review screen shows the original beside the values; confirming creates the order (buyer PO),
+  adds the LC, updates the lot (booking, BL, shipping bill / LEO, invoice) or ticks the lot's checklist.
+- Every correction is remembered for that document layout, so the next document from the same sender
+  is read right. Duplicates (same file) are recognised; deleted items go to the recycle bin.
+
+**3. Automatic planning** (order → Plan shipments → Automatic plan). Order lines become lots by dispatch
+window, port by port, at most *N* containers a lot; each lot gets bags and 20' containers from the
+packing master (net kg per bag, MT per container). Preview, then create.
+
+**4. Packaging** (same page). Outer bags, inner packs (4 × 10 kg → 4), tags, strips and seals for the
+planned bags plus a spare % (bags shipped free); pick the supplier and rate per line, then
+**Create purchase orders** — one numbered, printable PO per supplier (Export flow → Packaging POs).
+
+**5. Shipment tracker** (Export flow → Shipment tracker) — the old Track Sheet: every lot with line,
+booking, invoice, BL status, LC, vessel / ETA, documents done / needed (Gulf and EU checklists) and
+payment, with alerts (ship date passed, vessel arrived without BL, LEO done without BL, documents missing).
+
+**Old folders.** Read a **local copy** of the document share (never the share itself) into the inbox,
+or measure how well documents are read, from the server:
+
+```bash
+pnpm --filter @rmm/api intake:import -- "D:/rmm-company-data/Export sales - RMM Agro Export Pvt Ltd/FY 2026-27" --company RMM --limit 500
+pnpm --filter @rmm/api intake:accuracy -- "D:/rmm-company-data/…/FY 2026-27/Gulf" --limit 300 --out accuracy.csv
+```
+
+`INTAKE_MAX_MB` (default 40) limits one upload. Scans take a few seconds a page; documents are read one
+at a time in the background and resume after a restart.
+
 ## How it is built to grow
 
 **Add a master:** add an `EntityDef` in `packages/shared/src/entities.ts`, then
