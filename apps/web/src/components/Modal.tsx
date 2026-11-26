@@ -1,5 +1,6 @@
 import { X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { popModal, pushModal } from '../lib/modalOpen';
 import { Button, ErrorBox } from './ui';
 
 const FOCUSABLE = 'input:not([disabled]),select:not([disabled]),textarea:not([disabled]),button:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -24,11 +25,11 @@ export function Modal({
   useEffect(() => {
     if (!open) return;
     const opener = document.activeElement as HTMLElement | null;
-    document.body.dataset.modalOpen = '1';
+    pushModal();
     const first = ref.current?.querySelector<HTMLElement>('[data-autofocus]') ?? ref.current?.querySelector<HTMLElement>(FOCUSABLE);
     first?.focus();
     return () => {
-      delete document.body.dataset.modalOpen;
+      popModal();
       opener?.focus?.();
     };
   }, [open]);

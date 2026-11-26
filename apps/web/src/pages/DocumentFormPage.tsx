@@ -513,7 +513,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           {def.key === 'commercialInvoices' && !isNew && <ReceiptsPanel invoiceId={id} />}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pb-6 text-[12px] text-slate-500">
-            <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print</span>
+            <span className="max-sm:hidden">Enter = next field · Alt+A = add line · Ctrl+Z = undo · Ctrl+S = save · Ctrl+P = print · Ctrl+Shift+N = new</span>
             {record?.updatedAt && <span>Last changed {new Date(record.updatedAt).toLocaleString()} · v{record.version}</span>}
           </div>
         </div>

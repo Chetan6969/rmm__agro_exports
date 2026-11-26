@@ -79,6 +79,7 @@ export const SHORTCUTS: { section: string; items: [string, string][] }[] = [
     section: 'Anywhere',
     items: [
       ['mod+k', 'Search: screens, buyers, products, PI / invoice numbers, actions'],
+      ['mod+shift+n', 'New in the current section (new CI inside invoices, etc.); Alt+N also works on a form'],
       ['mod+\\', 'Collapse / expand the sidebar'],
       ['alt+c', 'Switch company'],
       ['f1', 'Show keyboard shortcuts'],

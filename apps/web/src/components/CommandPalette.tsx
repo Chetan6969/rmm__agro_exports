@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { api, qs } from '../lib/api';
+import { popModal, pushModal } from '../lib/modalOpen';
 import { GROUP_ICONS, groupLabel, NAV } from '../lib/nav';
 import { showError } from '../lib/notify';
 import { useSession } from '../lib/session';
@@ -76,9 +77,9 @@ export function CommandPalette({ open, mode, onClose }: { open: boolean; mode: P
   useEffect(() => {
     if (open) {
       setSearch('');
-      document.body.dataset.modalOpen = '1';
+      pushModal();
       return () => {
-        delete document.body.dataset.modalOpen;
+        popModal();
       };
     }
   }, [open, mode]);
