@@ -114,11 +114,17 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     queryKey: ['documents', def.key, 'one', id, from, shipment],
     queryFn: () => api.get<Loaded>(isNew ? `/documents/${def.key}/draft${draftQuery}` : `/documents/${def.key}/${id}`),
     refetchOnWindowFocus: false,
+    staleTime: 0, // always revalidate the single document on open, so a reopen never shows a stale cached copy
   });
   const record = source.data;
+  const seededStamp = useRef(0); // which server snapshot (dataUpdatedAt) local state currently mirrors
 
+  // Seed local state from the server on first load, and RE-seed whenever a newer server snapshot
+  // arrives while the user has no unsaved edits. Without the re-seed, a background refetch updated the
+  // query cache but the form kept showing the copy captured at mount (the "reopen shows old data" bug).
   useEffect(() => {
-    if (loaded || !record) return;
+    if (!record) return;
+    if (loaded && (dirty || source.dataUpdatedAt === seededStamp.current)) return;
     const h: Values = {};
     for (const f of def.header) h[f.name] = record[f.name] ?? (f.type === 'boolean' ? false : null);
     setHeader(h);
@@ -128,9 +134,12 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     containersTouched.current = record.noOfContainers != null && String(record.noOfContainers) !== String(containerCount(record.lines));
     setTerms(record.terms.map((t) => ({ _key: key(), tcTemplateId: (t.tcTemplateId as string) ?? null, content: String(t.content) })));
     setContainers(record.containers.map((c) => ({ ...c, _key: key() })));
-    setLoaded(true);
-    setTimeout(() => root.current?.querySelector<HTMLElement>('[data-nav]')?.focus(), 0);
-  }, [record, loaded, def]);
+    seededStamp.current = source.dataUpdatedAt;
+    if (!loaded) {
+      setLoaded(true);
+      setTimeout(() => root.current?.querySelector<HTMLElement>('[data-nav]')?.focus(), 0);
+    }
+  }, [record, loaded, dirty, source.dataUpdatedAt, def]);
 
   const locked = !isNew && Boolean(record?.locked);
   const readOnly = isNew ? !can(def.module, 'create') : !can(def.module, 'edit') || locked;
