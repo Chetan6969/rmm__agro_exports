@@ -7,7 +7,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { add, BUYER_PO, containerCount, CONTAINER_FIELDS, fillTemplate, formatAmount, round, type DocDef } from '@rmm/shared';
+import { add, BUYER_PO, containerCount, CONTAINER_FIELDS, fillTemplate, formatAmount, round, valueTerm, type DocDef } from '@rmm/shared';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import PDFDocument from 'pdfkit';
 import { config } from '../../config.js';
@@ -681,7 +681,6 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
   const cur = data.currency.code;
   const on = (flag: string) => d[flag] !== false; // optional sections default on
   const vessel = on('includeVessel');
-  const charges = on('includeShippingCharges');
   const stage = str(d.invoiceStage) || 'DRAFT';
   return render(
     (w) => {
@@ -730,6 +729,7 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
       const r = w.kv(
         [
           ['Pre-carriage by', d.preCarriageBy],
+          ['Place of pre-receipt', d.placeOfPreReceipt],
           ...(vessel
             ? ([
                 ['Place of receipt', d.placeOfReceipt],
@@ -758,13 +758,20 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
       pdf.text(`Total bags: ${d.totalBags ?? 0}`, LEFT, pdf.y + 2, { width: 280 });
       const leftBottom = pdf.y;
       w.y = leftTop;
-      const incoterm = str(d.incoterm);
+      // Value summary: FOB → freight → insurance → total (rates include freight / insurance, FOB is derived).
+      // The FOB line only appears when something is added to it (otherwise it just repeats the total);
+      // an unticked freight / insurance row, or the whole summary switched off, stays off the invoice.
+      const term = valueTerm(d);
+      const freight = d.showFreight !== false && Number(d.oceanFreightAmount) > 0; // the tick only controls printing
+      const insurance = d.showInsurance !== false && Number(d.insuranceAmount) > 0;
+      const breakup = d.showValueSummary !== false && (freight || insurance);
       totalsBlock(w, [
-        [`FOB value (${cur})`, formatAmount(str(d.fobAmount))],
-        ...(charges && (incoterm === 'CFR' || incoterm === 'CIF') ? ([['Ocean freight', formatAmount(str(d.oceanFreightAmount))]] as [string, string][]) : []),
-        ...(charges && incoterm === 'CIF' ? ([['Insurance', formatAmount(str(d.insuranceAmount))]] as [string, string][]) : []),
-        ...(Number(d.discountAmount) ? ([['Discount', `- ${formatAmount(str(d.discountAmount))}`]] as [string, string][]) : []),
-        [`Total ${incoterm} value (${cur})`, formatAmount(str(d.invoiceTotal)), true],
+        // a discount is already taken off the products total, so it sits above the FOB → total chain
+        ...(Number(d.discountAmount) ? ([['Discount allowed', `- ${formatAmount(str(d.discountAmount))}`]] as [string, string][]) : []),
+        ...(breakup ? ([[`FOB value (${cur})`, formatAmount(str(d.fobAmount))]] as [string, string][]) : []),
+        ...(breakup && freight ? ([['Freight', formatAmount(str(d.oceanFreightAmount))]] as [string, string][]) : []),
+        ...(breakup && insurance ? ([['Insurance', formatAmount(str(d.insuranceAmount))]] as [string, string][]) : []),
+        [`Total ${term} value (${cur})`, formatAmount(str(d.invoiceTotal)), true],
       ]);
       w.y = Math.max(w.y, leftBottom) + 4;
       words(w, d.amountInWords);
@@ -997,6 +1004,7 @@ function certContext(data: PrintData, obl: Row | null, ci: Row | null): Record<s
     shipping_line: str(obl?.shippingLineIdLabel),
     port_loading: str(obl?.portOfLoadingIdLabel ?? ci?.portOfLoadingIdLabel),
     port_discharge: str(obl?.portOfDischargeIdLabel ?? ci?.portOfDischargeIdLabel),
+    place_pre_receipt: str(ci?.placeOfPreReceipt),
     place_receipt: str(obl?.placeOfReceipt),
     place_delivery: str(obl?.placeOfDelivery),
     final_destination: str(obl?.finalDestination),

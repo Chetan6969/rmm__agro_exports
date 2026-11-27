@@ -101,6 +101,16 @@ const commercial: FieldDef[] = [
   { name: 'paymentTerms', label: 'Payment terms (printed)', type: 'textarea', span: 2, help: 'Filled from the payment term master; edit for this document' },
 ];
 
+/** Common places of pre-receipt are listed in the box; any other place can be typed. */
+const placeOfPreReceipt: FieldDef = {
+  name: 'placeOfPreReceipt',
+  label: 'Place of pre-receipt',
+  type: 'text',
+  maxLength: 128,
+  choices: ['ICD Mandideep', 'ICD Powerkheda', 'Mundra', 'Kandla'],
+  help: 'Pick a common place or type any other',
+};
+
 const shippingRoute: FieldDef[] = [
   { name: 'originCountryId', label: 'Country of origin', type: 'ref', ref: 'countries', section: 'Shipping' },
   { name: 'portOfLoadingId', label: 'Port of loading', type: 'ref', ref: 'ports' },
@@ -252,6 +262,7 @@ export const DOC_LIST: DocDef[] = [
       { name: 'insuranceAmount', label: 'Insurance', type: 'decimal', precision: 15, scale: 2, default: 0 },
       ...shippingRoute,
       { name: 'preCarriageBy', label: 'Pre-carriage by', type: 'select', options: ['ROAD', 'TRAIN'] },
+      placeOfPreReceipt,
       { name: 'placeOfReceipt', label: 'Place of receipt', type: 'text', maxLength: 128 },
       { name: 'vesselFlightNo', label: 'Vessel / flight no.', type: 'text', maxLength: 128 },
       { name: 'termsOf', label: 'Terms of delivery', type: 'text', maxLength: 128 },
@@ -309,6 +320,7 @@ export const DOC_LIST: DocDef[] = [
       { name: 'lutNumber', label: 'LUT / bond no.', type: 'text', upper: true, maxLength: 64, hidden: true },
       ...shippingRoute.map((f) => (f.name === 'finalDestination' ? { ...f, hidden: true } : f)),
       { name: 'preCarriageBy', label: 'Pre-carriage by', type: 'select', options: ['ROAD', 'TRAIN'] },
+      placeOfPreReceipt,
       { name: 'containerTypeId', label: 'Container type (said to contain)', type: 'ref', ref: 'containerTypes', allowCreate: true, help: 'Printed as "<no. of containers> X <type> SAID TO CONTAIN"' },
       { name: 'noOfContainers', label: 'No. of containers', type: 'integer', help: "Auto-filled from each packing's container load and net weight — change it if the count should differ" },
       { name: 'saidToContain', label: 'Said to contain (override)', type: 'text', maxLength: 128, span: 2, help: 'Leave blank to build it from the container type and the number of containers' },
@@ -339,7 +351,7 @@ export const DOC_LIST: DocDef[] = [
         type: 'boolean',
         default: true,
         section: 'Shipping charges (by incoterm)',
-        controls: ['thcCharge', 'blCharge', 'sealCharge', 'mucCharge', 'riskCharge', 'repositionCharge', 'oceanFreightCharge', 'insuranceCharge'],
+        controls: ['thcCharge', 'blCharge', 'sealCharge', 'mucCharge', 'riskCharge', 'repositionCharge'],
       },
       { name: 'thcCharge', label: 'THC', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'blCharge', label: 'BL charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
@@ -347,8 +359,12 @@ export const DOC_LIST: DocDef[] = [
       { name: 'mucCharge', label: 'MUC', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'riskCharge', label: 'Risk charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'repositionCharge', label: 'Reposition charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
-      { name: 'oceanFreightCharge', label: 'Ocean freight (CFR / CIF)', type: 'decimal', precision: 12, scale: 2, default: 0 },
-      { name: 'insuranceCharge', label: 'Insurance (CIF)', type: 'decimal', precision: 12, scale: 2, default: 0 },
+      // Value summary — edited in its own section under the products (VALUE_SUMMARY_FIELDS), not in this block.
+      { name: 'showValueSummary', label: 'Print value summary', type: 'boolean', default: true },
+      { name: 'oceanFreightCharge', label: 'Freight', type: 'decimal', precision: 12, scale: 2, default: 0 },
+      { name: 'showFreight', label: 'Include freight', type: 'boolean', default: true },
+      { name: 'insuranceCharge', label: 'Insurance', type: 'decimal', precision: 12, scale: 2, default: 0 },
+      { name: 'showInsurance', label: 'Include insurance', type: 'boolean', default: true },
       { name: 'discountAmount', label: 'Discount', type: 'decimal', precision: 15, scale: 2, default: 0, section: 'Discount', help: 'Deducted from the FOB value; printed above the invoice total' },
       { name: 'bankAccountId', label: 'Bank account for remittance', type: 'ref', ref: 'bankAccounts', span: 2, section: 'Bank & print' },
       { name: 'showSignature', label: 'Print signature & stamp', type: 'boolean', default: true },
@@ -508,7 +524,7 @@ export function fillTemplate(body: string, ctx: Record<string, unknown>): string
 export const CERTIFICATE_PLACEHOLDERS = [
   'exporter', 'consignee', 'applicant', 'buyer', 'notify',
   'invoice_no', 'invoice_date', 'bl_no', 'bl_date', 'shipping_bill_no', 'shipping_bill_date',
-  'vessel', 'voyage', 'shipping_line', 'port_loading', 'port_discharge', 'place_receipt', 'place_delivery', 'final_destination',
+  'vessel', 'voyage', 'shipping_line', 'port_loading', 'port_discharge', 'place_pre_receipt', 'place_receipt', 'place_delivery', 'final_destination',
   'destination_agent', 'destination_agent_address',
   'net_weight', 'gross_weight', 'total_bags', 'no_of_containers',
   'lc_no', 'lc_date', 'lc_applicant_emails', 'po_no', 'po_date',
@@ -561,20 +577,41 @@ export function computeTotals(def: DocDef, header: Values, lines: Values[]): Rec
   if (def.key === 'productionOrders') {
     return { totalQuantityMt, totalBags, totalGrossWtMt, goodsAmount: goods, gstAmount };
   }
-  // When the shipping-charges section is switched off, no charge counts.
-  const chargeInput = header.includeShippingCharges === false ? {} : (header as Record<string, DecimalInput>);
-  const charges = computeShippingCharges(String(header.incoterm ?? 'FOB'), chargeInput);
+  // The line rates are already the CFR / CIF price, so the products' total IS the invoice value.
+  // Worked bottom-up: FOB value = total − freight (CFR, CIF) − insurance (CIF). The ticks only decide
+  // whether those rows are printed; they never change the figures.
+  const need = chargesRequired(header.incoterm);
+  const freight = need.freight ? round(v(header.oceanFreightCharge)) : '0.00';
+  const insurance = need.insurance ? round(v(header.insuranceCharge)) : '0.00';
+  const other = header.includeShippingCharges === false ? {} : (header as Record<string, DecimalInput>);
+  const charges = computeShippingCharges('CIF', { ...other, oceanFreightCharge: freight, insuranceCharge: insurance });
+  const invoiceTotal = sub(goods, v(header.discountAmount), 2);
   return {
     ...charges,
     totalQuantityMt,
     totalBags,
     totalGrossWtMt,
-    fobAmount: goods,
+    fobAmount: sub(invoiceTotal, add([freight, insurance], 2), 2),
     gstAmount,
-    oceanFreightAmount: charges.oceanFreightCharge,
-    insuranceAmount: charges.insuranceCharge,
-    invoiceTotal: sub(add([goods, charges.oceanFreightCharge, charges.insuranceCharge], 2), v(header.discountAmount), 2),
+    oceanFreightAmount: freight,
+    insuranceAmount: insurance,
+    invoiceTotal,
   };
+}
+
+/** Which charges a commercial invoice must state for its terms of delivery (they are inside the price). */
+export function chargesRequired(incoterm: unknown): { freight: boolean; insurance: boolean } {
+  const t = String(incoterm ?? '').toUpperCase();
+  return { freight: t === 'CFR' || t === 'CNF' || t === 'CIF', insurance: t === 'CIF' };
+}
+
+/** Commercial-invoice fields edited in the "Value summary" section under the products. */
+export const VALUE_SUMMARY_FIELDS = ['showValueSummary', 'oceanFreightCharge', 'showFreight', 'insuranceCharge', 'showInsurance'] as const;
+
+/** The delivery term the invoice total is printed as: the chosen terms of delivery (CNF prints as CFR). */
+export function valueTerm(header: Values): string {
+  const t = String(header.incoterm ?? 'FOB').toUpperCase();
+  return t === 'CNF' ? 'CFR' : t;
 }
 
 /** The amount printed in words / used in reports for a document. */

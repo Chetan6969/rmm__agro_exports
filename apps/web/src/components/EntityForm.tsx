@@ -133,7 +133,7 @@ function FieldInput({
         className: `field-input ${f.upper ? 'uppercase' : ''} ${f.type === 'decimal' || f.type === 'integer' ? 'text-right tabular-nums' : ''}`,
       };
       const text = value === null || value === undefined ? '' : String(value);
-      if (suggest) return <SuggestInput {...box} source={suggest} upper={f.upper} value={text} onValue={(v) => onChange(v)} />;
+      if (suggest || f.choices?.length) return <SuggestInput {...box} source={suggest} choices={f.choices} upper={f.upper} value={text} onValue={(v) => onChange(v)} />;
       return <input {...box} autoComplete="off" value={text} onChange={(e) => onChange(e.target.value)} />;
     }
   }

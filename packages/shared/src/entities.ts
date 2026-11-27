@@ -35,6 +35,8 @@ export interface FieldDef {
   upper?: boolean;
   maxLength?: number;
   options?: readonly string[];
+  /** On a text field: common values listed when the box is focused; any other value can still be typed. */
+  choices?: readonly string[];
   /** For type 'ref': the referenced entity key (checked at startup by assertRegistry). For 'doc': the document key. */
   ref?: string;
   /** Shown as a column in list screens. */
@@ -311,10 +313,28 @@ export const ENTITY_LIST = [
     displayField: 'name',
     fields: [
       { name: 'code', label: 'Code', type: 'text', unique: true, upper: true, list: true, search: true },
-      { name: 'name', label: 'Name', type: 'text', required: true, list: true, search: true, span: 2, help: 'e.g. 40 KG Non-woven bag' },
+      { name: 'name', label: 'Name', type: 'text', required: true, list: true, search: true, span: 2, help: 'e.g. 40 KG jute bag, or 4 × 10 KG jute bag (40 KG master)' },
       { name: 'material', label: 'Material', type: 'select', options: ['PP', 'BOPP', 'Jute', 'Non-woven', 'Cotton', 'Laminated', 'Other'], list: true },
-      { name: 'netWeightKg', label: 'Net weight (kg)', type: 'decimal', precision: 10, scale: 3, required: true, list: true },
-      { name: 'tareWeightKg', label: 'Tare / empty bag (kg)', type: 'decimal', precision: 10, scale: 3, default: 0 },
+      {
+        name: 'netWeightKg',
+        label: 'Rice per bag (kg)',
+        type: 'decimal',
+        precision: 10,
+        scale: 3,
+        required: true,
+        list: true,
+        help: 'Net rice in ONE outer bag that is counted: 40 for 40 KG, 4 × 10 KG and 8 × 5 KG; 20 for 20 × 1 KG. No. of bags = MT ÷ this.',
+      },
+      {
+        name: 'tareWeightKg',
+        label: 'Bag + packing weight (kg)',
+        type: 'decimal',
+        precision: 10,
+        scale: 3,
+        default: 0,
+        list: true,
+        help: 'Weight of one bag without rice (jute bag + inner packets), in KG: gross per bag minus rice, e.g. 40.7 − 40 = 0.7. Gross = MT + bags × this.',
+      },
       {
         name: 'containerCapacityMt',
         label: 'Container load (MT / 20ft)',

@@ -13,6 +13,9 @@ import {
   mul,
   round,
   statusLabel,
+  VALUE_SUMMARY_FIELDS,
+  valueTerm,
+  chargesRequired,
   type DocDef,
   type EntityDef,
   type LiveRatesResponse,
@@ -473,7 +476,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           {!isNew && record?.children && <ChildrenPanel def={def} id={id} items={record.children} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           {!isNew && !!record?.letterChildren?.length && <LetterChildrenPanel id={id} items={record.letterChildren} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           <EntityForm
-            def={asEntity(def.key, def.header)}
+            def={asEntity(def.key, def.key === 'commercialInvoices' ? def.header.filter((f) => !(VALUE_SUMMARY_FIELDS as readonly string[]).includes(f.name)) : def.header)}
             values={header}
             labels={labels}
             errors={errors}
@@ -525,6 +528,10 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
               />
               {errors.lines && <div className="mt-1 text-[12px] text-red-600">{errors.lines}</div>}
             </Section>
+          )}
+
+          {def.key === 'commercialInvoices' && (
+            <ValueSummary header={header} totals={totals} currency={currency} readOnly={readOnly} errors={errors} onChange={(n, v) => onHeaderChange(n, v)} />
           )}
 
           {def.containers && (
@@ -996,11 +1003,20 @@ function GroupEditor({ def, rows, isNew, onClose, onSave }: { def: DocDef; rows:
                       suggest: ls('packingTypeIdText'),
                     }}
                   />
-                  {(p as Values)._packing ? (
-                    <p className="mt-0.5 text-[11px] text-slate-400">
-                      Bag: {String((p._packing as Values).netWeightKg)} kg net · {Math.round(Number((p._packing as Values).tareWeightKg ?? 0) * 1000)} g empty · bags &amp; gross auto
-                    </p>
-                  ) : null}
+                  {(p as Values)._packing
+                    ? (() => {
+                        const pk = p._packing as Values;
+                        const rice = Number(pk.netWeightKg ?? 0);
+                        const bag = Number(pk.tareWeightKg ?? 0);
+                        const kg = (n: number) => n.toLocaleString('en-IN', { maximumFractionDigits: 3 });
+                        return (
+                          <p className="mt-0.5 text-[11px] text-slate-400">
+                            1 bag = {kg(rice)} kg rice + {kg(bag)} kg bag = <b className="text-slate-500">{kg(rice + bag)} kg gross</b>
+                            {pk.containerCapacityMt ? ` · ${kg(Number(pk.containerCapacityMt))} MT per container` : ''} · bags, gross &amp; containers auto
+                          </p>
+                        );
+                      })()
+                    : null}
                 </div>
                 <div className="col-span-2">
                   <FieldLabel>Packing details (printed)</FieldLabel>
@@ -1225,6 +1241,96 @@ function ContainersEditor({ rows, readOnly, totalNetMt, update }: { rows: Contai
 }
 
 // ---------------------------------------------------------------- totals & linked documents
+/**
+ * Commercial invoice "Value summary" under the products. The line rates are already the CFR / CIF
+ * price, so the products' total is the invoice value and it is worked bottom-up: FOB value = total −
+ * freight − insurance. CFR needs the freight, CIF needs freight and insurance. The ticks only decide
+ * which rows are printed on the invoice; the section tick hides the whole breakdown.
+ */
+function ValueSummary({
+  header,
+  totals,
+  currency,
+  readOnly,
+  errors,
+  onChange,
+}: {
+  header: Values;
+  totals: Record<string, string> | null;
+  currency: string;
+  readOnly: boolean;
+  errors: Record<string, string>;
+  onChange: (name: string, value: unknown) => void;
+}) {
+  const on = (n: string) => header[n] !== false;
+  const money = (x: unknown) => (totals ? formatAmount(String(x ?? '0')) : '—');
+  const term = valueTerm(header);
+  const need = chargesRequired(header.incoterm);
+  const shown = on('showValueSummary');
+  const row = 'flex items-start justify-between gap-4 py-1';
+  const charge = (amount: string, show: string, label: string, required: boolean) => {
+    if (!required) return null; // FOB has no freight / insurance; CFR has no insurance
+    return (
+      <div className={row}>
+        <label className="flex items-center gap-2 pt-1.5" title="Print this row on the invoice">
+          <input type="checkbox" className="size-4 accent-brand-700" checked={on(show)} disabled={readOnly} onChange={(e) => onChange(show, e.target.checked)} />
+          <span className={on(show) ? 'text-slate-700' : 'text-slate-400'}>
+            Less: {label}
+            <span className="text-red-500"> *</span>
+            {!on(show) && <span className="ml-1 text-[11px]">(not printed)</span>}
+          </span>
+        </label>
+        <div className="w-40">
+          <input
+            id={`f-${amount}`}
+            className="field-input text-right tabular-nums"
+            inputMode="decimal"
+            disabled={readOnly}
+            aria-invalid={errors[amount] ? true : undefined}
+            aria-label={label}
+            value={header[amount] === null || header[amount] === undefined ? '' : String(header[amount])}
+            placeholder="0.00"
+            onChange={(e) => onChange(amount, e.target.value)}
+          />
+          {errors[amount] && <div className="mt-0.5 text-right text-[11.5px] text-red-600">{errors[amount]}</div>}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <Section
+      title="Value summary"
+      action={
+        <label className="flex items-center gap-1.5 text-[12.5px] text-slate-600">
+          <input type="checkbox" className="size-4 accent-brand-700" checked={shown} disabled={readOnly} onChange={(e) => onChange('showValueSummary', e.target.checked)} />
+          Print on invoice
+        </label>
+      }
+    >
+      <div className={`max-w-lg text-[13px] ${shown ? '' : 'opacity-60'}`}>
+        <div className={`${row} font-semibold text-slate-900`}>
+          <span className="pl-6">
+            Total {term} value{currency ? ` (${currency})` : ''} <span className="font-normal text-slate-400">— products total</span>
+          </span>
+          <span className="w-40 pr-2 text-right tabular-nums">{money(totals?.invoiceTotal)}</span>
+        </div>
+        {charge('oceanFreightCharge', 'showFreight', 'Freight', need.freight)}
+        {charge('insuranceCharge', 'showInsurance', 'Insurance', need.insurance)}
+        <div className={`${row} mt-1 border-t border-slate-200 pt-2 font-semibold text-slate-900`}>
+          <span className="pl-6">FOB value{currency ? ` (${currency})` : ''}</span>
+          <span className={`w-40 pr-2 text-right tabular-nums ${totals && Number(totals.fobAmount) < 0 ? 'text-red-600' : ''}`}>{money(totals?.fobAmount)}</span>
+        </div>
+      </div>
+      <p className="mt-2 text-[11.5px] text-slate-400">
+        Rates already include {need.insurance ? 'freight and insurance' : need.freight ? 'freight' : 'no freight or insurance'} ({term}), so FOB = total
+        {need.freight ? ' − freight' : ''}
+        {need.insurance ? ' − insurance' : ''}.{need.freight ? ` ${need.insurance ? 'Both are' : 'Freight is'} required for ${term}.` : ''} A tick only decides
+        whether that row prints; “Print on invoice” hides the whole breakdown.
+      </p>
+    </Section>
+  );
+}
+
 function TotalsPanel({ def, totals, currency, words }: { def: DocDef; totals: Record<string, string> | null; currency: string; words?: string | null }) {
   const main = def.key === 'proformaInvoices' ? 'grandTotal' : def.key === 'commercialInvoices' ? 'invoiceTotal' : 'goodsAmount';
   return (
@@ -1244,7 +1350,7 @@ function TotalsPanel({ def, totals, currency, words }: { def: DocDef; totals: Re
           ))}
         </dl>
       )}
-      {def.key === 'commercialInvoices' && <p className="mt-2 text-[11.5px] text-slate-400">FOB charges always count; ocean freight counts for CFR and CIF; insurance only for CIF.</p>}
+      {def.key === 'commercialInvoices' && <p className="mt-2 text-[11.5px] text-slate-400">Invoice total = products total (rates include freight / insurance); FOB value = total − freight − insurance (see Value summary).</p>}
       {words && <p className="mt-2 text-[12.5px] text-slate-600">In words: {words}</p>}
     </section>
   );
