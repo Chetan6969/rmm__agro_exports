@@ -5,7 +5,7 @@
  */
 import { INTAKE_KINDS, intakeKind, PURCHASE_CATEGORIES, PURCHASE_CATEGORY_KEYS, type Extracted, type ExtractedLine, type PurchaseCategory } from '@rmm/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, ChevronRight, EyeOff, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight, EyeOff, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
@@ -65,20 +65,6 @@ interface Item {
     lines: { port: Ref | null; packing: Ref | null; product: Ref | null }[];
   } | null;
 }
-interface OrderLine {
-  key: number;
-  productId: string | null;
-  productLabel: string | null;
-  packingTypeId: string | null;
-  packingLabel: string | null;
-  destinationPortId: string | null;
-  portLabel: string | null;
-  quantityMt: string;
-  ratePerMt: string;
-  dispatchBy: string;
-  buyerItemCode: string;
-  brand: string;
-}
 
 const tone = (c: number | undefined) => (c === undefined ? 'text-slate-300' : c >= 0.8 ? 'text-emerald-600' : c >= 0.5 ? 'text-amber-500' : 'text-red-500');
 const dot = (c: number | undefined, title: string) => <span title={title} className={`text-[10px] ${tone(c)}`}>●</span>;
@@ -100,11 +86,6 @@ export function InboxReviewPage() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [order, setOrder] = useState<Ref | null>(null);
   const [lotId, setLotId] = useState<string | null>(null);
-  const [buyer, setBuyer] = useState<Ref | null>(null);
-  const [currency, setCurrency] = useState<Ref | null>(null);
-  const [rate, setRate] = useState('');
-  const [pol, setPol] = useState<Ref | null>(null);
-  const [lines, setLines] = useState<OrderLine[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [del, setDel] = useState(false);
@@ -125,31 +106,8 @@ export function InboxReviewPage() {
     setValues(Object.fromEntries(Object.entries(item.fields ?? {}).map(([k, v]) => [k, v.value])));
     setOrder(item.order ? { id: item.order.id, label: item.order.number } : null);
     setLotId(item.shipmentId);
-    setBuyer(item.suggest?.buyer ?? null);
-    setCurrency(item.suggest?.currency ?? null);
-    setRate(item.suggest?.currency?.rate ? String(Number(item.suggest.currency.rate)) : '');
-    setPol(item.suggest?.portOfLoading ?? null);
     setSupplier(item.suggestBuy?.supplier ?? null);
     setPoId(item.suggestBuy?.vendorPo?.id ?? '');
-    setLines(
-      (item.lines ?? []).map((l, i) => {
-        const s = item.suggest?.lines[i];
-        return {
-          key: i,
-          productId: s?.product?.id ?? null,
-          productLabel: s?.product?.label ?? null,
-          packingTypeId: s?.packing?.id ?? null,
-          packingLabel: s?.packing?.label ?? null,
-          destinationPortId: s?.port?.id ?? null,
-          portLabel: s?.port?.label ?? l.port,
-          quantityMt: l.quantityMt ?? '',
-          ratePerMt: l.rate ?? '',
-          dispatchBy: l.dispatchBy ?? (item.fields?.deliveryDate?.value ?? ''),
-          buyerItemCode: l.buyerItemCode ?? '',
-          brand: item.fields?.brand?.value ?? '',
-        };
-      }),
-    );
   }, [item]);
 
   const lots = useQuery({ queryKey: ['inbox', 'lots', order?.id], queryFn: () => api.get<Lot[]>(`/intake/lots${qs({ orderId: order?.id })}`), enabled: !!order?.id });
@@ -172,28 +130,16 @@ export function InboxReviewPage() {
       const body: Record<string, unknown> = { kind, fields: values, orderId: order?.id ?? null, shipmentId: lotId };
       if (buying) body.purchase = { supplierId: supplier?.id ?? null, category, vendorPoId: action === 'purchase' ? poId || null : null };
       if (action === 'order') {
-        body.order = {
-          buyerId: buyer?.id ?? null,
-          currencyId: currency?.id ?? null,
-          exchangeRate: rate || null,
-          portOfLoadingId: pol?.id ?? null,
-          lines: lines.map((l) => ({
-            productId: l.productId,
-            packingTypeId: l.packingTypeId,
-            destinationPortId: l.destinationPortId,
-            quantityMt: l.quantityMt,
-            ratePerMt: l.ratePerMt,
-            dispatchBy: l.dispatchBy || null,
-            buyerItemCode: l.buyerItemCode || null,
-            brand: l.brand || null,
-          })),
-        };
+        // keep the checked values, then make the order in the full Orders / PIs form
+        await api.post(`/intake/${id}/checked`, { kind, fields: values });
+        qc.invalidateQueries({ queryKey: ['inbox'] });
+        navigate(`/d/proformaInvoices/new?intake=${id}`);
+        return;
       }
       const r = await api.post<{ result: string; learned: number }>(`/intake/${id}/confirm`, body);
       toast.success('Confirmed', { description: `${r.result.startsWith('order:') ? 'Order saved.' : r.result.startsWith('lot:') ? 'Lot updated.' : r.result.startsWith('purchase-invoice:') ? 'Purchase invoice entered.' : r.result.startsWith('purchase-order:') ? 'Filed with the purchase order.' : 'Filed.'}${r.learned ? ` ${r.learned} correction(s) remembered for this layout.` : ''}` });
       qc.invalidateQueries({ queryKey: ['inbox'] });
-      if (r.result.startsWith('order:') && action === 'order') navigate(`/orders/${r.result.slice(6)}`);
-      else if (nextId) navigate(`/inbox/${nextId}`);
+      if (nextId) navigate(`/inbox/${nextId}`);
       else navigate('/inbox');
     } catch (e) {
       setError(e);
@@ -236,7 +182,7 @@ export function InboxReviewPage() {
       'alt+t': () => setView((v) => (v === 'text' ? 'original' : 'text')),
       esc: () => navigate('/inbox'),
     },
-    [values, kind, order, lotId, buyer, currency, rate, pol, lines, nextId, item, supplier, category, poId],
+    [values, kind, order, lotId, nextId, item, supplier, category, poId],
     { inInputs: true },
   );
 
@@ -245,7 +191,6 @@ export function InboxReviewPage() {
   const reading = ['QUEUED', 'READING'].includes(item.status);
   const fileUrl = `/api/files/${item.fileId}`;
   const setV = (k: string, v: string) => setValues((o) => ({ ...o, [k]: v }));
-  const setLine = (i: number, patch: Partial<OrderLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -435,36 +380,12 @@ export function InboxReviewPage() {
                 </section>
               )}
 
-              {/* order header pickers */}
+              {/* an order is made in the full Orders / PIs form */}
               {action === 'order' && (
-                <section className="space-y-2 rounded-lg border border-indigo-200 bg-white p-3">
-                  <h2 className="text-[13px] font-semibold text-slate-800">New order from this {kind === 'proforma' ? 'PI' : 'PO / contract'}</h2>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <Field label="Buyer" hint={values.buyerName ? `read: ${values.buyerName}` : undefined}>
-                      <RefSelect entity="customers" value={buyer?.id ?? null} label={buyer?.label ?? null} allowCreate disabled={done} onChange={(bid, l) => setBuyer(bid ? { id: bid, label: l ?? '' } : null)} />
-                    </Field>
-                    <Field label="Currency">
-                      <RefSelect
-                        entity="currencies"
-                        value={currency?.id ?? null}
-                        label={currency?.label ?? null}
-                        disabled={done}
-                        onChange={async (cid, l) => {
-                          setCurrency(cid ? { id: cid, label: l ?? '' } : null);
-                          if (cid) {
-                            const c = await api.get<{ exchangeRate: string }>(`/masters/currencies/${cid}`).catch(() => null);
-                            if (c?.exchangeRate) setRate(String(Number(c.exchangeRate)));
-                          }
-                        }}
-                      />
-                    </Field>
-                    <Field label="Exchange rate (₹ per unit)">
-                      <input data-nav="1" className="field-input" inputMode="decimal" value={rate} disabled={done} onChange={(e) => setRate(e.target.value)} />
-                    </Field>
-                    <Field label="Port of loading" hint={values.portOfLoading ? `read: ${values.portOfLoading}` : undefined}>
-                      <RefSelect entity="ports" value={pol?.id ?? null} label={pol?.label ?? null} allowCreate disabled={done} onChange={(pid, l) => setPol(pid ? { id: pid, label: l ?? '' } : null)} />
-                    </Field>
-                  </div>
+                <section className="rounded-lg border border-indigo-200 bg-indigo-50/50 p-3 text-[12.5px] text-slate-700">
+                  <b className="text-slate-900">Next: the full order form.</b> Check the values read below, then press <i>Open in the order form</i>. It opens
+                  the same form as Sales → Orders &amp; PIs with all of this filled in — buyer, products, packing, rates, ports, today&apos;s exchange rate,
+                  bank and terms — with this document beside it. Anything not in your masters comes in as typed text, so nothing read is lost.
                 </section>
               )}
 
@@ -502,63 +423,41 @@ export function InboxReviewPage() {
                 </div>
               </section>
 
-              {/* order lines */}
+              {/* the item lines read */}
               {action === 'order' && (
                 <section className="space-y-2 rounded-lg border border-slate-200 bg-white p-3">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-[13px] font-semibold text-slate-800">Order lines ({lines.length})</h2>
-                    {!done && (
-                      <Button
-                        icon={<Plus className="size-3.5" />}
-                        onClick={() => setLines((ls) => [...ls, { key: Date.now(), productId: null, productLabel: null, packingTypeId: null, packingLabel: null, destinationPortId: null, portLabel: null, quantityMt: '', ratePerMt: '', dispatchBy: values.deliveryDate ?? '', buyerItemCode: '', brand: values.brand ?? '' }])}
-                      >
-                        Add line
-                      </Button>
-                    )}
-                  </div>
-                  {!lines.length && <p className="text-[12.5px] text-slate-500">No item lines were recognised. Add them with "Add line" (the original is on the left).</p>}
-                  {lines.map((l, i) => (
-                    <div key={l.key} className="grid gap-2 rounded border border-slate-200 p-2 sm:grid-cols-6">
-                      <div className="sm:col-span-2">
-                        <Field label="Product">
-                          <RefSelect entity="products" value={l.productId} label={l.productLabel} allowCreate disabled={done} onChange={(pid, lb) => setLine(i, { productId: pid, productLabel: lb })} />
-                        </Field>
-                      </div>
-                      <div className="sm:col-span-2">
-                        <Field label="Packing">
-                          <RefSelect entity="packingTypes" value={l.packingTypeId} label={l.packingLabel} allowCreate disabled={done} onChange={(pid, lb) => setLine(i, { packingTypeId: pid, packingLabel: lb })} />
-                        </Field>
-                      </div>
-                      <div className="sm:col-span-2">
-                        <Field label="Deliver to (port)">
-                          <RefSelect entity="ports" value={l.destinationPortId} label={l.portLabel} allowCreate disabled={done} onChange={(pid, lb) => setLine(i, { destinationPortId: pid, portLabel: lb })} />
-                        </Field>
-                      </div>
-                      <Field label="MT">
-                        <input data-nav="1" className="field-input" inputMode="decimal" value={l.quantityMt} disabled={done} onChange={(e) => setLine(i, { quantityMt: e.target.value })} />
-                      </Field>
-                      <Field label="Rate / MT">
-                        <input data-nav="1" className="field-input" inputMode="decimal" value={l.ratePerMt} disabled={done} onChange={(e) => setLine(i, { ratePerMt: e.target.value })} />
-                      </Field>
-                      <Field label="Dispatch by">
-                        <input data-nav="1" className="field-input" type="date" value={l.dispatchBy} disabled={done} onChange={(e) => setLine(i, { dispatchBy: e.target.value })} />
-                      </Field>
-                      <Field label="Buyer item code">
-                        <input data-nav="1" className="field-input" value={l.buyerItemCode} disabled={done} onChange={(e) => setLine(i, { buyerItemCode: e.target.value })} />
-                      </Field>
-                      <Field label="Brand">
-                        <input data-nav="1" className="field-input" value={l.brand} disabled={done} onChange={(e) => setLine(i, { brand: e.target.value })} />
-                      </Field>
-                      <div className="flex items-end">
-                        {!done && (
-                          <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))}>
-                            Remove
-                          </Button>
-                        )}
-                      </div>
-                      {item.lines?.[i] && <p className="text-[11.5px] text-slate-400 sm:col-span-6">read: “{item.lines[i].description}”</p>}
+                  <h2 className="text-[13px] font-semibold text-slate-800">Items read ({item.lines?.length ?? 0})</h2>
+                  {!item.lines?.length ? (
+                    <p className="text-[12.5px] text-slate-500">No item lines were recognised. Add the products in the order form (the original stays beside it).</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-[12.5px]">
+                        <thead className="text-left text-[11.5px] text-slate-500">
+                          <tr>
+                            {['Item', 'Packing', 'Bags', 'MT', 'Rate / MT', 'Amount', 'Port', 'Code'].map((h) => (
+                              <th key={h} className="px-2 py-1 font-medium">
+                                {h}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {item.lines.map((l, i) => (
+                            <tr key={i} className="border-t border-slate-100">
+                              <td className="px-2 py-1">{l.description}</td>
+                              <td className="px-2 py-1 whitespace-nowrap">{l.packing ?? (l.packKg ? `${l.packKg} KG` : '—')}</td>
+                              <td className="px-2 py-1 tabular-nums">{l.bags ?? '—'}</td>
+                              <td className="px-2 py-1 tabular-nums">{l.quantityMt ?? '—'}</td>
+                              <td className="px-2 py-1 tabular-nums">{l.rate ?? '—'}</td>
+                              <td className="px-2 py-1 tabular-nums">{l.amount ?? '—'}</td>
+                              <td className="px-2 py-1">{l.port ?? '—'}</td>
+                              <td className="px-2 py-1 font-mono text-[11.5px] text-slate-500">{l.buyerItemCode ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  ))}
+                  )}
                 </section>
               )}
 
@@ -566,7 +465,7 @@ export function InboxReviewPage() {
               {!done && can('sales.intake', 'edit') && (
                 <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-slate-200 bg-white/95 py-3">
                   <Button variant="primary" icon={<Check className="size-3.5" />} loading={busy === 'confirm'} onClick={confirm} shortcut="mod+enter" data-nav-end>
-                    {action === 'order' ? 'Create the order' : action === 'lot' ? 'Update the lot' : action === 'lot-doc' ? 'Tick on the lot checklist' : action === 'order-lc' ? 'Add LC to the order' : action === 'purchase' ? 'Enter the purchase invoice' : action === 'vendor-po' ? 'Save the purchase order' : 'Confirm and file'}
+                    {action === 'order' ? 'Open in the order form' : action === 'lot' ? 'Update the lot' : action === 'lot-doc' ? 'Tick on the lot checklist' : action === 'order-lc' ? 'Add LC to the order' : action === 'purchase' ? 'Enter the purchase invoice' : action === 'vendor-po' ? 'Save the purchase order' : 'Confirm and file'}
                   </Button>
                   <span className="text-[12px] text-slate-500">Enter next field · Ctrl+Enter confirm · Alt+I ignore · Alt+N next · Esc back</span>
                 </div>

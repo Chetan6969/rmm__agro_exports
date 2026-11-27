@@ -67,7 +67,7 @@ interface LetterChild {
   module: string;
   rows: { id: string; documentNumber: string; documentDate: string; status: string }[];
 }
-type Loaded = Values & { id?: string; version?: number; lines: Values[]; terms: Values[]; containers: Values[]; children?: Child[]; letterChildren?: LetterChild[]; updatedAt?: string; amountInWords?: string };
+type Loaded = Values & { id?: string; version?: number; lines: Values[]; terms: Values[]; containers: Values[]; children?: Child[]; letterChildren?: LetterChild[]; updatedAt?: string; amountInWords?: string; intake?: { id: string; fileId: string; fileName: string } };
 
 let seq = 0;
 const key = () => `k${++seq}`;
@@ -88,10 +88,12 @@ export function DocumentFormPage() {
   if (!def) return <div className="p-6"><ErrorBox error={new Error(`Unknown document type: ${doc}`)} /></div>;
   const from = params.get('from') ?? '';
   const shipment = params.get('shipment') ?? '';
-  return <DocumentForm key={`${def.key}-${id}-${from}-${shipment}`} def={def} id={id} from={from} shipment={shipment} />;
+  // a new order filled from a buyer PO / PI in the document inbox
+  const intake = def.key === 'proformaInvoices' && id === 'new' ? (params.get('intake') ?? '') : '';
+  return <DocumentForm key={`${def.key}-${id}-${from}-${shipment}-${intake}`} def={def} id={id} from={from} shipment={shipment} intake={intake} />;
 }
 
-function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; from: string; shipment: string }) {
+function DocumentForm({ def, id, from, shipment, intake }: { def: DocDef; id: string; from: string; shipment: string; intake: string }) {
   const isNew = id === 'new';
   const { can } = useSession();
   const navigate = useNavigate();
@@ -113,11 +115,13 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
   const [editing, setEditing] = useState<{ group: number | null } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [rateNote, setRateNote] = useState<string | null>(null);
+  const [showSource, setShowSource] = useState(true);
+  const intakePrefilled = useRef(false);
 
   const draftQuery = from ? `?from=${from}` : shipment ? `?shipment=${shipment}` : '';
   const source = useQuery({
-    queryKey: ['documents', def.key, 'one', id, from, shipment],
-    queryFn: () => api.get<Loaded>(isNew ? `/documents/${def.key}/draft${draftQuery}` : `/documents/${def.key}/${id}`),
+    queryKey: ['documents', def.key, 'one', id, from, shipment, intake],
+    queryFn: () => api.get<Loaded>(intake ? `/intake/${intake}/order-draft` : isNew ? `/documents/${def.key}/draft${draftQuery}` : `/documents/${def.key}/${id}`),
     refetchOnWindowFocus: false,
     staleTime: 0, // always revalidate the single document on open, so a reopen never shows a stale cached copy
   });
@@ -160,7 +164,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
   const blocker = useUnsavedGuard(dirty);
 
   const cache = useFormCache({
-    storageKey: readOnly ? null : `doc:${def.key}:${id}:${from}`,
+    storageKey: readOnly ? null : `doc:${def.key}:${id}:${from}${intake ? `:intake:${intake}` : ''}`,
     snapshot: { header, labels, lines, terms, containers },
     apply: (s) => {
       setHeader(s.header);
@@ -254,6 +258,17 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
     }
   };
 
+  useEffect(() => {
+    if (!intake || !loaded || intakePrefilled.current || (can('master.currencies', 'view') && liveRates.isLoading)) return;
+    intakePrefilled.current = true;
+    (async () => {
+      if (header.currencyId && !header.exchangeRate) await applyCurrency(header.currencyId as string, labels.currencyId ?? null);
+      if (header.buyerId) await applyBuyer(header.buyerId as string);
+      setDirty(true); // nothing is saved yet: leaving asks first
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [intake, loaded, liveRates.isLoading]);
+
   const onHeaderChange = (name: string, v: unknown, l?: string | null) => {
     setField(name, v, l);
     if (name === 'noOfContainers') containersTouched.current = true;
@@ -319,7 +334,15 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
       toast.success(`${def.label} ${saved.documentNumber} saved`);
       setDirty(false);
       cache.clear();
-      if (isNew) {
+      if (isNew && intake) {
+        try {
+          await api.post(`/intake/${intake}/order`, { orderId: saved.id });
+          qc.invalidateQueries({ queryKey: ['inbox'] });
+        } catch (e) {
+          showError(e);
+        }
+        if (!opts?.stay) navigate(`/orders/${saved.id}`, { replace: true });
+      } else if (isNew) {
         // created from a shipment lot: link it back so it shows on the lot + pipeline, then return there
         if (shipment && def.key === 'commercialInvoices') {
           try {
@@ -455,6 +478,11 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
                 {locked ? 'Unlock' : 'Lock'}
               </Button>
             )}
+            {record?.intake && (
+              <Button icon={<FileText className="size-3.5" />} onClick={() => (window.matchMedia('(min-width: 1024px)').matches ? setShowSource((v) => !v) : window.open(`/api/files/${record.intake!.fileId}`, '_blank', 'noopener'))}>
+                {showSource ? 'Hide' : 'Show'} the original
+              </Button>
+            )}
             {!readOnly && <UndoRedo cache={cache} />}
             {!isNew && can(def.module, 'delete') && !locked && (
               <Button variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => setConfirmDelete(true)}>
@@ -469,9 +497,27 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           </>
         }
       />
-      <div className="flex-1 overflow-y-auto p-3 sm:p-5">
+      {record?.intake && showSource && (
+        <aside className="fixed top-12 right-0 bottom-0 z-20 hidden w-[42vw] flex-col border-l border-slate-200 bg-white shadow-lg lg:flex print:hidden" aria-label="Original document">
+          <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-1.5 text-[12.5px] text-slate-600">
+            <FileText className="size-3.5" />
+            <span className="truncate">Read from: {record.intake.fileName}</span>
+            <Link className="ml-auto text-brand-700 hover:underline" to={`/inbox/${record.intake.id}`}>
+              Back to the review
+            </Link>
+          </div>
+          <iframe title="Original document" src={`/api/files/${record.intake.fileId}`} className="min-h-0 flex-1" />
+        </aside>
+      )}
+      <div className={`flex-1 overflow-y-auto p-3 sm:p-5 ${record?.intake && showSource ? 'lg:pr-[43vw]' : ''}`}>
         <div className="mx-auto max-w-6xl space-y-4">
           {formError != null && <ErrorBox error={formError} />}
+          {record?.intake && (
+            <div className="rounded-md border border-indigo-200 bg-indigo-50/60 px-3 py-2 text-[12.5px] text-slate-700">
+              Filled from <b>{record.intake.fileName}</b>. Check everything against the original, complete what is missing, then save — the document is
+              filed with this order. Values shown as <i>typed</i> are not in your masters; pick the master record or keep the text.
+            </div>
+          )}
           <DraftBanner cache={cache} />
           {!isNew && record?.children && <ChildrenPanel def={def} id={id} items={record.children} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           {!isNew && !!record?.letterChildren?.length && <LetterChildrenPanel id={id} items={record.letterChildren} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
@@ -718,10 +764,10 @@ function LinesTable({
                 <tr className={`border-b border-slate-100 align-top ${err ? 'bg-red-50' : ''}`} onDoubleClick={() => !readOnly && onEdit(g)}>
                   <td className="py-1.5 pr-2 text-slate-400 tabular-nums">{gi + 1}</td>
                   <td className="py-1.5 pr-2">
-                    <div className="font-medium text-slate-900">{rows[0]._labels.productId ?? '—'}</div>
+                    <div className="font-medium text-slate-900">{rows[0]._labels.productId ?? ((rows[0].productIdText as string) || '—')}</div>
                     {multi && <div className="text-[12px] text-slate-500">{rows.length} packings</div>}
-                    {!multi && Boolean(rows[0].packingText || rows[0]._labels.packingTypeId) && (
-                      <div className="text-[12px] whitespace-pre-line text-slate-500">{String(rows[0].packingText || rows[0]._labels.packingTypeId)}</div>
+                    {!multi && Boolean(rows[0].packingText || rows[0]._labels.packingTypeId || rows[0].packingTypeIdText) && (
+                      <div className="text-[12px] whitespace-pre-line text-slate-500">{String(rows[0].packingText || rows[0]._labels.packingTypeId || rows[0].packingTypeIdText)}</div>
                     )}
                     {err && <div className="text-[12px] text-red-600">Check the highlighted packing rows.</div>}
                   </td>
@@ -747,7 +793,7 @@ function LinesTable({
                       <td />
                       <td className="py-1 pr-2 pl-3 text-slate-600">
                         <span className="text-slate-400">↳ </span>
-                        {String(r.packingText || r._labels.packingTypeId || 'Packing')}
+                        {String(r.packingText || r._labels.packingTypeId || r.packingTypeIdText || 'Packing')}
                       </td>
                       <td className="py-1 pr-2 text-slate-600">{safe(() => String(r.hsCode ?? '—'))}</td>
                       <td className="py-1 pr-2 text-right tabular-nums">{String(r.noOfBags ?? 0)}</td>

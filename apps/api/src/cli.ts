@@ -53,7 +53,7 @@ const commands: Record<string, () => Promise<void>> = {
     if (!file) throw new Error('usage: pnpm copy:load -- <export.json> [CODE]');
     const r = await importCopy(file, args[1]?.toUpperCase());
     console.log(`Loaded production copy as company ${r.code}:`, r.counts, `shipments: ${r.shipments}`);
-    if (r.missingGlobals.length) console.log('Not found locally (left as is):', r.missingGlobals.join(', '));
+    if (r.missingGlobals.length) console.log('Not in this database (kept as text on the documents):', r.missingGlobals.join(', '));
     if (r.skipped.length) console.log('Fields this version does not have (skipped):', r.skipped.join(', '));
     console.log('Switch to it in the app with Alt+C. Remove it with "pnpm copy:reset".');
   },

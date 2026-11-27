@@ -28,7 +28,7 @@ import { inCompanyTx, type RequestContext } from '../../core/context.js';
 import { badRequest, notFound } from '../../core/errors.js';
 import { db, type Tx } from '../../db/client.js';
 import { companies, docTables, extractionTemplates, files, inboxItems, masterTables, shipmentDocuments, shipments, vendorPos } from '../../db/schema/index.js';
-import { createDocument } from '../documents/documents.service.js';
+import { createDocument, draftDocument } from '../documents/documents.service.js';
 import { createPurchaseInvoice, createPurchaseOrder } from '../purchases/purchases.service.js';
 import { detectKind, readDocument, type FileKind } from './read.js';
 
@@ -266,6 +266,31 @@ async function findByName(tx: Tx, key: string, name: string | null | undefined, 
   return row ?? null;
 }
 
+/** Words of a company name that say nothing about who it is. */
+const GENERIC_NAME = new Set(['foods', 'food', 'trading', 'traders', 'company', 'llc', 'ltd', 'limited', 'private', 'pvt', 'general', 'international', 'group', 'establishment', 'import', 'export', 'exports', 'imports', 'the', 'and', 'rice', 'agro', 'industries', 'enterprises', 'fze', 'fzco', 'w.l.l.', 'wll', 'co.', 'est']);
+
+/**
+ * A buyer PO often names the buyer only in its logo; the name still shows up in its terms ("… where
+ * <Buyer> will apply a penalty"). Pick the customer whose distinctive name words are written on the
+ * document (never our own company, which the PO names as the supplier).
+ */
+async function customerNamedIn(tx: Tx, item: Item) {
+  const text = (item.text ?? '').toLowerCase();
+  if (!text) return null;
+  const words = (s: string) => (s.toLowerCase().match(/[a-z][a-z.&'-]{2,}/g) ?? []).filter((w) => !GENERIC_NAME.has(w));
+  const [own] = await tx.select({ name: companies.name, legal: companies.legalName }).from(companies).where(eq(companies.id, item.companyId));
+  const ours = new Set(words(`${own?.name ?? ''} ${own?.legal ?? ''}`));
+  const c = masterTables.customers;
+  const all = (await tx.select({ id: c.id, label: c.name }).from(c).where(isNull(c.deletedAt))) as { id: string; label: string }[];
+  let best: { id: string; label: string; hits: number } | null = null;
+  for (const cu of all) {
+    const ws = [...new Set(words(cu.label))].filter((w) => !ours.has(w));
+    const hits = ws.filter((w) => new RegExp(`(?<![a-z])${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z])`).test(text)).length;
+    if (hits && (!best || hits > best.hits)) best = { ...cu, hits };
+  }
+  return best ? { id: best.id, label: best.label } : null;
+}
+
 /** Best guesses for the master records an order needs (buyer, currency, ports, packing). */
 export async function suggestFor(tx: Tx, item: Item) {
   const fields = item.fields ?? {};
@@ -284,7 +309,7 @@ export async function suggestFor(tx: Tx, item: Item) {
     }),
   );
   return {
-    buyer: (await findByName(tx, 'customers', fields.buyerName?.value)) ?? null,
+    buyer: (await findByName(tx, 'customers', fields.buyerName?.value)) ?? (await customerNamedIn(tx, item)),
     currency: currency ?? null,
     portOfLoading: await findByName(tx, 'ports', fields.portOfLoading?.value),
     portOfDischarge: await findByName(tx, 'ports', fields.portOfDischarge?.value),
@@ -342,6 +367,134 @@ async function loadLot(tx: Tx, id: string | null | undefined) {
 }
 
 /** Apply a reviewed document to the ERP, remember the corrections, and file it. */
+/** Every value the person typed or changed is remembered for this layout. Returns how many. */
+async function learnCorrections(tx: Tx, ctx: RequestContext, item: Item, kindKey: string, v: Record<string, string | null>) {
+  const fingerprint = kindKey === item.kind && item.fingerprint ? item.fingerprint : layoutFingerprint(item.text ?? '', kindKey);
+  let learned = 0;
+  for (const [field, value] of Object.entries(v)) {
+    const val = blank(value);
+    if (!val || field === 'isDraft') continue;
+    const before = (item.fields ?? {})[field];
+    if (before && before.value === val && kindKey === item.kind) continue;
+    // dates are shown as yyyy-mm-dd; learn from how the document writes them is not possible, so skip
+    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) continue;
+    const t = learnTemplate(item.text ?? '', field, val);
+    if (!t) continue;
+    await tx
+      .insert(extractionTemplates)
+      .values({ companyId: item.companyId, kind: kindKey, fingerprint, field, anchor: t.anchor, position: `${t.position}|${t.shape ?? 'phrase'}`, createdBy: ctx.userId })
+      .onConflictDoUpdate({ target: [extractionTemplates.companyId, extractionTemplates.fingerprint, extractionTemplates.field], set: { anchor: t.anchor, position: `${t.position}|${t.shape ?? 'phrase'}`, uses: sql`${extractionTemplates.uses} + 1`, updatedAt: new Date() } });
+    learned++;
+  }
+  return learned;
+}
+
+/** The values as checked by the person (kept with the words they were read from). */
+function checkedFields(item: Item, v: Record<string, string | null>): Record<string, Extracted> {
+  return Object.fromEntries(
+    Object.entries(v)
+      .filter(([, x]) => blank(x))
+      .map(([k, x]) => [k, { value: String(x), confidence: 1, evidence: (item.fields ?? {})[k]?.evidence ?? 'entered by user', source: (item.fields ?? {})[k]?.value === x ? ((item.fields ?? {})[k]?.source ?? 'user') : 'user' }]),
+  );
+}
+
+/**
+ * Keep what the person checked on the review screen before the full order form opens: corrections are
+ * remembered for the layout, and the form starts from these values.
+ */
+export async function saveCheckedFields(tx: Tx, ctx: RequestContext, item: Item, kindKey: string, v: Record<string, string | null>) {
+  const kind = intakeKind(kindKey);
+  if (kind.action !== 'order') throw badRequest(`A ${kind.label.toLowerCase()} does not open the order form`);
+  const learned = await learnCorrections(tx, ctx, item, kind.key, v);
+  await tx
+    .update(inboxItems)
+    .set({ kind: kind.key, fields: { ...(item.fields ?? {}), ...checkedFields(item, v) }, updatedAt: new Date(), updatedBy: ctx.userId, version: sql`${inboxItems.version} + 1` })
+    .where(eq(inboxItems.id, item.id));
+  return { learned };
+}
+
+const toIncoterm = (v: string | null | undefined) => {
+  const x = (v ?? '').toUpperCase().replace(/\s/g, '');
+  return x === 'CIF' ? 'CIF' : x === 'CFR' || x === 'C&F' || x === 'CNF' ? 'CFR' : 'FOB';
+};
+
+/**
+ * A new order (Orders / PIs) filled from a buyer PO or PI in the inbox: everything the order form would
+ * start with (bank, origin, terms) plus what was read. Master records are picked where they match;
+ * anything else is kept as text typed on this order only, so nothing read is lost.
+ */
+export async function orderDraft(tx: Tx, ctx: RequestContext, item: Item) {
+  const kind = intakeKind(item.kind);
+  if (kind.action !== 'order') throw badRequest(`This document was read as a ${kind.label.toLowerCase()}, not an order`, 'Choose "Buyer PO / contract" or "Proforma invoice" as the document type first.');
+  const draft = (await draftDocument(tx, ctx, 'proformaInvoices')) as Row & { lines: Row[]; terms: Row[] };
+  const f = Object.fromEntries(Object.entries(item.fields ?? {}).map(([k, x]) => [k, x.value])) as Record<string, string | undefined>;
+  const s = await suggestFor(tx, item);
+  const h: Row = { ...draft };
+  const ref = (name: string, hit: { id: string; label: string } | null | undefined, text: string | null | undefined) => {
+    if (hit) {
+      h[name] = hit.id;
+      h[`${name}Label`] = hit.label;
+    } else if (blank(text)) h[`${name}Text`] = blank(text);
+  };
+  h.orderSource = kind.key === 'proforma' ? 'Our PI' : BUYER_PO;
+  h.documentDate = dateOrNull(f.poDate) ?? h.documentDate;
+  h.poDate = dateOrNull(f.poDate);
+  h.buyerPoRef = blank(f.buyerPoRef) ?? (kind.key === 'proforma' ? blank(f.piNumber) : null);
+  h.incoterm = toIncoterm(f.incoterm);
+  h.paymentTerms = blank(f.paymentTerms);
+  h.deliveryTimeline = dateOrNull(f.deliveryDate) ? `Shipment by ${f.deliveryDate}` : null;
+  h.specCropYear = blank(f.cropYear);
+  h.brand = blank(f.brand);
+  h.lcNumber = blank(f.lcNumber);
+  ref('buyerId', s.buyer, f.buyerName);
+  ref('portOfLoadingId', s.portOfLoading, f.portOfLoading);
+  ref('portOfDischargeId', s.portOfDischarge, f.portOfDischarge);
+  if (s.currency) {
+    h.currencyId = s.currency.id;
+    h.currencyIdLabel = s.currency.label;
+    h.exchangeRate = null; // the form fills today's live rate for this currency
+  }
+  const pt = await findByName(tx, 'paymentTerms', f.paymentTerms);
+  if (pt) {
+    h.paymentTermId = pt.id;
+    h.paymentTermIdLabel = pt.label;
+  }
+  const groups = new Map<string, number>();
+  h.lines = (item.lines ?? []).map((l: ExtractedLine, i: number) => {
+    const sl = s.lines[i];
+    const line: Row = { quantityMt: l.quantityMt, ratePerMt: l.rate, dispatchBy: l.dispatchBy ?? dateOrNull(f.deliveryDate), buyerItemCode: l.buyerItemCode, brand: blank(f.brand), noOfBags: l.bags ?? 0 };
+    const set = (name: string, hit: { id: string; label: string } | null | undefined, text: string | null | undefined) => {
+      if (hit) {
+        line[name] = hit.id;
+        line[`${name}Label`] = hit.label;
+      } else if (blank(text)) line[`${name}Text`] = blank(text);
+    };
+    set('productId', sl?.product, l.description);
+    set('packingTypeId', sl?.packing, l.packing ?? (l.packKg ? `${l.packKg} KG` : null));
+    set('destinationPortId', sl?.port, l.port);
+    // packings of the same product sit under one product card
+    const key = (line.productId as string) ?? `line-${i}`;
+    if (!groups.has(key)) groups.set(key, groups.size + 1);
+    line.packGroup = groups.get(key);
+    return line;
+  });
+  return { ...h, intake: { id: item.id, fileId: item.fileId, fileName: item.fileName, kind: kind.key } };
+}
+
+/** The order made in the full form from this document: file the document with it. */
+export async function linkCreatedOrder(tx: Tx, ctx: RequestContext, item: Item, orderId: string) {
+  const pi = docTables.proformaInvoices.header;
+  const [o] = (await tx.select({ id: pi.id }).from(pi).where(and(eq(pi.id, orderId), isNull(pi.deletedAt)))) as Row[];
+  if (!o) throw notFound('Order not found', 'Save the order first, then file the document with it.');
+  const result = `order:${orderId}`;
+  await tx
+    .update(inboxItems)
+    .set({ status: 'CONFIRMED', result, orderId, confirmedAt: new Date(), confirmedBy: ctx.userId, updatedAt: new Date(), updatedBy: ctx.userId, version: sql`${inboxItems.version} + 1` })
+    .where(eq(inboxItems.id, item.id));
+  await audit(tx, ctx, { entity: 'inbox', recordId: item.id, action: 'confirm', meta: { kind: item.kind, result, via: 'order form' } });
+  return { result };
+}
+
 export async function confirmItem(tx: Tx, ctx: RequestContext, item: Item, body: ConfirmBody) {
   const kind = intakeKind(body.kind);
   const v = body.fields ?? {};
@@ -466,30 +619,8 @@ export async function confirmItem(tx: Tx, ctx: RequestContext, item: Item, body:
       result = 'filed';
   }
 
-  // learn: every value the person typed or changed is remembered for this layout
-  const fingerprint = kind.key === item.kind && item.fingerprint ? item.fingerprint : layoutFingerprint(item.text ?? '', kind.key);
-  let learned = 0;
-  for (const [field, value] of Object.entries(v)) {
-    const val = blank(value);
-    if (!val || field === 'isDraft') continue;
-    const before = (item.fields ?? {})[field];
-    if (before && before.value === val && kind.key === item.kind) continue;
-    // dates are shown as yyyy-mm-dd; learn from how the document writes them is not possible, so skip
-    if (/^\d{4}-\d{2}-\d{2}$/.test(val)) continue;
-    const t = learnTemplate(item.text ?? '', field, val);
-    if (!t) continue;
-    await tx
-      .insert(extractionTemplates)
-      .values({ companyId: item.companyId, kind: kind.key, fingerprint, field, anchor: t.anchor, position: `${t.position}|${t.shape ?? "phrase"}`, createdBy: ctx.userId })
-      .onConflictDoUpdate({ target: [extractionTemplates.companyId, extractionTemplates.fingerprint, extractionTemplates.field], set: { anchor: t.anchor, position: `${t.position}|${t.shape ?? "phrase"}`, uses: sql`${extractionTemplates.uses} + 1`, updatedAt: new Date() } });
-    learned++;
-  }
-
-  const confirmedFields: Record<string, Extracted> = Object.fromEntries(
-    Object.entries(v)
-      .filter(([, x]) => blank(x))
-      .map(([k, x]) => [k, { value: String(x), confidence: 1, evidence: (item.fields ?? {})[k]?.evidence ?? 'entered by user', source: (item.fields ?? {})[k]?.value === x ? ((item.fields ?? {})[k]?.source ?? 'user') : 'user' }]),
-  );
+  const learned = await learnCorrections(tx, ctx, item, kind.key, v);
+  const confirmedFields = checkedFields(item, v);
   await tx
     .update(inboxItems)
     .set({ status: 'CONFIRMED', kind: kind.key, fields: confirmedFields, result, // a PO confirmed into a new order belongs to that order, whatever was suggested before

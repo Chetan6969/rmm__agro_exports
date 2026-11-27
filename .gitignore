@@ -160,4 +160,6 @@ apps/api/storage-test/
 
 
 #ignore meta data of the rmm production 
-rmm-production-export.json
+rmm-production-export*.json
+rmm-production-export-2026-11-27.json
+rmm-production-export-2026-11-27 (1).json

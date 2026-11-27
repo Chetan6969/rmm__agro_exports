@@ -323,6 +323,8 @@ export interface ExtractedLine {
   dispatchBy: string | null;
   /** Packing from the delivery schedule ("4 × 10 KG"); packKg is then the outer bag. */
   packing?: string | null;
+  /** Bags ordered, when the PO counts bags instead of tonnes. */
+  bags?: number | null;
 }
 
 export interface ExtractionResult {
@@ -482,6 +484,8 @@ export function extractLines(text: string): ExtractedLine[] {
     });
   }
   if (out.length) return out;
+  out.push(...stackedLines(text));
+  if (out.length) return out;
   // generic: "<description> <qty> MT <rate> <amount>" on one line
   for (const l of lines(text)) {
     const m = /^(.{6,120}?)\s([\d,]+(?:\.\d+)?)\s*(?:MT|M\.T\.|MTS|metric\s+tons?)\b\D{0,25}?([\d,]+(?:\.\d+)?)(?:\s*(?:USD|EUR|US\$|\$)?\s*(?:\/\s*MT|PMT|per\s+MT))?\D{0,10}([\d,]{4,}(?:\.\d+)?)?/i.exec(l);
@@ -490,6 +494,54 @@ export function extractLines(text: string): ExtractedLine[] {
     const rate = parseAmount(m[3]);
     if (!qty || !rate || Number(qty) <= 0 || Number(rate) < 50) continue;
     out.push({ description: m[1].trim(), buyerItemCode: null, packKg: packKg(m[1]), port: portIn(m[1]), quantityMt: qty, rate, amount: m[4] ? parseAmount(m[4]) : null, dispatchBy: null });
+  }
+  return out;
+}
+
+const UNIT_RX = /^(MT|M\.T\.|MTS|TONS?|BAGS?|KGS?|PCS|NOS|CTNS?|CARTONS?)$/i;
+const NUM_RX = /^[\d,]+(?:\.\d+)?$/;
+
+/**
+ * The same SAP table when the PDF text layer puts every cell on its own line:
+ *   10 / 2000009991 / Rice 1 Kg (Non-Woven) / FOB … / 500.000 / BAG / 1000.00 / 1 MT / 10000.00
+ * When the quantity is counted in bags, the tonnes are worked out from the total and the rate per MT.
+ */
+function stackedLines(text: string): ExtractedLine[] {
+  const ls = lines(text);
+  const out: ExtractedLine[] = [];
+  for (let i = 0; i + 5 < ls.length; i++) {
+    if (!/^\d{1,4}0$/.test(ls[i]) || !/^\d{6,12}$/.test(ls[i + 1])) continue;
+    let j = i + 2;
+    const desc: string[] = [];
+    while (j < ls.length && desc.length < 6 && !(NUM_RX.test(ls[j]) && UNIT_RX.test(ls[j + 1] ?? ''))) desc.push(ls[j++]);
+    if (!desc.length || j + 3 >= ls.length + 1) continue;
+    const qty = parseAmount(ls[j]);
+    const unit = (ls[j + 1] ?? '').toUpperCase();
+    const rateM = /^([\d,]+(?:\.\d+)?)\s*\/\s*1\s*(MT|M\.T\.|TON|KG|BAG)\b/i.exec(ls[j + 2] ?? '');
+    const total = NUM_RX.test(ls[j + 3] ?? '') ? parseAmount(ls[j + 3]) : null;
+    if (!qty || !rateM) continue;
+    const rate = parseAmount(rateM[1]);
+    const perMt = /^(MT|M\.T\.|TON)$/i.test(rateM[2]);
+    const isTonnes = /^(MT|M\.T\.|MTS|TONS?)$/.test(unit);
+    const mt = isTonnes ? qty : perMt && total && rate && Number(rate) > 0 ? String(Math.round((Number(total) / Number(rate)) * 1000) / 1000) : null;
+    // "Rice 1 Kg" counted in bags of 14 MT / 700 = 20 kg: the bag holds 20 × 1 KG packs
+    const bags = /^BAGS?$/.test(unit) ? Math.round(Number(qty)) : null;
+    const inner = packKg(desc[0]);
+    const outer = bags && mt ? Math.round((Number(mt) * 1000) / bags) : null;
+    const packs = inner && outer && outer > inner && Number.isInteger(outer / inner) ? outer / inner : null;
+    out.push({
+      description: desc[0],
+      buyerItemCode: ls[i + 1],
+      packKg: outer ?? inner,
+      packing: packs ? `${packs} × ${inner} KG` : null,
+      port: portIn(desc.join(' ')),
+      quantityMt: mt,
+      rate: perMt ? rate : null,
+      amount: total,
+      dispatchBy: null,
+      bags,
+    });
+    i = j + 3;
   }
   return out;
 }
@@ -529,6 +581,28 @@ const common: Rule = (t, o) => {
   if (cur) o.currency ??= { value: cur, confidence: 0.6, evidence: cur, source: 'rule' };
 };
 
+/** Words that show a "value" is really part of a sentence ("In case the shipment is delayed"). */
+const SENTENCE_RX = /\b(in|case|the|is|are|will|shall|if|be|due|to|on|for|with|and|any|this|that|after|before|delayed|rejection)\b/;
+
+/**
+ * Keeps a port / place only when it looks like a name: at most four words and no sentence words.
+ * A value from the next line counts only when the label line had nothing else after the label
+ * ("Port of destination: as advised by the buyer" must not take the line below it).
+ */
+function place(hit: { value: string; evidence: string } | null) {
+  if (!hit) return null;
+  const v = hit.value.replace(/\s+/g, ' ').trim();
+  if (v.split(' ').length > 4 || SENTENCE_RX.test(v)) return null;
+  const [labelLine, nextLine] = hit.evidence.split(' / ');
+  if (nextLine !== undefined && SENTENCE_RX.test(labelLine.toLowerCase())) return null;
+  return { value: v, evidence: hit.evidence };
+}
+
+function namedPort(text: string, rx: RegExp) {
+  const m = rx.exec(text);
+  return m ? { value: m[1], evidence: m[0] } : null;
+}
+
 const RULES: Record<string, Rule> = {
   buyer_po: (t, o) => {
     put(o, 'buyerPoRef', valueAfter(t, /\b(PO\s*(No|Number|#)|Purchase\s+Order\s+(No|Number)|Contract\s+(No|Number)|Ct\.?\s*No\.?)\b/i, REF_RX), 0.85);
@@ -542,8 +616,11 @@ const RULES: Record<string, Rule> = {
     }
     put(o, 'paymentTerms', valueAfter(t, /\b(Payment\s+terms?|Terms\s+of\s+payment|Payment)\b/i, /(LC\s+at\s+sight|CAD[^.\n]{0,40}|DP[^.\n]{0,30}|advance[^.\n]{0,40}|[A-Z][^\n]{4,60})/i), 0.55);
     if (!o.paymentTerms && /LC\s+at\s+Sight/i.test(t)) o.paymentTerms = { value: 'LC at sight', confidence: 0.7, evidence: 'LC at Sight', source: 'rule' };
-    put(o, 'portOfLoading', valueAfter(t, /\b(Port\s+of\s+(Loading|Shipment)|POL|FOB)\b/i, /[A-Z][A-Za-z ]{2,30}/), 0.5);
-    put(o, 'portOfDischarge', valueAfter(t, /\b(Port\s+of\s+(Discharge|Destination)|POD|Destination)\b/i, /[A-Z][A-Za-z ]{2,30}/), 0.5);
+    if (!o.paymentTerms && /\bCAD\s+at\s+Sight\b/i.test(t)) o.paymentTerms = { value: 'CAD at sight', confidence: 0.7, evidence: 'CAD at Sight', source: 'rule' };
+    put(o, 'portOfLoading', place(valueAfter(t, /\b(Port\s+of\s+(Loading|Shipment)|POL)\b/i, /[A-Z][A-Za-z ]{2,30}/)), 0.6);
+    put(o, 'portOfLoading', namedPort(t, /\b(?:from|ex|at|via)[ \t]+([A-Z][A-Za-z]+(?:[ \t][A-Z][a-z]+)?)[ \t]+Port\b/), 0.6);
+    put(o, 'portOfLoading', place(valueAfter(t, /\bFOB\b/i, /[A-Z][A-Za-z ]{2,30}/)), 0.4);
+    put(o, 'portOfDischarge', place(valueAfter(t, /\b(Port\s+of\s+(Discharge|Destination)|POD|Destination)\b/i, /[A-Z][A-Za-z ]{2,30}/)), 0.5);
     put(o, 'cropYear', valueAfter(t, /\bCrop\s*(year)?\b/i, /\b20\d{2}(?:[-/]\d{2,4})?\b/), 0.7);
     put(o, 'brand', valueAfter(t, /\bBrand\b/i, /[A-Z][A-Za-z ]{2,30}/), 0.5);
     put(o, 'buyerName', valueAfter(t, /\b(Buyer|Purchaser|Bill\s+to|Messrs)\b/i, /[A-Z][A-Za-z0-9&.,' -]{3,60}/), 0.5);

@@ -11,7 +11,7 @@ import { inTenantTx, requireCompany, requireCtx, requirePerm } from '../../core/
 import { badRequest, notFound } from '../../core/errors.js';
 import type { Tx } from '../../db/client.js';
 import { docTables, inboxItems, masterTables, shipments } from '../../db/schema/index.js';
-import { confirmItem, MAX_INTAKE_BYTES, processItem, storeUpload, suggestFor, suggestPurchase } from './intake.service.js';
+import { confirmItem, linkCreatedOrder, MAX_INTAKE_BYTES, orderDraft, processItem, saveCheckedFields, storeUpload, suggestFor, suggestPurchase } from './intake.service.js';
 import { orderBuyer } from '../documents/names.js';
 
 const MOD = 'sales.intake';
@@ -231,6 +231,41 @@ export async function intakeRoutes(app: FastifyInstance) {
       if (item.status === 'CONFIRMED') throw badRequest('This document is already confirmed', 'Open the order or lot it was applied to, or upload a corrected document.');
       if (item.status === 'QUEUED' || item.status === 'READING') throw badRequest('This document is still being read', 'Wait a few seconds until it shows "To review", then confirm.');
       return confirmItem(tx, ctx, item, body as Parameters<typeof confirmItem>[3]);
+    });
+  });
+
+  /** Keep the values checked on the review screen, before the full order form opens. */
+  app.post<{ Params: { id: string } }>('/intake/:id/checked', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, MOD, 'edit');
+    requireCompany(ctx);
+    const body = confirmSchema.pick({ kind: true, fields: true }).parse(req.body);
+    return inTenantTx(ctx, async (tx) => {
+      const item = await loadItem(tx, req.params.id);
+      if (item.status === 'CONFIRMED') throw badRequest('This document is already confirmed');
+      return saveCheckedFields(tx, ctx, item, body.kind, body.fields);
+    });
+  });
+
+  /** A new order filled from this buyer PO / PI, for the full Orders / PIs form. */
+  app.get<{ Params: { id: string } }>('/intake/:id/order-draft', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, MOD, 'view');
+    requirePerm(ctx, 'sales.proformaInvoices', 'create');
+    requireCompany(ctx);
+    return inTenantTx(ctx, async (tx) => orderDraft(tx, ctx, await loadItem(tx, req.params.id)));
+  });
+
+  /** After the order is saved in the form: file this document with it. */
+  app.post<{ Params: { id: string } }>('/intake/:id/order', async (req) => {
+    const ctx = requireCtx(req);
+    requirePerm(ctx, MOD, 'edit');
+    requireCompany(ctx);
+    const { orderId } = z.object({ orderId: z.uuid() }).parse(req.body);
+    return inTenantTx(ctx, async (tx) => {
+      const item = await loadItem(tx, req.params.id);
+      if (item.status === 'CONFIRMED') throw badRequest('This document is already confirmed');
+      return linkCreatedOrder(tx, ctx, item, orderId);
     });
   });
 

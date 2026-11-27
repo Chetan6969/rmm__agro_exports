@@ -69,6 +69,17 @@ P2
 P3
 `;
 
+const STACKED_PO = [
+  'Purchase Order', 'PO No', '4100000777', 'Delivery Date', '18/11/2026', 'Supplier Information', 'Supplier', 'Test Exports Pvt Ltd',
+  'Terms', 'CAD at Sight', 'Item', 'Material', 'Description', 'Quantity Unit', 'Unit rate', 'Total (USD)',
+  '10', '2000009991', 'Goldgrain 1 Kg (Non-Woven)', ' Packed at plant A ', '700.000', 'BAG', '1325.00 / 1 MT', '18550.00',
+  '20', '2000009992', 'Goldgrain 5 Kg (Non-Woven)', ' Packed at plant A ', '250.000', 'BAG', '1185.00 / 1 MT', '11850.00',
+  'Total In Words:', 'USD THIRTY THOUSAND FOUR HUNDRED', '30400.00',
+  'Crop year: 2026', 'FOB: Somewhere - Collection from Mundra Port',
+  'Port of destination: as advised by the buyer in case of any change.',
+  'Late shipments: Gulf Foods may deduct a penalty.',
+].join(String.fromCharCode(10));
+
 const SB_TEXT = `MUNDRA SEZ PORT, MUNDRA, GUJARAT Port Code SB No SB Date INMUN1 7299001 29-SEP-26 AAAAA0000A
 INDIAN CUSTOMS EDI SYSTEM LET EXPORT COPY SHIPPING BILL SUMMARY
 1 TESTCO/EX/26-27/7 123456 USD 9.LEO 30-SEP-26 14:18`;
@@ -91,6 +102,17 @@ describe('reading documents (pure rules)', () => {
     expect(x.lines[1]).toMatchObject({ packKg: 40, port: 'Jeddah' });
     expect(x.fields.totalQuantityMt.value).toBe('69.12');
     expect(Number(x.fields.totalAmount.value)).toBeCloseTo(69580.8, 2);
+  });
+
+  it('reads PO tables whose cells sit one per line, and never takes a sentence for a port', () => {
+    const x = extract(STACKED_PO, 'buyer_po');
+    expect(x.lines.map((l) => [l.buyerItemCode, l.quantityMt, l.bags, l.packKg, l.packing, l.rate, l.amount])).toEqual([
+      ['2000009991', '14', 700, 20, '20 × 1 KG', '1325', '18550'],
+      ['2000009992', '10', 250, 40, '8 × 5 KG', '1185', '11850'],
+    ]);
+    expect(x.fields.portOfLoading?.value).toBe('Mundra');
+    expect(x.fields.portOfDischarge).toBeUndefined();
+    expect(x.fields.paymentTerms?.value).toBe('CAD at sight');
   });
 
   it('reads the ICEGATE shipping bill block and our invoice number', () => {
@@ -255,6 +277,33 @@ describe('document inbox → order → plan → packaging → tracker', () => {
     const pdf = await app.inject({ method: 'GET', url: `/api/documents/proformaInvoices/${ids.order}/pdf`, headers: { cookie: root.cookie } });
     expect(pdf.statusCode).toBe(200);
     expect((await root.get(`/intake/${up.id}`)).body.status).toBe('CONFIRMED');
+  });
+
+  it('fills the full order form from a buyer PO and files the PO with the saved order', async () => {
+    const [up] = await upload([{ name: '4100000777.txt', body: STACKED_PO }]);
+    const draft = await root.ok('GET', `/intake/${up.id}/order-draft`);
+    // the buyer is only named in the terms; the supplier block is our own company
+    expect(draft).toMatchObject({ orderSource: 'Buyer PO / contract', buyerPoRef: '4100000777', buyerId: ids.buyer, buyerIdLabel: 'Gulf Foods Co', currencyId: ids.usd, exchangeRate: null, incoterm: 'FOB', paymentTerms: 'CAD at sight', specCropYear: '2026' });
+    expect(draft.lines.map((l: Record<string, unknown>) => [l.productIdText, l.packingTypeIdText, l.quantityMt, l.ratePerMt, l.noOfBags, l.buyerItemCode])).toEqual([
+      ['Goldgrain 1 Kg (Non-Woven)', '20 × 1 KG', '14', '1325', 700, '2000009991'],
+      ['Goldgrain 5 Kg (Non-Woven)', '8 × 5 KG', '10', '1185', 250, '2000009992'],
+    ]);
+    expect(draft.intake).toMatchObject({ id: up.id, fileName: '4100000777.txt' });
+    expect(draft.bankAccountId === undefined || draft.bankAccountId === null || typeof draft.bankAccountId === 'string').toBe(true);
+
+    // the checked values are kept (and a correction is remembered) before the form opens
+    await root.ok('POST', `/intake/${up.id}/checked`, { kind: 'buyer_po', fields: { buyerPoRef: '4100000777', cropYear: '2027' } });
+    expect((await root.ok('GET', `/intake/${up.id}/order-draft`)).specCropYear).toBe('2027');
+
+    // the form sends field values only (labels are for showing)
+    const noLabels = (r: Record<string, unknown>) => Object.fromEntries(Object.entries(r).filter(([k]) => !k.endsWith('Label')));
+    const { intake: _i, lines, ...header } = draft;
+    const saved = await root.ok('POST', '/documents/proformaInvoices', { ...noLabels(header), lines: lines.map(noLabels), exchangeRate: '84', documentNumber: null, terms: draft.terms ?? [] });
+    expect(saved.lines).toHaveLength(2);
+    expect((await root.ok('POST', `/intake/${up.id}/order`, { orderId: saved.id })).result).toBe(`order:${saved.id}`);
+    expect(await root.ok('GET', `/intake/${up.id}`)).toMatchObject({ status: 'CONFIRMED', orderId: saved.id });
+    expect((await root.post(`/intake/${up.id}/order`, { orderId: saved.id })).status).toBe(400);
+    await root.ok('DELETE', `/documents/proformaInvoices/${saved.id}`, { reason: 'test order' });
   });
 
   it('plans the lots automatically, works out packaging and makes the supplier PO', async () => {

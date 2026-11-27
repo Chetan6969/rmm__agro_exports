@@ -78,6 +78,20 @@ function masterOrder(keys: string[]): string[] {
   return done;
 }
 
+/**
+ * A reference to a shared-list row this database does not have (e.g. a port added only in production)
+ * is cleared; on a document its name is kept as the text typed for that field instead.
+ */
+function unlink(fields: readonly { name: string; type: string }[], row: Row, unmatched: Map<string, string>, asText: boolean): Row {
+  for (const f of fields) {
+    const v = row[f.name];
+    if (f.type !== 'ref' || typeof v !== 'string' || !unmatched.has(v)) continue;
+    row[f.name] = null;
+    if (asText) row[`${f.name}Text`] = row[`${f.name}Text`] || unmatched.get(v);
+  }
+  return row;
+}
+
 export async function importCopy(file: string, code = 'RMMDEMO') {
   if (!/^[A-Z0-9][A-Z0-9-]{1,11}$/.test(code)) throw new Error('Company code: 2–12 capital letters, digits or "-", e.g. RMMDEMO');
   const data = JSON.parse(await readFile(file, 'utf8')) as Export;
@@ -87,19 +101,28 @@ export async function importCopy(file: string, code = 'RMMDEMO') {
   const skipped = new Set<string>();
   const missingGlobals: string[] = [];
   try {
-    const prodCompany = data.masters.companies[0];
+    // the company the records belong to (the export also lists the other companies the user can see)
+    const owners = new Map<string, number>();
+    for (const rows of [...Object.values(data.masters), ...Object.values(data.documents), data.shipments]) for (const r of rows) if (typeof r.companyId === 'string') owners.set(r.companyId, (owners.get(r.companyId) ?? 0) + 1);
+    const owner = [...owners.entries()].sort((x, y) => y[1] - x[1])[0]?.[0];
+    const prodCompany = data.masters.companies.find((c) => c.id === owner) ?? data.masters.companies[0];
     const [taken] = await db.select({ id: companies.id, code: companies.code }).from(companies).where(sql`${companies.id} = ${prodCompany.id} or ${companies.code} = ${code}`);
     if (taken) throw new Error(`Company ${taken.code} already exists here. Run "pnpm copy:reset -- ${taken.code}" first to load a fresh copy.`);
 
     // shared lists: production id → local id, matched by code (or name when there is no code)
     const map = new Map<string, string>();
+    /** Shared-list rows this database does not have: id → name. */
+    const unmatched = new Map<string, string>();
     for (const [key, rows] of Object.entries(data.globals)) {
       const t = masterTables[key];
       const local = (await db.select().from(t)) as Row[];
       for (const r of rows) {
         const hit = local.find((l) => (r.code ? l.code === r.code : l.name === r.name));
         if (hit) map.set(r.id, hit.id as string);
-        else missingGlobals.push(`${key}:${r.code ?? r.name}`);
+        else {
+          missingGlobals.push(`${key}:${r.code ?? r.name}`);
+          unmatched.set(r.id, r.name ?? r.code ?? '');
+        }
       }
     }
 
@@ -122,13 +145,16 @@ export async function importCopy(file: string, code = 'RMMDEMO') {
 
       const companyKeys = Object.keys(data.masters).filter((k) => k !== 'companies' && masterTables[k]);
       for (const key of masterOrder(companyKeys)) {
-        for (const r of data.masters[key]) await tx.insert(masterTables[key]).values(fit(masterTables[key], remap(r, map) as Row, skipped, key));
+        const def = entities.find((e) => e.key === key);
+        for (const r of data.masters[key]) await tx.insert(masterTables[key]).values(fit(masterTables[key], unlink(def?.fields ?? [], remap(r, map) as Row, unmatched, false), skipped, key));
       }
 
       for (const def of DOC_LIST) {
         const t = docTables[def.key];
         for (const d of data.documents[def.key] ?? []) {
-          const { lines = [], terms = [], containers = [], ...header } = remap(d, map) as typeof d;
+          const { lines: rawLines = [], terms = [], containers = [], ...rawHeader } = remap(d, map) as typeof d;
+          const header = unlink(def.header, rawHeader, unmatched, true);
+          const lines = rawLines.map((l) => unlink(def.lines, l, unmatched, true));
           await tx.insert(t.header).values(fit(t.header, header, skipped, def.key));
           if (t.lines) for (const l of lines) await tx.insert(t.lines).values(fit(t.lines, l, skipped, `${def.key}.lines`));
           if (t.terms) for (const x of terms) await tx.insert(t.terms).values(fit(t.terms, x, skipped, `${def.key}.terms`));
