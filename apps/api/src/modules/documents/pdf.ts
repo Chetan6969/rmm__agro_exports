@@ -729,6 +729,7 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
       const r = w.kv(
         [
           ['Pre-carriage by', d.preCarriageBy],
+          ['Place of pre-receipt', d.placeOfPreReceipt],
           ...(vessel
             ? ([
                 ['Place of receipt', d.placeOfReceipt],
@@ -1003,6 +1004,7 @@ function certContext(data: PrintData, obl: Row | null, ci: Row | null): Record<s
     shipping_line: str(obl?.shippingLineIdLabel),
     port_loading: str(obl?.portOfLoadingIdLabel ?? ci?.portOfLoadingIdLabel),
     port_discharge: str(obl?.portOfDischargeIdLabel ?? ci?.portOfDischargeIdLabel),
+    place_pre_receipt: str(ci?.placeOfPreReceipt),
     place_receipt: str(obl?.placeOfReceipt),
     place_delivery: str(obl?.placeOfDelivery),
     final_destination: str(obl?.finalDestination),

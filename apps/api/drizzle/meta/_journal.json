@@ -162,6 +162,13 @@
       "when": 1795770912253,
       "tag": "0022_value_summary_ticks",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795777412020,
+      "tag": "0023_place_of_pre_receipt",
+      "breakpoints": true
     }
   ]
 }

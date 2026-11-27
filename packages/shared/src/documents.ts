@@ -101,6 +101,16 @@ const commercial: FieldDef[] = [
   { name: 'paymentTerms', label: 'Payment terms (printed)', type: 'textarea', span: 2, help: 'Filled from the payment term master; edit for this document' },
 ];
 
+/** Common places of pre-receipt are listed in the box; any other place can be typed. */
+const placeOfPreReceipt: FieldDef = {
+  name: 'placeOfPreReceipt',
+  label: 'Place of pre-receipt',
+  type: 'text',
+  maxLength: 128,
+  choices: ['ICD Mandideep', 'ICD Powerkheda', 'Mundra', 'Kandla'],
+  help: 'Pick a common place or type any other',
+};
+
 const shippingRoute: FieldDef[] = [
   { name: 'originCountryId', label: 'Country of origin', type: 'ref', ref: 'countries', section: 'Shipping' },
   { name: 'portOfLoadingId', label: 'Port of loading', type: 'ref', ref: 'ports' },
@@ -252,6 +262,7 @@ export const DOC_LIST: DocDef[] = [
       { name: 'insuranceAmount', label: 'Insurance', type: 'decimal', precision: 15, scale: 2, default: 0 },
       ...shippingRoute,
       { name: 'preCarriageBy', label: 'Pre-carriage by', type: 'select', options: ['ROAD', 'TRAIN'] },
+      placeOfPreReceipt,
       { name: 'placeOfReceipt', label: 'Place of receipt', type: 'text', maxLength: 128 },
       { name: 'vesselFlightNo', label: 'Vessel / flight no.', type: 'text', maxLength: 128 },
       { name: 'termsOf', label: 'Terms of delivery', type: 'text', maxLength: 128 },
@@ -309,6 +320,7 @@ export const DOC_LIST: DocDef[] = [
       { name: 'lutNumber', label: 'LUT / bond no.', type: 'text', upper: true, maxLength: 64, hidden: true },
       ...shippingRoute.map((f) => (f.name === 'finalDestination' ? { ...f, hidden: true } : f)),
       { name: 'preCarriageBy', label: 'Pre-carriage by', type: 'select', options: ['ROAD', 'TRAIN'] },
+      placeOfPreReceipt,
       { name: 'containerTypeId', label: 'Container type (said to contain)', type: 'ref', ref: 'containerTypes', allowCreate: true, help: 'Printed as "<no. of containers> X <type> SAID TO CONTAIN"' },
       { name: 'noOfContainers', label: 'No. of containers', type: 'integer', help: "Auto-filled from each packing's container load and net weight — change it if the count should differ" },
       { name: 'saidToContain', label: 'Said to contain (override)', type: 'text', maxLength: 128, span: 2, help: 'Leave blank to build it from the container type and the number of containers' },
@@ -512,7 +524,7 @@ export function fillTemplate(body: string, ctx: Record<string, unknown>): string
 export const CERTIFICATE_PLACEHOLDERS = [
   'exporter', 'consignee', 'applicant', 'buyer', 'notify',
   'invoice_no', 'invoice_date', 'bl_no', 'bl_date', 'shipping_bill_no', 'shipping_bill_date',
-  'vessel', 'voyage', 'shipping_line', 'port_loading', 'port_discharge', 'place_receipt', 'place_delivery', 'final_destination',
+  'vessel', 'voyage', 'shipping_line', 'port_loading', 'port_discharge', 'place_pre_receipt', 'place_receipt', 'place_delivery', 'final_destination',
   'destination_agent', 'destination_agent_address',
   'net_weight', 'gross_weight', 'total_bags', 'no_of_containers',
   'lc_no', 'lc_date', 'lc_applicant_emails', 'po_no', 'po_date',

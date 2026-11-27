@@ -35,6 +35,8 @@ export interface FieldDef {
   upper?: boolean;
   maxLength?: number;
   options?: readonly string[];
+  /** On a text field: common values listed when the box is focused; any other value can still be typed. */
+  choices?: readonly string[];
   /** For type 'ref': the referenced entity key (checked at startup by assertRegistry). For 'doc': the document key. */
   ref?: string;
   /** Shown as a column in list screens. */
