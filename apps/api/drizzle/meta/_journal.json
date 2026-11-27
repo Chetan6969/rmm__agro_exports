@@ -155,6 +155,13 @@
       "when": 1795696345333,
       "tag": "0021_free_text_refs",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795770912253,
+      "tag": "0022_value_summary_ticks",
+      "breakpoints": true
     }
   ]
 }

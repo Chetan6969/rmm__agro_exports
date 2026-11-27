@@ -339,7 +339,7 @@ export const DOC_LIST: DocDef[] = [
         type: 'boolean',
         default: true,
         section: 'Shipping charges (by incoterm)',
-        controls: ['thcCharge', 'blCharge', 'sealCharge', 'mucCharge', 'riskCharge', 'repositionCharge', 'oceanFreightCharge', 'insuranceCharge'],
+        controls: ['thcCharge', 'blCharge', 'sealCharge', 'mucCharge', 'riskCharge', 'repositionCharge'],
       },
       { name: 'thcCharge', label: 'THC', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'blCharge', label: 'BL charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
@@ -347,8 +347,12 @@ export const DOC_LIST: DocDef[] = [
       { name: 'mucCharge', label: 'MUC', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'riskCharge', label: 'Risk charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'repositionCharge', label: 'Reposition charges', type: 'decimal', precision: 12, scale: 2, default: 0 },
-      { name: 'oceanFreightCharge', label: 'Ocean freight (CFR / CIF)', type: 'decimal', precision: 12, scale: 2, default: 0 },
-      { name: 'insuranceCharge', label: 'Insurance (CIF)', type: 'decimal', precision: 12, scale: 2, default: 0 },
+      // Value summary — edited in its own section under the products (VALUE_SUMMARY_FIELDS), not in this block.
+      { name: 'showValueSummary', label: 'Print value summary', type: 'boolean', default: true },
+      { name: 'oceanFreightCharge', label: 'Freight', type: 'decimal', precision: 12, scale: 2, default: 0 },
+      { name: 'showFreight', label: 'Include freight', type: 'boolean', default: true },
+      { name: 'insuranceCharge', label: 'Insurance', type: 'decimal', precision: 12, scale: 2, default: 0 },
+      { name: 'showInsurance', label: 'Include insurance', type: 'boolean', default: true },
       { name: 'discountAmount', label: 'Discount', type: 'decimal', precision: 15, scale: 2, default: 0, section: 'Discount', help: 'Deducted from the FOB value; printed above the invoice total' },
       { name: 'bankAccountId', label: 'Bank account for remittance', type: 'ref', ref: 'bankAccounts', span: 2, section: 'Bank & print' },
       { name: 'showSignature', label: 'Print signature & stamp', type: 'boolean', default: true },
@@ -561,9 +565,15 @@ export function computeTotals(def: DocDef, header: Values, lines: Values[]): Rec
   if (def.key === 'productionOrders') {
     return { totalQuantityMt, totalBags, totalGrossWtMt, goodsAmount: goods, gstAmount };
   }
-  // When the shipping-charges section is switched off, no charge counts.
-  const chargeInput = header.includeShippingCharges === false ? {} : (header as Record<string, DecimalInput>);
-  const charges = computeShippingCharges(String(header.incoterm ?? 'FOB'), chargeInput);
+  // Freight and insurance come from the value summary and count whenever their row is ticked (the
+  // printed term — CFR / CIF — follows from them, see valueTerm). The other shipping charges are
+  // switched off with their own section.
+  const other = header.includeShippingCharges === false ? {} : (header as Record<string, DecimalInput>);
+  const charges = computeShippingCharges('CIF', {
+    ...other,
+    oceanFreightCharge: header.showFreight === false ? '0' : v(header.oceanFreightCharge),
+    insuranceCharge: header.showInsurance === false ? '0' : v(header.insuranceCharge),
+  });
   return {
     ...charges,
     totalQuantityMt,
@@ -575,6 +585,19 @@ export function computeTotals(def: DocDef, header: Values, lines: Values[]): Rec
     insuranceAmount: charges.insuranceCharge,
     invoiceTotal: sub(add([goods, charges.oceanFreightCharge, charges.insuranceCharge], 2), v(header.discountAmount), 2),
   };
+}
+
+/** Commercial-invoice fields edited in the "Value summary" section under the products. */
+export const VALUE_SUMMARY_FIELDS = ['showValueSummary', 'oceanFreightCharge', 'showFreight', 'insuranceCharge', 'showInsurance'] as const;
+
+/**
+ * The delivery term the invoice total is printed as: CIF when insurance is charged, CFR when only
+ * freight is, otherwise the chosen terms of delivery (incoterm).
+ */
+export function valueTerm(header: Values, totals: Values = header): string {
+  if (Number(totals.insuranceAmount ?? 0) > 0) return 'CIF';
+  if (Number(totals.oceanFreightAmount ?? 0) > 0) return 'CFR';
+  return String(header.incoterm ?? 'FOB');
 }
 
 /** The amount printed in words / used in reports for a document. */

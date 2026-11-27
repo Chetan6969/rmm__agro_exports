@@ -7,7 +7,7 @@
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import { add, BUYER_PO, containerCount, CONTAINER_FIELDS, fillTemplate, formatAmount, round, type DocDef } from '@rmm/shared';
+import { add, BUYER_PO, containerCount, CONTAINER_FIELDS, fillTemplate, formatAmount, round, valueTerm, type DocDef } from '@rmm/shared';
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import PDFDocument from 'pdfkit';
 import { config } from '../../config.js';
@@ -681,7 +681,6 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
   const cur = data.currency.code;
   const on = (flag: string) => d[flag] !== false; // optional sections default on
   const vessel = on('includeVessel');
-  const charges = on('includeShippingCharges');
   const stage = str(d.invoiceStage) || 'DRAFT';
   return render(
     (w) => {
@@ -758,13 +757,19 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
       pdf.text(`Total bags: ${d.totalBags ?? 0}`, LEFT, pdf.y + 2, { width: 280 });
       const leftBottom = pdf.y;
       w.y = leftTop;
-      const incoterm = str(d.incoterm);
+      // Value summary: FOB → freight → insurance → total, printed as CFR / CIF from what is charged.
+      // The FOB line only appears when something is added to it (otherwise it just repeats the total);
+      // an unticked freight / insurance row, or the whole summary switched off, stays off the invoice.
+      const term = valueTerm(d);
+      const freight = Number(d.oceanFreightAmount) > 0;
+      const insurance = Number(d.insuranceAmount) > 0;
+      const breakup = d.showValueSummary !== false && (freight || insurance);
       totalsBlock(w, [
-        [`FOB value (${cur})`, formatAmount(str(d.fobAmount))],
-        ...(charges && (incoterm === 'CFR' || incoterm === 'CIF') ? ([['Ocean freight', formatAmount(str(d.oceanFreightAmount))]] as [string, string][]) : []),
-        ...(charges && incoterm === 'CIF' ? ([['Insurance', formatAmount(str(d.insuranceAmount))]] as [string, string][]) : []),
+        ...(breakup ? ([[`FOB value (${cur})`, formatAmount(str(d.fobAmount))]] as [string, string][]) : []),
+        ...(breakup && freight ? ([['Freight', formatAmount(str(d.oceanFreightAmount))]] as [string, string][]) : []),
+        ...(breakup && insurance ? ([['Insurance', formatAmount(str(d.insuranceAmount))]] as [string, string][]) : []),
         ...(Number(d.discountAmount) ? ([['Discount', `- ${formatAmount(str(d.discountAmount))}`]] as [string, string][]) : []),
-        [`Total ${incoterm} value (${cur})`, formatAmount(str(d.invoiceTotal)), true],
+        [`Total ${term} value (${cur})`, formatAmount(str(d.invoiceTotal)), true],
       ]);
       w.y = Math.max(w.y, leftBottom) + 4;
       words(w, d.amountInWords);

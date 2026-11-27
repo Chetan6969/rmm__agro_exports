@@ -13,6 +13,8 @@ import {
   mul,
   round,
   statusLabel,
+  VALUE_SUMMARY_FIELDS,
+  valueTerm,
   type DocDef,
   type EntityDef,
   type LiveRatesResponse,
@@ -473,7 +475,7 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
           {!isNew && record?.children && <ChildrenPanel def={def} id={id} items={record.children} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           {!isNew && !!record?.letterChildren?.length && <LetterChildrenPanel id={id} items={record.letterChildren} canCreate={(m) => can(m, 'create')} dirty={dirty} />}
           <EntityForm
-            def={asEntity(def.key, def.header)}
+            def={asEntity(def.key, def.key === 'commercialInvoices' ? def.header.filter((f) => !(VALUE_SUMMARY_FIELDS as readonly string[]).includes(f.name)) : def.header)}
             values={header}
             labels={labels}
             errors={errors}
@@ -525,6 +527,10 @@ function DocumentForm({ def, id, from, shipment }: { def: DocDef; id: string; fr
               />
               {errors.lines && <div className="mt-1 text-[12px] text-red-600">{errors.lines}</div>}
             </Section>
+          )}
+
+          {def.key === 'commercialInvoices' && (
+            <ValueSummary header={header} totals={totals} currency={currency} readOnly={readOnly} onChange={(n, v) => onHeaderChange(n, v)} />
           )}
 
           {def.containers && (
@@ -1234,6 +1240,89 @@ function ContainersEditor({ rows, readOnly, totalNetMt, update }: { rows: Contai
 }
 
 // ---------------------------------------------------------------- totals & linked documents
+/**
+ * Commercial invoice "Value summary" under the products: FOB value, freight and insurance (each with a
+ * tick — an unticked row is left off the invoice and out of the total) and the total, printed as CFR /
+ * CIF from what is charged. The section tick only hides this breakdown on the invoice.
+ */
+function ValueSummary({
+  header,
+  totals,
+  currency,
+  readOnly,
+  onChange,
+}: {
+  header: Values;
+  totals: Record<string, string> | null;
+  currency: string;
+  readOnly: boolean;
+  onChange: (name: string, value: unknown) => void;
+}) {
+  const on = (n: string) => header[n] !== false;
+  const money = (x: unknown) => (totals ? formatAmount(String(x ?? '0')) : '—');
+  const term = valueTerm(header, totals ?? {});
+  const shown = on('showValueSummary');
+  const tick = (name: string, label: string) => (
+    <label className="flex items-center gap-2">
+      <input type="checkbox" className="size-4 accent-brand-700" checked={on(name)} disabled={readOnly} onChange={(e) => onChange(name, e.target.checked)} />
+      <span className={on(name) ? 'text-slate-700' : 'text-slate-400 line-through'}>{label}</span>
+    </label>
+  );
+  const amountBox = (name: string, enabled: boolean) => (
+    <input
+      className="field-input w-40 text-right tabular-nums"
+      inputMode="decimal"
+      disabled={readOnly || !enabled}
+      value={header[name] === null || header[name] === undefined ? '' : String(header[name])}
+      onChange={(e) => onChange(name, e.target.value)}
+      aria-label={name === 'oceanFreightCharge' ? 'Freight' : 'Insurance'}
+    />
+  );
+  const row = 'flex items-center justify-between gap-4 py-1';
+  return (
+    <Section
+      title="Value summary"
+      action={
+        <label className="flex items-center gap-1.5 text-[12.5px] text-slate-600">
+          <input type="checkbox" className="size-4 accent-brand-700" checked={shown} disabled={readOnly} onChange={(e) => onChange('showValueSummary', e.target.checked)} />
+          Print on invoice
+        </label>
+      }
+    >
+      <div className={`max-w-lg text-[13px] ${shown ? '' : 'opacity-60'}`}>
+        <div className={row}>
+          <span className="pl-6 text-slate-700">FOB value</span>
+          <span className="w-40 pr-2 text-right tabular-nums">{money(totals?.fobAmount)}</span>
+        </div>
+        <div className={row}>
+          {tick('showFreight', 'Freight')}
+          {amountBox('oceanFreightCharge', on('showFreight'))}
+        </div>
+        <div className={row}>
+          {tick('showInsurance', 'Insurance')}
+          {amountBox('insuranceCharge', on('showInsurance'))}
+        </div>
+        {Number(header.discountAmount) > 0 && (
+          <div className={row}>
+            <span className="pl-6 text-slate-700">Discount</span>
+            <span className="w-40 pr-2 text-right tabular-nums">- {money(header.discountAmount)}</span>
+          </div>
+        )}
+        <div className={`${row} mt-1 border-t border-slate-200 pt-2 font-semibold text-slate-900`}>
+          <span className="pl-6">
+            Total {term} value{currency ? ` (${currency})` : ''}
+          </span>
+          <span className="w-40 pr-2 text-right tabular-nums">{money(totals?.invoiceTotal)}</span>
+        </div>
+      </div>
+      <p className="mt-2 text-[11.5px] text-slate-400">
+        Insurance charged → CIF · only freight → CFR · neither → your terms of delivery. Untick a row to leave it off the invoice and out of the total;
+        untick “Print on invoice” to hide this breakdown (the total still prints).
+      </p>
+    </Section>
+  );
+}
+
 function TotalsPanel({ def, totals, currency, words }: { def: DocDef; totals: Record<string, string> | null; currency: string; words?: string | null }) {
   const main = def.key === 'proformaInvoices' ? 'grandTotal' : def.key === 'commercialInvoices' ? 'invoiceTotal' : 'goodsAmount';
   return (
@@ -1253,7 +1342,7 @@ function TotalsPanel({ def, totals, currency, words }: { def: DocDef; totals: Re
           ))}
         </dl>
       )}
-      {def.key === 'commercialInvoices' && <p className="mt-2 text-[11.5px] text-slate-400">FOB charges always count; ocean freight counts for CFR and CIF; insurance only for CIF.</p>}
+      {def.key === 'commercialInvoices' && <p className="mt-2 text-[11.5px] text-slate-400">Invoice total = FOB value + ticked freight + ticked insurance − discount (see Value summary).</p>}
       {words && <p className="mt-2 text-[12.5px] text-slate-600">In words: {words}</p>}
     </section>
   );
