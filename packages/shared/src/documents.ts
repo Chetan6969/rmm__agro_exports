@@ -565,39 +565,41 @@ export function computeTotals(def: DocDef, header: Values, lines: Values[]): Rec
   if (def.key === 'productionOrders') {
     return { totalQuantityMt, totalBags, totalGrossWtMt, goodsAmount: goods, gstAmount };
   }
-  // Freight and insurance come from the value summary and count whenever their row is ticked (the
-  // printed term — CFR / CIF — follows from them, see valueTerm). The other shipping charges are
-  // switched off with their own section.
+  // The line rates are already the CFR / CIF price, so the products' total IS the invoice value.
+  // Worked bottom-up: FOB value = total − freight (CFR, CIF) − insurance (CIF). The ticks only decide
+  // whether those rows are printed; they never change the figures.
+  const need = chargesRequired(header.incoterm);
+  const freight = need.freight ? round(v(header.oceanFreightCharge)) : '0.00';
+  const insurance = need.insurance ? round(v(header.insuranceCharge)) : '0.00';
   const other = header.includeShippingCharges === false ? {} : (header as Record<string, DecimalInput>);
-  const charges = computeShippingCharges('CIF', {
-    ...other,
-    oceanFreightCharge: header.showFreight === false ? '0' : v(header.oceanFreightCharge),
-    insuranceCharge: header.showInsurance === false ? '0' : v(header.insuranceCharge),
-  });
+  const charges = computeShippingCharges('CIF', { ...other, oceanFreightCharge: freight, insuranceCharge: insurance });
+  const invoiceTotal = sub(goods, v(header.discountAmount), 2);
   return {
     ...charges,
     totalQuantityMt,
     totalBags,
     totalGrossWtMt,
-    fobAmount: goods,
+    fobAmount: sub(invoiceTotal, add([freight, insurance], 2), 2),
     gstAmount,
-    oceanFreightAmount: charges.oceanFreightCharge,
-    insuranceAmount: charges.insuranceCharge,
-    invoiceTotal: sub(add([goods, charges.oceanFreightCharge, charges.insuranceCharge], 2), v(header.discountAmount), 2),
+    oceanFreightAmount: freight,
+    insuranceAmount: insurance,
+    invoiceTotal,
   };
+}
+
+/** Which charges a commercial invoice must state for its terms of delivery (they are inside the price). */
+export function chargesRequired(incoterm: unknown): { freight: boolean; insurance: boolean } {
+  const t = String(incoterm ?? '').toUpperCase();
+  return { freight: t === 'CFR' || t === 'CNF' || t === 'CIF', insurance: t === 'CIF' };
 }
 
 /** Commercial-invoice fields edited in the "Value summary" section under the products. */
 export const VALUE_SUMMARY_FIELDS = ['showValueSummary', 'oceanFreightCharge', 'showFreight', 'insuranceCharge', 'showInsurance'] as const;
 
-/**
- * The delivery term the invoice total is printed as: CIF when insurance is charged, CFR when only
- * freight is, otherwise the chosen terms of delivery (incoterm).
- */
-export function valueTerm(header: Values, totals: Values = header): string {
-  if (Number(totals.insuranceAmount ?? 0) > 0) return 'CIF';
-  if (Number(totals.oceanFreightAmount ?? 0) > 0) return 'CFR';
-  return String(header.incoterm ?? 'FOB');
+/** The delivery term the invoice total is printed as: the chosen terms of delivery (CNF prints as CFR). */
+export function valueTerm(header: Values): string {
+  const t = String(header.incoterm ?? 'FOB').toUpperCase();
+  return t === 'CNF' ? 'CFR' : t;
 }
 
 /** The amount printed in words / used in reports for a document. */

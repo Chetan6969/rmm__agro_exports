@@ -757,18 +757,19 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
       pdf.text(`Total bags: ${d.totalBags ?? 0}`, LEFT, pdf.y + 2, { width: 280 });
       const leftBottom = pdf.y;
       w.y = leftTop;
-      // Value summary: FOB → freight → insurance → total, printed as CFR / CIF from what is charged.
+      // Value summary: FOB → freight → insurance → total (rates include freight / insurance, FOB is derived).
       // The FOB line only appears when something is added to it (otherwise it just repeats the total);
       // an unticked freight / insurance row, or the whole summary switched off, stays off the invoice.
       const term = valueTerm(d);
-      const freight = Number(d.oceanFreightAmount) > 0;
-      const insurance = Number(d.insuranceAmount) > 0;
+      const freight = d.showFreight !== false && Number(d.oceanFreightAmount) > 0; // the tick only controls printing
+      const insurance = d.showInsurance !== false && Number(d.insuranceAmount) > 0;
       const breakup = d.showValueSummary !== false && (freight || insurance);
       totalsBlock(w, [
+        // a discount is already taken off the products total, so it sits above the FOB → total chain
+        ...(Number(d.discountAmount) ? ([['Discount allowed', `- ${formatAmount(str(d.discountAmount))}`]] as [string, string][]) : []),
         ...(breakup ? ([[`FOB value (${cur})`, formatAmount(str(d.fobAmount))]] as [string, string][]) : []),
         ...(breakup && freight ? ([['Freight', formatAmount(str(d.oceanFreightAmount))]] as [string, string][]) : []),
         ...(breakup && insurance ? ([['Insurance', formatAmount(str(d.insuranceAmount))]] as [string, string][]) : []),
-        ...(Number(d.discountAmount) ? ([['Discount', `- ${formatAmount(str(d.discountAmount))}`]] as [string, string][]) : []),
         [`Total ${term} value (${cur})`, formatAmount(str(d.invoiceTotal)), true],
       ]);
       w.y = Math.max(w.y, leftBottom) + 4;

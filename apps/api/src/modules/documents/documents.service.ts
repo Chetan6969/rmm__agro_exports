@@ -11,6 +11,7 @@ import {
   buildEntitySchema,
   businessDate,
   CANCELLED,
+  chargesRequired,
   childDocs,
   cmp,
   computeTotals,
@@ -323,6 +324,20 @@ async function savedRefs(tx: Tx, def: DocDef, id: string): Promise<{ header: Kep
   return { header: collect(def.header, head), lines: collect(def.lines, lines) };
 }
 
+/** CFR needs the freight and CIF needs freight and insurance — they are inside the price and FOB is derived from them. */
+function checkDeliveryCharges(header: Row) {
+  const need = chargesRequired(header.incoterm);
+  const missing: Record<string, string> = {};
+  if (need.freight && !isPositive(String(header.oceanFreightCharge ?? '0'))) missing.oceanFreightCharge = `Required for ${header.incoterm}`;
+  if (need.insurance && !isPositive(String(header.insuranceCharge ?? '0'))) missing.insuranceCharge = `Required for ${header.incoterm}`;
+  if (!Object.keys(missing).length) return;
+  const what = [missing.oceanFreightCharge && 'freight', missing.insuranceCharge && 'insurance'].filter(Boolean).join(' and ');
+  throw badRequest(`Terms of delivery ${header.incoterm}: enter the ${what}`, {
+    hint: `For ${header.incoterm} the rate includes ${need.insurance ? 'freight and insurance' : 'freight'}; enter ${need.insurance ? 'both amounts' : 'the freight'} in the Value summary so the FOB value can be worked out.`,
+    fields: missing,
+  });
+}
+
 async function prepare(tx: Tx, def: DocDef, body: unknown, selfId?: string) {
   const p = parsePayload(def, body);
   const kept = selfId ? await savedRefs(tx, def, selfId) : undefined;
@@ -347,7 +362,14 @@ async function prepare(tx: Tx, def: DocDef, body: unknown, selfId?: string) {
   }
   // Header-only letter documents (OBL, certificates): no totals, no quantity balance, no amount-in-words.
   if (def.letter) return { p, totals: {} as Record<string, string>, words: null as string | null };
+  if (def.key === 'commercialInvoices') checkDeliveryCharges(p.header);
   const totals = computeTotals(def, p.header, p.lines);
+  if (def.key === 'commercialInvoices' && cmp(totals.fobAmount, '0') < 0) {
+    throw badRequest('Freight and insurance are more than the invoice value', {
+      hint: 'The rates already include freight / insurance, so they cannot add up to more than the products total. Check the amounts.',
+      fields: { oceanFreightCharge: 'More than the invoice value' },
+    });
+  }
   await checkParentBalance(tx, def, p.header, totals.totalQuantityMt, selfId);
   const words = await currencyWords(tx, p.header.currencyId, documentValue(def, totals));
   return { p, totals, words };
