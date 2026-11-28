@@ -317,6 +317,7 @@ class Writer {
       .join(', ');
     const contacts = [
       company.email ? `Email: ${str(company.email)}` : '',
+      company.website ? `Web: ${str(company.website).replace(/^https?:\/\//i, '').replace(/\/+$/, '')}` : '',
       company.phone ? `Phone: ${str(company.phone)}` : '',
       company.gstin ? `GSTIN: ${str(company.gstin)}` : '',
       company.iec ? `IEC: ${str(company.iec)}` : '',
@@ -343,7 +344,10 @@ class Writer {
         fy = pdf.y + 1;
       }
       if (contacts) {
-        pdf.font('Helvetica').fontSize(6.6).fillColor(GRAY).text(contacts, LEFT, fy, { width: RIGHT - LEFT, align: 'center', lineBreak: false });
+        // one line: shrink the type a little when email + website + phone + registrations run long
+        pdf.font('Helvetica').fontSize(6.6);
+        const fit = Math.max(5.4, Math.min(6.6, (6.6 * (RIGHT - LEFT)) / pdf.widthOfString(contacts)));
+        pdf.fontSize(fit).fillColor(GRAY).text(contacts, LEFT, fy, { width: RIGHT - LEFT, align: 'center', lineBreak: false });
         fy = pdf.y + 1;
       }
       pdf.font('Helvetica').fontSize(6.6).fillColor(GRAY).text(page, LEFT, fy + 1, { width: RIGHT - LEFT, align: 'center', lineBreak: false });
