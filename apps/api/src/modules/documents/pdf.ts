@@ -768,7 +768,7 @@ function commercialInvoice(data: PrintData, descriptions: Map<string, string>) {
       totalsBlock(w, [
         // a discount is already taken off the products total, so it sits above the FOB → total chain
         ...(Number(d.discountAmount) ? ([['Discount allowed', `- ${formatAmount(str(d.discountAmount))}`]] as [string, string][]) : []),
-        ...(breakup ? ([[`FOB value (${cur})`, formatAmount(str(d.fobAmount))]] as [string, string][]) : []),
+        ...(breakup && d.showFob !== false ? ([[`FOB value (${cur})`, formatAmount(str(d.fobAmount))]] as [string, string][]) : []),
         ...(breakup && freight ? ([['Freight', formatAmount(str(d.oceanFreightAmount))]] as [string, string][]) : []),
         ...(breakup && insurance ? ([['Insurance', formatAmount(str(d.insuranceAmount))]] as [string, string][]) : []),
         [`Total ${term} value (${cur})`, formatAmount(str(d.invoiceTotal)), true],

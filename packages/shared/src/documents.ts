@@ -393,6 +393,7 @@ export const DOC_LIST: DocDef[] = [
       { name: 'showFreight', label: 'Include freight', type: 'boolean', default: true },
       { name: 'insuranceCharge', label: 'Insurance', type: 'decimal', precision: 12, scale: 2, default: 0 },
       { name: 'showInsurance', label: 'Include insurance', type: 'boolean', default: true },
+      { name: 'showFob', label: 'Print FOB value', type: 'boolean', default: true },
       { name: 'discountAmount', label: 'Discount', type: 'decimal', precision: 15, scale: 2, default: 0, section: 'Discount', help: 'Deducted from the FOB value; printed above the invoice total' },
       { name: 'bankAccountId', label: 'Bank account for remittance', type: 'ref', ref: 'bankAccounts', span: 2, section: 'Bank & print' },
       { name: 'showSignature', label: 'Print signature & stamp', type: 'boolean', default: true },
@@ -634,7 +635,7 @@ export function chargesRequired(incoterm: unknown): { freight: boolean; insuranc
 }
 
 /** Commercial-invoice fields edited in the "Value summary" section under the products. */
-export const VALUE_SUMMARY_FIELDS = ['showValueSummary', 'oceanFreightCharge', 'showFreight', 'insuranceCharge', 'showInsurance'] as const;
+export const VALUE_SUMMARY_FIELDS = ['showValueSummary', 'oceanFreightCharge', 'showFreight', 'insuranceCharge', 'showInsurance', 'showFob'] as const;
 
 /** The delivery term the invoice total is printed as: the chosen terms of delivery (CNF prints as CFR). */
 export function valueTerm(header: Values): string {

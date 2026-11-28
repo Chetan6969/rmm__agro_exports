@@ -1,0 +1,1 @@
+ALTER TABLE "commercial_invoices" ADD COLUMN "show_fob" boolean DEFAULT true NOT NULL;

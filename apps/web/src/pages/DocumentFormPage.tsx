@@ -1370,7 +1370,13 @@ function ValueSummary({
         {charge('oceanFreightCharge', 'showFreight', 'Freight', need.freight)}
         {charge('insuranceCharge', 'showInsurance', 'Insurance', need.insurance)}
         <div className={`${row} mt-1 border-t border-slate-200 pt-2 font-semibold text-slate-900`}>
-          <span className="pl-6">FOB value{currency ? ` (${currency})` : ''}</span>
+          <label className="flex items-center gap-2" title="Print the FOB value on the invoice">
+            <input type="checkbox" className="size-4 accent-brand-700" checked={on('showFob')} disabled={readOnly} onChange={(e) => onChange('showFob', e.target.checked)} />
+            <span className={on('showFob') ? '' : 'text-slate-400'}>
+              FOB value{currency ? ` (${currency})` : ''}
+              {!on('showFob') && <span className="ml-1 text-[11px] font-normal">(not printed)</span>}
+            </span>
+          </label>
           <span className={`w-40 pr-2 text-right tabular-nums ${totals && Number(totals.fobAmount) < 0 ? 'text-red-600' : ''}`}>{money(totals?.fobAmount)}</span>
         </div>
       </div>
